@@ -1,0 +1,63 @@
+# Scaffolded by sweap's /agentic-loop-init (copy-generalized from the
+# agentic-ci convention). Single source of truth for "how to run X" — both
+# locally and in CI. Recipe NAMES are the contract the pipeline (CLAUDE.md's
+# sweap config, .github/workflows/*.yml) depends on — keep them stable. Recipe
+# BODIES below are stack-specific stubs: replace every `# <fill in for your
+# stack>` with your project's real command.
+
+set shell := ["bash", "-uc"]
+
+default: lint typecheck
+
+lint:
+    # <fill in for your stack>, e.g. `eslint .` / `ruff check .` / `cargo clippy`
+    echo "lint: <fill in for your stack>" && exit 1
+
+typecheck:
+    # <fill in for your stack>, e.g. `tsc --noEmit` / `mypy .` / `cargo check`
+    echo "typecheck: <fill in for your stack>" && exit 1
+
+# Bring up local test services (e.g. a database or mock mail server) for the
+# local fast-path gates. No-op-safe to re-run. Delete this recipe (and the
+# `services.up` key in CLAUDE.md's sweap config) if this project has no local
+# services — the pipeline then runs in CI-gated mode (see the playbook's
+# Environment parity section).
+services-up:
+    # <fill in for your stack>
+    echo "services-up: <fill in for your stack>"
+
+services-down:
+    # <fill in for your stack>
+    echo "services-down: <fill in for your stack>"
+
+# The FULL automated test suite: unit + integration + e2e. This is the
+# authoritative merge gate (verify.e2e in CLAUDE.md's sweap config) — there is
+# no separate unit-test recipe; passing this certifies unit tests passed too.
+test *args:
+    # <fill in for your stack>
+    echo "test: <fill in for your stack>" && exit 1
+
+e2e *args:
+    # <fill in for your stack>
+    echo "e2e: <fill in for your stack>" && exit 1
+
+# Meta recipes for agent ergonomics — keep these names; CI and the playbook
+# depend on them.
+ci-local:
+    just lint
+    just typecheck
+    just test
+    just e2e
+
+ci-replay JOB:
+    just {{ JOB }}
+
+# Internal — invoked by ci.yml. Emits the agent-parseable JSON status block
+# documented in CLAUDE.md's CI section. `.github/scripts/ci-status.sh` and
+# `ci-summary.sh` are not shipped by the scaffold (they're stack-specific) —
+# write them once for this project, or generate them via the `agentic-ci` skill.
+_ci-status JOB STATUS:
+    bash .github/scripts/ci-status.sh {{ JOB }} {{ STATUS }}
+
+_ci-summary:
+    bash .github/scripts/ci-summary.sh

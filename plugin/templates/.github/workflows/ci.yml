@@ -1,0 +1,122 @@
+name: CI
+
+# Scaffolded by sweap's /agentic-loop-init (copy-generalized from the
+# agentic-ci convention). Job names (lint, typecheck, test, e2e) and the
+# ci-status JSON convention (see CLAUDE.md's CI section) are the contract the
+# rest of the pipeline reads — keep them stable. Every step marked
+# "<fill in for your stack>" is stack-specific and must be completed before
+# this workflow will pass.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  NO_COLOR: "1"
+  FORCE_COLOR: "0"
+  CI: "true"
+
+jobs:
+  lint:
+    runs-on: ${{ vars.RUNNER_LABEL || 'ubuntu-24.04' }}
+    timeout-minutes: 10
+    steps:
+      - uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Set up toolchain
+        run: |
+          # <fill in for your stack>: install your language runtime + deps,
+          # e.g. actions/setup-node + `npm ci`, actions/setup-python + `pip install -r requirements.txt`.
+          echo "TODO: install toolchain for your stack" && exit 1
+      - run: just lint
+      - if: always()
+        run: bash .github/scripts/ci-status.sh lint ${{ job.status }} >> "$GITHUB_STEP_SUMMARY"
+
+  typecheck:
+    runs-on: ${{ vars.RUNNER_LABEL || 'ubuntu-24.04' }}
+    timeout-minutes: 10
+    steps:
+      - uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Set up toolchain
+        run: |
+          # <fill in for your stack>
+          echo "TODO: install toolchain for your stack" && exit 1
+      - run: just typecheck
+      - if: always()
+        run: bash .github/scripts/ci-status.sh typecheck ${{ job.status }} >> "$GITHUB_STEP_SUMMARY"
+
+  test:
+    runs-on: ${{ vars.RUNNER_LABEL || 'ubuntu-24.04' }}
+    timeout-minutes: 15
+    # <fill in for your stack>: add a `services:` block here (e.g. a database
+    # or cache as a service container) only if this suite needs local services.
+    steps:
+      - uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Set up toolchain
+        run: |
+          # <fill in for your stack>
+          echo "TODO: install toolchain for your stack" && exit 1
+      - run: just test
+      - if: always()
+        run: bash .github/scripts/ci-status.sh test ${{ job.status }} >> "$GITHUB_STEP_SUMMARY"
+
+  e2e:
+    runs-on: ${{ vars.RUNNER_LABEL || 'ubuntu-24.04' }}
+    timeout-minutes: 30
+    # <fill in for your stack>: add a `services:` block here if e2e needs
+    # local service containers (database, mock mail server, etc).
+    steps:
+      - uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Set up toolchain
+        run: |
+          # <fill in for your stack>
+          echo "TODO: install toolchain for your stack" && exit 1
+      - name: Install e2e prerequisites
+        run: |
+          # <fill in for your stack>: e.g. `npx playwright install --with-deps chromium`
+          echo "TODO: install e2e prerequisites for your stack" && exit 1
+      - run: just e2e
+      - if: always()
+        run: bash .github/scripts/ci-status.sh e2e ${{ job.status }} >> "$GITHUB_STEP_SUMMARY"
+      - if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: e2e-report
+          # <fill in for your stack>: path to your e2e tool's failure report
+          path: "<fill in for your stack>"
+          if-no-files-found: ignore
+
+  ci-status:
+    needs: [lint, typecheck, test, e2e]
+    if: always()
+    runs-on: ${{ vars.RUNNER_LABEL || 'ubuntu-24.04' }}
+    timeout-minutes: 5
+    steps:
+      - uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - run: bash .github/scripts/ci-summary.sh >> "$GITHUB_STEP_SUMMARY"
+      - name: Fail if any gate failed
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1
