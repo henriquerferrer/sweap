@@ -1,0 +1,12 @@
+{
+  "name": "sweap",
+  "owner": { "name": "Henrique" },
+  "metadata": { "description": "SWE Agentic Pipeline — consumer A's agentic-dev loop, installable." },
+  "plugins": [
+    {
+      "name": "sweap",
+      "source": "./plugin",
+      "description": "Agentic-dev pipeline: per-feature loop, merge gate, roadmap/milestone/audit commands, cron driver."
+    }
+  ]
+}
