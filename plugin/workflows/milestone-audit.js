@@ -1,0 +1,156 @@
+export const meta = {
+  name: 'milestone-audit',
+  description: 'Adversarial cross-feature audit of a merged milestone (finders → refuters → confirmed findings)',
+  whenToUse: 'After the last item of a ROADMAP milestone merges, before the next milestone brainstorm. Pass {range: "<base>..<head>"} or let the Scope stage infer it from the backlog file (ROADMAP.md by default; backlog.file in the project CLAUDE.md config).',
+  phases: [
+    { title: 'Scope', detail: 'map the milestone surface (tables, routes, server fns) and resolve audit.lenses' },
+    { title: 'Find', detail: 'one finder per lens over the merged whole' },
+    { title: 'Refute', detail: 'three adversarial refuters per finding; majority kills' },
+  ],
+}
+
+const FINDINGS = {
+  type: 'object',
+  required: ['findings'],
+  properties: {
+    findings: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['title', 'file', 'severity', 'claim', 'evidence'],
+        properties: {
+          title: { type: 'string' },
+          file: { type: 'string', description: 'repo-relative path, plus :line when known' },
+          severity: { enum: ['critical', 'high', 'medium', 'low'] },
+          claim: { type: 'string', description: 'the precise defect claim, falsifiable' },
+          evidence: { type: 'string', description: 'code excerpts / reasoning that support the claim' },
+        },
+      },
+    },
+  },
+}
+
+const VERDICT = {
+  type: 'object',
+  required: ['refuted', 'reason'],
+  properties: {
+    refuted: { type: 'boolean', description: 'true if the claim does NOT hold' },
+    reason: { type: 'string' },
+  },
+}
+
+// The audit exists to catch what per-PR review structurally cannot:
+// cross-feature interactions, systemic patterns, and plan-level mistakes.
+//
+// Generic, domain-free default lenses. Projects extend via `audit.lenses` in
+// the CLAUDE.md `## sweap config` block (e.g. "default + [x, y]").
+// Keys match the playbook's "How this project is configured" listing
+// (correctness, authz/security, data-integrity, concurrency/races,
+// test-integrity, api-contract) — keep them in sync if either changes.
+const DEFAULT_LENSES = [
+  { key: 'correctness',    prompt: 'Audit the merged milestone for logic errors: off-by-one, wrong conditionals, unhandled return values, contract mismatches between callers and callees across the milestone surface.' },
+  { key: 'authz',          prompt: 'Audit authorization at every server entry point: writes gated by the project permission model; checks that gate the UI but not the server call; roles reaching data they should not.' },
+  { key: 'data-integrity', prompt: 'Audit data lifecycle as one system: create/update/archive/delete interactions with search, pagination, and references; uniqueness under concurrent writes; orphaned rows after delete.' },
+  { key: 'concurrency',    prompt: 'Audit races and ordering: last-response-wins / stale-write races on the client, non-idempotent handlers, unguarded read-modify-write, request N breaking state set by request N-1.' },
+  { key: 'test-integrity', prompt: 'Audit the tests themselves: assertions weakened to pass, tests that never exercise the claimed behavior, skipped/quarantined tests, e2e that asserts nothing observable.' },
+  { key: 'api-contract',   prompt: 'Audit public contracts: response shape changes, breaking param changes, error mapping, backward-compat of anything the milestone touched that other features consume.' },
+]
+
+// Schema for the Scope stage's lens-resolution agent (below). It reads
+// `audit.lenses` from the consuming project's `## sweap config` block in
+// CLAUDE.md and reports how to build this run's lens set:
+//   - absent, or the literal string 'default'  -> mode 'default': use
+//     DEFAULT_LENSES only.
+//   - 'default + [x, y, ...]'                  -> mode 'default-plus': use
+//     DEFAULT_LENSES PLUS a project-authored lens stub for each named extra
+//     (x, y, ...), each drafted by this Scope agent from the milestone
+//     surface — never removes the defaults.
+//   - an explicit list with no 'default' token -> mode 'explicit': use ONLY
+//     the named lenses (drafted the same way); the generic defaults are
+//     skipped entirely for this run.
+const LENS_CONFIG = {
+  type: 'object',
+  required: ['mode'],
+  properties: {
+    mode: { enum: ['default', 'default-plus', 'explicit'] },
+    lenses: {
+      type: 'array',
+      description: 'Extra/explicit lens stubs. Empty for mode "default". Populated for "default-plus" (appended to DEFAULT_LENSES) and "explicit" (used in place of DEFAULT_LENSES).',
+      items: {
+        type: 'object',
+        required: ['key', 'prompt'],
+        properties: {
+          key: { type: 'string' },
+          prompt: { type: 'string', description: 'a concrete audit instruction for this lens, drafted from the milestone surface and the project code — not a generic placeholder' },
+        },
+      },
+    },
+  },
+}
+
+const range = args?.range ?? null
+const milestone = args?.milestone ?? 'the most recently completed milestone'
+
+phase('Scope')
+const scope = await agent(
+  `In this repo, determine the merged commit range and surface for ${milestone}.` +
+    (range ? ` Use the range ${range}.` : ` Infer the range from the backlog file's [done] items' merge PR links and git log --oneline --merges.`) +
+    ` Return: the range, the list of changed files grouped by area (db schema/migrations, server fns, routes, tests), new tables, new permission actions, and the milestone's acceptance criteria copied from the backlog file.`,
+  { label: 'scope', phase: 'Scope' }
+)
+
+const lensConfig = await agent(
+  `Read the '## sweap config' block in this project's CLAUDE.md and find the 'audit.lenses' key.\n` +
+    ` - If the key is absent, or set to the literal string 'default': return mode 'default' and an empty lenses array.\n` +
+    ` - If set to 'default + [x, y, ...]': return mode 'default-plus'; for each named extra (x, y, ...) draft a lens {key, prompt} — a concrete audit instruction for that domain concern, grounded in this project's actual code/specs and the milestone scope below (not a generic placeholder).\n` +
+    ` - If set to an explicit list with no 'default' token: return mode 'explicit' and draft a lens {key, prompt} for each named entry the same way — these REPLACE the generic defaults for this run.\n\n` +
+    `Milestone scope (from a prior mapping agent):\n${scope}`,
+  { label: 'lens-config', phase: 'Scope', schema: LENS_CONFIG }
+)
+
+const LENSES = (() => {
+  const extra = lensConfig?.lenses ?? []
+  if (lensConfig?.mode === 'default-plus') return [...DEFAULT_LENSES, ...extra]
+  if (lensConfig?.mode === 'explicit') return extra.length ? extra : DEFAULT_LENSES
+  return DEFAULT_LENSES
+})()
+
+const found = await pipeline(
+  LENSES,
+  (lens) =>
+    agent(
+      `${lens.prompt}\n\nMilestone scope (from a prior mapping agent):\n${scope}\n\nRead the actual code before claiming anything. Only report findings you can support with specific code evidence. No style nits — defects only.`,
+      { label: `find:${lens.key}`, phase: 'Find', schema: FINDINGS, effort: 'high' }
+    ),
+  (result, lens) =>
+    parallel(
+      (result?.findings ?? []).map((f) => () =>
+        parallel(
+          // 3 refuters so "majority kills" is a real vote: a finding dies only
+          // when >=2 of 3 refute it. With 2 refuters, one uncertain dissenter
+          // silently killed true positives (review finding, PR #8).
+          [1, 2, 3].map((i) => () =>
+            agent(
+              `Adversarially REFUTE this audit finding about this codebase. Read the code at ${f.file} and its callers/tests yourself. Finding (lens ${lens.key}, severity ${f.severity}): ${f.title}\nClaim: ${f.claim}\nEvidence given: ${f.evidence}\n\nYour job is to prove it wrong: find the guard/test/permission check the finder missed, or show the scenario cannot occur. Default to refuted=true if the claim is uncertain, unreproducible, or already mitigated.`,
+              { label: `refute${i}:${f.title.slice(0, 30)}`, phase: 'Refute', schema: VERDICT, effort: 'high' }
+            )
+          )
+        ).then((verdicts) => {
+          const votes = verdicts.filter(Boolean)
+          const refuted = votes.filter((v) => v.refuted).length
+          // Majority of cast votes kills; lost refuter votes don't count
+          // against the finding.
+          return { ...f, lens: lens.key, confirmed: refuted < 2 }
+        })
+      )
+    )
+)
+
+const all = found.filter(Boolean).flat().filter(Boolean)
+const confirmed = all.filter((f) => f.confirmed)
+const killed = all.length - confirmed.length
+log(`${all.length} raw findings, ${killed} refuted, ${confirmed.length} confirmed`)
+
+const order = { critical: 0, high: 1, medium: 2, low: 3 }
+confirmed.sort((a, b) => order[a.severity] - order[b.severity])
+return { confirmed, stats: { raw: all.length, refuted: killed, confirmed: confirmed.length } }
