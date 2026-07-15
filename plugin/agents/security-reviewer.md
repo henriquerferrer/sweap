@@ -1,6 +1,6 @@
 ---
 name: security-reviewer
-description: Dedicated security reviewer for roadmap items tagged `review-dimensions: security` (auth, permissions, access-control rules, new data tables with access rules, session handling). Dispatch alongside the standard `reviewer` agent, before the PR merges, whenever the item carries that tag. It runs the built-in security-review skill against the branch diff and reports confirmed findings, which BLOCK the PR — this is a hard gate, not advisory.
+description: "Dedicated security reviewer for roadmap items tagged `review-dimensions: security` (auth, permissions, access-control rules, new data tables with access rules, session handling). Dispatch alongside the standard `reviewer` agent, before the PR merges, whenever the item carries that tag. It runs the built-in security-review skill against the branch diff and reports confirmed findings, which BLOCK the PR — this is a hard gate, not advisory."
 tools: Read, Grep, Glob, Bash, Skill
 ---
 
