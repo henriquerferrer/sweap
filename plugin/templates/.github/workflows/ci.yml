@@ -41,6 +41,7 @@ jobs:
           echo "TODO: install toolchain for your stack" && exit 1
       - run: just lint
       - if: always()
+        # <fill in for your stack>: write .github/scripts/ci-status.sh (not shipped)
         run: bash .github/scripts/ci-status.sh lint ${{ job.status }} >> "$GITHUB_STEP_SUMMARY"
 
   typecheck:
@@ -57,6 +58,7 @@ jobs:
           echo "TODO: install toolchain for your stack" && exit 1
       - run: just typecheck
       - if: always()
+        # <fill in for your stack>: write .github/scripts/ci-status.sh (not shipped)
         run: bash .github/scripts/ci-status.sh typecheck ${{ job.status }} >> "$GITHUB_STEP_SUMMARY"
 
   test:
@@ -75,6 +77,7 @@ jobs:
           echo "TODO: install toolchain for your stack" && exit 1
       - run: just test
       - if: always()
+        # <fill in for your stack>: write .github/scripts/ci-status.sh (not shipped)
         run: bash .github/scripts/ci-status.sh test ${{ job.status }} >> "$GITHUB_STEP_SUMMARY"
 
   e2e:
@@ -97,6 +100,7 @@ jobs:
           echo "TODO: install e2e prerequisites for your stack" && exit 1
       - run: just e2e
       - if: always()
+        # <fill in for your stack>: write .github/scripts/ci-status.sh (not shipped)
         run: bash .github/scripts/ci-status.sh e2e ${{ job.status }} >> "$GITHUB_STEP_SUMMARY"
       - if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -116,6 +120,7 @@ jobs:
         with:
           egress-policy: audit
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      # <fill in for your stack>: write .github/scripts/ci-summary.sh (not shipped)
       - run: bash .github/scripts/ci-summary.sh >> "$GITHUB_STEP_SUMMARY"
       - name: Fail if any gate failed
         if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')

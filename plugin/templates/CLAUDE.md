@@ -8,7 +8,7 @@ model, autonomy rules, and how to resume interrupted work. Specs live in
 ```
 verify.typecheck: <your typecheck cmd>     # e.g. pnpm check-types / tsc --noEmit / cargo check
 verify.lint:      <your lint cmd>
-verify.e2e:       <your e2e cmd>           # the authoritative gate command
+verify.e2e:       <your e2e cmd>           # authoritative merge gate — must run the FULL suite (unit+integration+e2e), e.g. `just ci-local`
 backlog.file:     ROADMAP.md
 backlog.prefix:   F
 # services.up:    just services-up          # uncomment only if you have local test services
