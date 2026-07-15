@@ -5,6 +5,17 @@ description: Use when building, editing, or reviewing any product-visible UI (ro
 
 # UI design process
 
+## Prerequisites (optional)
+
+The `ui` review-dimension composes the `frontend-design` and `ui-ux-pro-max`
+skills for aesthetic craft, and the Mobbin MCP (`mcp__mobbin__*` tools) for
+archetype seeding and comparative reference, when those are available in the
+consuming project/session. None of them are shipped or required by this
+plugin. If they are absent, this skill **degrades gracefully**: the a11y and
+interaction-state HARD gates (§5) still run in full — only the comparative
+aesthetic ratchet (§4/§7's ensemble critique against references) is reduced to
+whatever internal exemplar comparison remains possible.
+
 The repeatable process for producing high-quality UI. It exists because,
 undirected, coding agents converge on a generic "AI-slop" aesthetic and invent
 one-off values that make screens drift. This skill is the *process*; it

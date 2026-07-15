@@ -141,7 +141,7 @@ gets useful audits day one and appends domain lenses as it grows.
 | `commands/roadmap.md` | 3-phase milestone brainstorm (decide → cross-check → reconcile) | Read `backlog.prefix`; drop F-milestone hardcoding |
 | `commands/milestone.md` | Pre-flight (deferred scan, audit-debt scan, env/services parity) → prints the `/goal` line | Read `verify.*`, `services.up`, `turns.default`; make the Docker/services block conditional on `services.up` |
 | `commands/milestone-audit.md` + `workflows/milestone-audit.js` | Finder→refuter Workflow; majority-survives | Lenses from `audit.lenses` (default set + project extras); move the 6 hardcoded consumer A lenses into the default set |
-| `commands/init.md` (new) — `/agentic-loop-init` | Scaffolds `templates/*`; idempotent gap-fill | New authoring |
+| `commands/agentic-loop-init.md` (new) — `/agentic-loop-init` | Scaffolds `templates/*`; idempotent gap-fill | New authoring |
 | `commands/loop-schedule.md` (new) — `/loop-schedule` | Creates a cron cloud agent (`/schedule`) that starts the loop hands-off | New; wraps the scheduled-agent mechanism |
 | `hooks/*.sh` + `lib-merge-parse.sh` | Merge-greenness gate, worktree cleanup, red-main backstop | Already domain-free — repath to `${CLAUDE_PLUGIN_ROOT}`, wire in `plugin.json` |
 | `skills/milestone-cross-check` | Completeness critic (PM write-spec lens) | Strip consumer-specific gap examples; keep the fixed lens |

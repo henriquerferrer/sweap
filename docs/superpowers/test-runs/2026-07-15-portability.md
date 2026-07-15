@@ -15,6 +15,14 @@ do that live run and fill in the acceptance checklist.
 **Overall: 6 PASS, 1 FAIL.** The FAIL is a real bug (not fixed by this pass — see
 "Finding" below); the controller decides how to handle it.
 
+> **Closed out (2026-07-15):** commit `fcd846e` ("fix: quote frontmatter
+> descriptions with colon-space across all command/skill/agent files") fixed
+> `plugin/commands/roadmap.md`'s `description:` by quoting it, the same fix
+> `b0e92ee` applied to `security-reviewer.md`. All 10 frontmatter files listed
+> in the table below (9 shown here + the renamed `agentic-loop-init.md`) now
+> parse cleanly with `yaml.safe_load`. The automated sweep in this section is
+> now **fully green (7/7 PASS)** — no outstanding FAIL remains from Part A.
+
 ### 1. Manifests parse; marketplace source
 
 ```
@@ -35,7 +43,7 @@ agents/skills that `name:` is present and matches the dir/file.
 | `plugin/agents/reviewer.md` | PASS — name=`reviewer` |
 | `plugin/agents/security-reviewer.md` | PASS — name=`security-reviewer` |
 | `plugin/agents/ui-critic.md` | PASS — name=`ui-critic` |
-| `plugin/commands/init.md` | PASS — description present (commands have no `name:` field by Claude Code convention; the command name is the filename) |
+| `plugin/commands/agentic-loop-init.md` (named `init.md` at the time of this pass; renamed post-launch to avoid colliding with Claude Code's builtin `/init` — see the whole-branch review's Fix 1) | PASS — description present (commands have no `name:` field by Claude Code convention; the command name is the filename) |
 | `plugin/commands/loop-schedule.md` | PASS |
 | `plugin/commands/milestone-audit.md` | PASS |
 | `plugin/commands/milestone.md` | PASS |
@@ -73,6 +81,10 @@ integration bug found during the sweep is reported, not silently patched). The
 one-line fix is to quote the description exactly as `b0e92ee` did for
 `security-reviewer.md`.
 
+**Update (2026-07-15):** fixed in commit `fcd846e`. Re-running the same
+`yaml.safe_load` sweep against every frontmatter file confirms `roadmap.md`
+now parses; this row is superseded — see the closing note in §1 above.
+
 ### 3. Workflow: `node --check`
 
 ```
@@ -104,13 +116,14 @@ Copied `plugin/templates/.` into a fresh `mktemp -d`. All 5 files landed:
 Second-pass idempotency: appended a marker line to two destination files
 (`ROADMAP.md`, `justfile`), hashed all 5 files, re-ran a never-overwrite copy
 (`rsync -a --ignore-existing` — simulating the "never overwrite existing files"
-policy documented in `plugin/commands/init.md`, since `/init` is an LLM-driven
-prompt-command, not an executable this sweep can invoke directly), and re-hashed.
+policy documented in `plugin/commands/agentic-loop-init.md`, since
+`/agentic-loop-init` is an LLM-driven prompt-command, not an executable this
+sweep can invoke directly), and re-hashed.
 All 5 hashes were identical before/after, and both markers were still present
 (`grep -c "CUSTOM MARKER"` → 1 in each file, not duplicated or clobbered).
 **PASS.** (Caveat: this exercises the documented no-clobber contract via a policy
-equivalent, not a literal run of the `/init` slash command itself, since that
-requires a live agent session.)
+equivalent, not a literal run of the `/agentic-loop-init` slash command itself,
+since that requires a live agent session.)
 
 ### 6. Domain-token sweep
 
@@ -180,7 +193,7 @@ most likely to open first) only says:
 with no literal path. `${CLAUDE_PLUGIN_ROOT}` is not meaningful outside an active
 Claude Code session with the plugin installed, and the playbook is never copied into
 the consuming project's own tree (only `CLAUDE.md`, `ROADMAP.md`, `justfile`,
-`.github/*` are scaffolded by `/init`). This matches the open question already raised
+`.github/*` are scaffolded by `/agentic-loop-init`). This matches the open question already raised
 in the Task 5 report ("if a later task instead copies the playbook into the consuming
 project... this path reference should be reconciled"). Net effect: a session that
 opens the scaffolded `CLAUDE.md` without first invoking a sweap slash command has no
@@ -238,8 +251,11 @@ merge` calls. Runbook below.
    remote is needed to exercise the CI + `claude-review.yml` + `pre-merge-gate`
    PR-merge path for real).
 3. In an interactive Claude Code session in that repo: `/plugin install sweap`, then
-   `/agentic-loop-init` (or the command Task 4 shipped as `/init` — confirm actual
-   name at run time) to scaffold `CLAUDE.md`, `ROADMAP.md`, `justfile`,
+   `/agentic-loop-init` (this name is now final — the command file was briefly
+   named plain `init.md`, which collided with Claude Code's own builtin
+   `/init`; see the whole-branch review's Fix 1, which renamed the command
+   file under `plugin/commands/` to its current, non-colliding name) to
+   scaffold `CLAUDE.md`, `ROADMAP.md`, `justfile`,
    `.github/workflows/{ci,claude-review}.yml`.
 4. Fill in the `## sweap config` block's `verify.*` commands with trivial,
    fast-running values for a minimal Node project: e.g. `verify.typecheck: true`
@@ -258,6 +274,22 @@ merge` calls. Runbook below.
    green. Both directions must be observed live, not just via the unit test (which
    already covers this in isolation — this is confirming the wiring end-to-end in a
    real repo).
+8. **Unverified hook-schema field — assert it during this live run.**
+   `plugin/plugin.json`'s `PostToolUse` entry for `post-merge-cleanup.sh` sets
+   `"if": "Bash(gh pr merge:*)"` so the cleanup hook only fires on a real merge
+   command, not on every `Bash` call. This `if` key's exact matching semantics
+   are not independently confirmed anywhere in this repo's automated checks
+   (the hook test harness stubs the script directly; it does not exercise the
+   loader's own conditional-dispatch behavior). During the real merge in step 7,
+   explicitly confirm: (a) `post-merge-cleanup.sh` actually runs after `gh pr
+   merge` and only after it — not after unrelated `Bash` calls earlier in the
+   session — and (b) it is honored by the Claude Code hook loader as gating
+   dispatch, not merely present-but-ignored. If the loader does **not** honor
+   `if` as a dispatch gate (e.g. it fires the hook unconditionally and relies on
+   the hook script itself to no-op), then `post-merge-cleanup.sh` should be
+   made to self-gate (re-derive and check the `gh pr merge` condition inside the
+   script, the way `post-merge-redcheck.sh` already does via
+   `parse_merge_command`) rather than relying on the untrusted `if` field.
 
 ### 3c. Acceptance checklist (spec §5)
 

@@ -242,7 +242,7 @@ git commit -m "feat: generalized agentic-loop playbook"
 ### Task 4: `/agentic-loop-init` command + scaffold templates
 
 **Files:**
-- Create: `plugin/commands/init.md`
+- Create: `plugin/commands/agentic-loop-init.md` (final shipped name; drafted below under its original working filename `init.md`, renamed post-launch to avoid colliding with Claude Code's builtin `/init`)
 - Create: `plugin/templates/CLAUDE.md`
 - Create: `plugin/templates/ROADMAP.md`
 - Create: `plugin/templates/justfile`
@@ -323,7 +323,7 @@ cp ~/Documents/consumer-a/.github/workflows/claude-review.yml plugin/templates/.
 ```
 Then edit each: replace consumer-specific recipe bodies (pnpm/turbo/wsproxy/postgres service containers) with clearly-marked `# <fill in for your stack>` recipe stubs that keep the **recipe names** (`lint`, `typecheck`, `test`, `e2e`, `ci-local`, `ci-replay`) and the agent-parseable JSON status-block convention (documented in CLAUDE.md's CI section, which you also copy-generalize into the template CLAUDE.md). The names are the contract commands depend on; the bodies are project-specific. (These stubs are the one deliberate exception to "no placeholders" — a scaffold template is meant to be filled per project — and each is explicitly marked as fill-in.)
 
-- [ ] **Step 4: Write `plugin/commands/init.md`** — the scaffold command:
+- [ ] **Step 4: Write `plugin/commands/agentic-loop-init.md`** — the scaffold command:
 
 ````markdown
 ---
@@ -363,7 +363,7 @@ Expected: `CLAUDE.md`, `ROADMAP.md`, `justfile`, `.github/workflows/{ci,claude-r
 - [ ] **Step 6: Commit**
 
 ```bash
-git add plugin/commands/init.md plugin/templates
+git add plugin/commands/agentic-loop-init.md plugin/templates
 git commit -m "feat: /agentic-loop-init command + scaffold templates"
 ```
 
