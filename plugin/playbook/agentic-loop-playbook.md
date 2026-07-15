@@ -27,10 +27,14 @@ overrides only the keys that differ from the baked defaults. The keys:
 - **`services.up`** — optional command that brings up local test services. **Omit
   it entirely if the project has no local services** — the pipeline then runs in
   CI-gated mode (see Environment parity).
-- **`audit.lenses`** — the milestone-audit finder lenses. Default = **the generic
-  default lens set defined in the audit workflow** (correctness, authz/security,
-  data-integrity, concurrency/races, test-integrity, api-contract). Projects
-  **append domain lenses** here (they never remove the defaults).
+- **`audit.lenses`** — the milestone-audit finder lenses. Three modes: **`default`**
+  uses the generic default lens set defined in the audit workflow (correctness,
+  authz/security, data-integrity, concurrency/races, test-integrity, api-contract);
+  **`default + [x, y]`** keeps that default set and appends project domain lenses
+  `x, y` — the preferred, common case; an **explicit list with no `default`** uses
+  only those lenses for the run, replacing the defaults entirely. CAUTION: a fully
+  explicit list drops the generic default coverage, so use it deliberately, only
+  when you truly want a custom set.
 - **`review.dimensions`** — the conditional review dimensions a roadmap item may
   tag. Default: **`security`, `ui`, `migration`**.
 - **`notify`** — end-of-run notification channel: **`push`** or **`none`**.
@@ -351,8 +355,10 @@ When the last item of a milestone merges, run the saved audit workflow via
 merged whole with the finder lenses declared in `audit.lenses` — by default **the
 generic default lens set defined in the audit workflow** (correctness,
 authz/security, data-integrity, concurrency/races, test-integrity, api-contract),
-plus whatever **domain lenses the project appends via `audit.lenses`** — and
-adversarially refutes every finding — only majority-surviving findings are
+optionally extended with **domain lenses the project appends via `audit.lenses`**
+(the preferred `default + [...]` form), or replaced entirely by an explicit list
+when the project deliberately wants a custom set — and adversarially refutes
+every finding — only majority-surviving findings are
 reported. It exists to catch what per-PR review structurally cannot: cross-feature
 interactions, systemic patterns, and plan-level mistakes.
 
