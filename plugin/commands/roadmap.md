@@ -1,5 +1,5 @@
 ---
-description: Brainstorm the next milestone into ROADMAP items (3-phase: decide → cross-check → reconcile).
+description: "Brainstorm the next milestone into ROADMAP items (3-phase: decide → cross-check → reconcile)."
 argument-hint: "[milestone] — defaults to the next unspecced milestone"
 ---
 
