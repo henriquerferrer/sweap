@@ -17,7 +17,9 @@ overrides only the keys that differ from the baked defaults. The keys:
   e.g. `just typecheck`).
 - **`verify.lint`** — the lint command (project-specific; e.g. `just lint`).
 - **`verify.e2e`** — the end-to-end test command. **This is the authoritative
-  merge gate** (project-specific; e.g. `just e2e`).
+  merge gate** (project-specific; e.g. `just e2e`). It must run the project's
+  full automated test suite (unit + integration + e2e) — there is no separate
+  unit-test key; passing `verify.e2e` is what certifies unit tests passed too.
 - **`backlog.file`** — the backlog/roadmap file. Default **`ROADMAP.md`**.
 - **`backlog.prefix`** — the milestone-tag prefix. Default **`F`** (so milestones
   read `F1`, `F2`, … and items `F1.1`, `F1.2`, …). Referred to below as *the
@@ -32,6 +34,7 @@ overrides only the keys that differ from the baked defaults. The keys:
 - **`review.dimensions`** — the conditional review dimensions a roadmap item may
   tag. Default: **`security`, `ui`, `migration`**.
 - **`notify`** — end-of-run notification channel: **`push`** or **`none`**.
+  Default **`push`**.
 - **`turns.default`** — the default turn budget for an autonomous run. Default
   **`160`**.
 
