@@ -28,7 +28,10 @@ Then pick the run shape:
 Deferred-item backstop (see the playbook's "Deferred items" section). Before
 resolving the milestone, scan ROADMAP.md for newly-unblocked **`[deferred]`**
 items — these may have unblocked outside an autonomous run (e.g. a hand-merged
-dependency) and the end-of-run scan never fired. An item counts as unblocked when
+dependency) and the end-of-run scan never fired. Match only ROADMAP **item
+headers** (lines beginning with `### ` that carry a status tag) — never the
+status-tag legend/explainer line or a prose mention of `[deferred]`, both of
+which are false positives for a naive substring match. An item counts as unblocked when
 either: (a) every **item-level** `Depends on:` (a taggable ID like `F4.3` using
 the configured prefix) is `[done]`; or (b) a **milestone-level** `Depends on:`
 (a bare `F#`) has *completed* — that milestone's section exists and every item
@@ -44,7 +47,9 @@ Audit-debt scan (see the playbook's "Milestone audit" section). Collect the
 debt set `D`: every `### …` item under a `## <backlog.prefix># audit follow-ups`
 section that is `[todo]` AND unblocked (all `Depends on:` items are `[done]`;
 `[blocked]` and `[deferred]` items are excluded — same rule as the
-top-of-backlog picker). These are auto-folded into this run's scope **ahead of**
+top-of-backlog picker). As with the deferred scan, match only ROADMAP item
+headers (`### …` lines carrying a status tag), never the status-tag
+legend/explainer line or a prose mention of a tag. These are auto-folded into this run's scope **ahead of**
 the named milestone's items (debt-first). Report the list of items in `D`. Like
 the deferred scan, this is stateless — it just re-reads current statuses — so
 running it here every time is safe and idempotent. (An item in `D` that turns

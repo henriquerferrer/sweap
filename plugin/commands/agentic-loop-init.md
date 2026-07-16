@@ -10,7 +10,13 @@ at the same relative path, with these rules:
 2. **CLAUDE.md merge:** if the project already has a `CLAUDE.md` but it lacks a
    `## sweap config` block, append the config block + standing-prefs section from
    the template rather than skipping the whole file. If a `## sweap config` block
-   already exists, leave it.
+   already exists, leave it. Also ensure the playbook pointer is present: if the
+   existing CLAUDE.md doesn't already mention the sweap playbook, append (near the
+   top, or alongside the appended config block) a short line such as "Read the
+   sweap playbook (the sweap plugin's `playbook/agentic-loop-playbook.md`) before
+   any feature work — it defines the operating model and autonomy rules." Skip
+   this if a playbook mention is already present (idempotent — never duplicate
+   it).
 3. **Red-flag gitignore rule:** `post-merge-redcheck.sh` writes a marker file at
    `.claude/main-red-<sha>.flag` and documents it as gitignored, so ensure the
    project's `.gitignore` actually excludes it:
