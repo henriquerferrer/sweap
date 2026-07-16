@@ -21,9 +21,12 @@ overrides only the keys that differ from the baked defaults. The keys:
   full automated test suite (unit + integration + e2e) — there is no separate
   unit-test key; passing `verify.e2e` is what certifies unit tests passed too.
 - **`backlog.file`** — the backlog/roadmap file. Default **`ROADMAP.md`**.
-- **`backlog.prefix`** — the milestone-tag prefix. Default **`F`** (so milestones
-  read `F1`, `F2`, … and items `F1.1`, `F1.2`, …). Referred to below as *the
-  milestone prefix*.
+- **`backlog.prefix`** — the milestone-tag prefix(es), as one or more
+  comma-separated values (e.g. `F` or `F, DS`). Default **`F`** (so milestones
+  read `F1`, `F2`, … and items `F1.1`, `F1.2`, …). When more than one prefix is
+  configured, `/milestone` resolves the next runnable milestone across ALL of
+  them, in top-of-file order — a milestone is a milestone regardless of prefix.
+  Referred to below as *the milestone prefix*.
 - **`services.up`** — optional command that brings up local test services. **Omit
   it entirely if the project has no local services** — the pipeline then runs in
   CI-gated mode (see Environment parity).
@@ -372,6 +375,17 @@ no cron, no standing agent. Standard template:
 > of done; and when the last item merges, run `/milestone-audit` for that range,
 > triage the confirmed findings (below), and post a summary before stopping.
 > Stop when only [blocked] items remain, or after N turns.*
+
+This applies to **every** milestone regardless of prefix — a second prefix
+(e.g. `DS.*`) gets audited exactly like the primary one (`/milestone` resolves
+across all configured prefixes and always emits the audit clause; see
+`backlog.prefix` above). A milestone `/goal` that omits the audit-and-triage
+clause is **malformed**: the run drains its items but stops before auditing,
+which is stopping early — the audit is part of the milestone's definition of
+done, not an optional extra. If a milestone goal is ever hand-written rather
+than printed by `/milestone`, the audit clause still travels with it. (Learned
+the hard way: a hand-written milestone goal that once omitted the clause
+drained its items but stopped before its audit.)
 
 The evaluator won't call the goal met until the audit has run and its findings
 are triaged. The `/milestone-audit` **workflow itself is read-only** — it finds

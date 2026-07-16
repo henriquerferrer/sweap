@@ -8,11 +8,14 @@ Read `CLAUDE.md`, `${CLAUDE_PLUGIN_ROOT}/playbook/agentic-loop-playbook.md`, and
 
 Resolve the run:
 - Read `backlog.prefix` from the `## sweap config` block in `CLAUDE.md` (default
-  `F`) — this is the milestone-tag prefix used below.
-- **Milestone `M`** = the first argument if given (e.g. `F2` using the
-  configured prefix); otherwise the lowest-numbered milestone in ROADMAP.md that
-  has `[todo]` items whose dependencies are all `[done]` (the next runnable
-  milestone).
+  `F`) as a comma-separated LIST of one or more milestone-tag prefixes (e.g. `F`
+  or `F, DS`) — these are the prefixes used below.
+- **Milestone `M`** = the first argument if given (e.g. `F2` or `DS.3`, using
+  any configured prefix); otherwise the next runnable milestone in ROADMAP.md —
+  across ALL configured prefixes, taken in top-of-file order — that has `[todo]`
+  items whose dependencies are all `[done]` (the next runnable milestone). A
+  milestone is a milestone regardless of prefix: a `DS.3` run gets the same
+  audit-inclusive goal as an `F2` run.
 - **Audit debt `D`** = the outstanding audit follow-ups from the audit-debt scan
   below.
 - **Turns** = the second argument if given; otherwise `turns.default` from the
@@ -32,11 +35,12 @@ dependency) and the end-of-run scan never fired. Match only ROADMAP **item
 headers** (lines beginning with `### ` that carry a status tag) — never the
 status-tag legend/explainer line or a prose mention of `[deferred]`, both of
 which are false positives for a naive substring match. An item counts as unblocked when
-either: (a) every **item-level** `Depends on:` (a taggable ID like `F4.3` using
-the configured prefix) is `[done]`; or (b) a **milestone-level** `Depends on:`
-(a bare `F#`) has *completed* — that milestone's section exists and every item
-in it is `[done]` (this pre-flight is the designated surfacing point for
-milestone-level deps, which the item scan cannot catch). For each unblocked
+either: (a) every **item-level** `Depends on:` (a taggable ID like `F4.3` or
+`DS.4`, using any configured prefix) is `[done]`; or (b) a **milestone-level**
+`Depends on:` (a bare milestone tag like `F#` or `DS#`) has *completed* — that
+milestone's section exists and every item in it is `[done]` (this pre-flight
+is the designated surfacing point for milestone-level deps, which the item
+scan cannot catch). For each unblocked
 item, apply the lifecycle: if its `Premise:` is machine-checkable and verifiably
 holds, promote it to `[todo]` (it may then be this run's work); otherwise list
 it for the human to re-decide (re-spec or drop) — do not promote on a stale or
@@ -44,8 +48,9 @@ uncheckable premise. Report any you found. The scan is stateless (just re-reads
 current statuses), so running it here every time is safe and idempotent.
 
 Audit-debt scan (see the playbook's "Milestone audit" section). Collect the
-debt set `D`: every `### …` item under a `## <backlog.prefix># audit follow-ups`
-section that is `[todo]` AND unblocked (all `Depends on:` items are `[done]`;
+debt set `D`: every `### …` item under a `## <prefix># audit follow-ups`
+section — for ANY configured prefix (e.g. `## F2 audit follow-ups` or `## DS.3
+audit follow-ups`) — that is `[todo]` AND unblocked (all `Depends on:` items are `[done]`;
 `[blocked]` and `[deferred]` items are excluded — same rule as the
 top-of-backlog picker). As with the deferred scan, match only ROADMAP item
 headers (`### …` lines carrying a status tag), never the status-tag
@@ -85,13 +90,27 @@ Then **print** the exact goal line, filled in, for the user to paste — do NOT
 try to set `/goal` yourself (only the user can invoke it). Pick the template by
 run shape from "Resolve the run" above.
 
+**Non-negotiable for any milestone run (regardless of prefix):** the goal line
+MUST carry the "…and the `<MILESTONE>` milestone-audit has run and been
+triaged" clause. A milestone is not complete until its audit has run — a run
+that drains every item but stops before the audit has stopped early. This
+holds whether the goal is printed here or hand-written: if a milestone `/goal`
+is ever hand-written rather than printed by `/milestone` (or the user pastes
+one), the audit-and-triage clause is part of the definition of done, not
+optional. For a UI-heavy milestone (its `review.dimensions` tags include `ui`)
+the audit clause covers **both** the `/milestone-audit` code pass **and** the
+Tier-2 UI audit (see the playbook's "Milestone audit" section and the
+`ui-design` skill §7). The only run shape without an audit is the **debt-only**
+run below (you don't audit a debt-drain).
+
 **Milestone + debt** (an `M` was resolved):
 
 ```
 /goal First, every outstanding audit follow-up item in ROADMAP.md is [done];
 then every unblocked <MILESTONE> item is [done] per its definition of done, and
-the <MILESTONE> milestone-audit has run and been triaged. Stop when only
-[blocked] items remain, or after <TURNS> turns.
+the <MILESTONE> milestone-audit (plus the Tier-2 UI audit for a UI-heavy
+milestone) has run and been triaged. Stop when only [blocked] items remain, or
+after <TURNS> turns.
 ```
 
 **Debt-only** (no runnable `M`, but `D` is non-empty):

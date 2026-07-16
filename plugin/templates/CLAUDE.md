@@ -10,7 +10,7 @@ verify.typecheck: <your typecheck cmd>     # e.g. pnpm check-types / tsc --noEmi
 verify.lint:      <your lint cmd>
 verify.e2e:       <your e2e cmd>           # authoritative merge gate — must run the FULL suite (unit+integration+e2e), e.g. `just ci-local`
 backlog.file:     ROADMAP.md
-backlog.prefix:   F
+backlog.prefix:   F                        # one or more comma-separated prefixes, e.g. `F` or `F, DS`
 # services.up:    just services-up          # uncomment only if you have local test services
 audit.lenses:     default
 review.dimensions: security, ui, migration

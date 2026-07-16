@@ -8,10 +8,14 @@ Read `CLAUDE.md`, `${CLAUDE_PLUGIN_ROOT}/playbook/agentic-loop-playbook.md`, and
 
 Resolve the milestone:
 - Read `backlog.prefix` from the `## sweap config` block in `CLAUDE.md` (default
-  `F`) — this is the milestone-tag prefix used below.
-- The first argument if given (e.g. `F3` using the configured prefix);
-  otherwise the next milestone from the "Later milestones" sketch that has **no
-  active ROADMAP items yet** (the next one to author).
+  `F`) as a comma-separated LIST of one or more milestone-tag prefixes (e.g. `F`
+  or `F, DS`) — the milestone arg (below) names which one this milestone uses;
+  when authoring a brand-new milestone with no arg, default to the first
+  listed prefix.
+- The first argument if given (e.g. `F3` or `DS.4`, naming its prefix
+  explicitly); otherwise the next milestone from the "Later milestones" sketch
+  that has **no active ROADMAP items yet** (the next one to author), using the
+  default prefix above.
 
 Run the **milestone brainstorm** exactly as the playbook's "Milestone brainstorm"
 section defines it. The three decision phases (decide, cross-check, reconcile)
@@ -26,7 +30,8 @@ review is asked for:
    and draft items in the ROADMAP house format (status tag, `Depends on:`,
    `review-dimensions:`, e2e acceptance criteria). Before drafting, surface any
    outstanding audit follow-ups (unblocked `[todo]` items under a
-   `## <backlog.prefix># audit follow-ups` section) as read-only context, so the
+   `## <prefix># audit follow-ups` section, for any configured prefix) as
+   read-only context, so the
    new milestone isn't authored blind to pending fixes on the same surface. When
    scanning for these, match only ROADMAP item headers (`### …` lines carrying a
    status tag), never the status-tag legend/explainer line or a prose mention of
