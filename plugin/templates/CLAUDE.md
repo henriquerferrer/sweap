@@ -1,5 +1,6 @@
 # <project> — agent instructions
 
+<!-- sweap:begin -->
 **Read the sweap playbook before any feature work:** it defines the operating
 model, autonomy rules, and how to resume interrupted work. Specs live in
 `docs/superpowers/specs/`, plans in `docs/superpowers/plans/`. Backlog: `ROADMAP.md`.
@@ -33,6 +34,7 @@ turns.default:    160
   record the question on the item in ROADMAP.md, notify, move to the next item.
 - Honor each ROADMAP item's `review-dimensions` tags.
 - At the end of an autonomous run: notify with merged-PRs + blocked-items summary.
+<!-- sweap:end -->
 
 <!-- agentic-ci: ci-section -->
 ## CI

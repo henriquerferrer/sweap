@@ -2,30 +2,35 @@
 description: Scaffold sweap's project-owned files (CLAUDE.md config, ROADMAP, justfile, .github) into this repo. Idempotent.
 ---
 
-Copy each file under `${CLAUDE_PLUGIN_ROOT}/templates/` into the current project
-at the same relative path, with these rules:
+This project is normally auto-scaffolded on first session by the sweap plugin's
+`SessionStart` hook (`hooks/scaffold.sh`) — you're running this command as the
+explicit repair/re-run path (e.g. the hook didn't fire, files got deleted, or
+you want to re-check for drift). It shares the exact same scaffold logic as the
+hook, so there is only one implementation to keep correct.
 
-1. **Never overwrite.** For each template file, if the destination already
-   exists, skip it and report "kept existing <path>". Only create missing files.
+Run the scaffold now:
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}"/hooks/scaffold.sh <<< "$(printf '{"cwd":"%s","source":"init-command"}' "$PWD")"
+```
+
+This mechanically, idempotently:
+
+1. **Never overwrites.** For each template file under
+   `${CLAUDE_PLUGIN_ROOT}/templates/`, if the destination already exists in
+   this project, it's skipped. Only missing files are created.
 2. **CLAUDE.md merge:** if the project already has a `CLAUDE.md` but it lacks a
-   `## sweap config` block, append the config block + standing-prefs section from
-   the template rather than skipping the whole file. If a `## sweap config` block
-   already exists, leave it. Also ensure the playbook pointer is present: if the
-   existing CLAUDE.md doesn't already mention the sweap playbook, append (near the
-   top, or alongside the appended config block) a short line such as "Read the
-   sweap playbook (the sweap plugin's `playbook/agentic-loop-playbook.md`) before
-   any feature work — it defines the operating model and autonomy rules." Skip
-   this if a playbook mention is already present (idempotent — never duplicate
-   it).
-3. **Red-flag gitignore rule:** `post-merge-redcheck.sh` writes a marker file at
-   `.claude/main-red-<sha>.flag` and documents it as gitignored, so ensure the
-   project's `.gitignore` actually excludes it:
-   - If `.gitignore` exists and does not already contain the line
-     `.claude/main-red-*.flag`, append it (on its own line).
-   - If `.gitignore` exists and already contains that line, leave it unchanged
-     (idempotent — never duplicate the line on re-run).
-   - If no `.gitignore` exists, create one containing just that line.
-4. After copying, print a checklist for the human:
+   `## sweap config` block, appends the template's `<!-- sweap:begin -->` …
+   `<!-- sweap:end -->` region (playbook pointer + config block + standing-prefs,
+   together, so the playbook pointer can never be dropped by the merge). If a
+   `## sweap config` block already exists, leaves it — idempotent.
+3. **Red-flag gitignore rule:** ensures the project's `.gitignore` excludes
+   `post-merge-redcheck.sh`'s marker file (`.claude/main-red-*.flag`), appending
+   the line only if missing, creating `.gitignore` if absent — never duplicated.
+
+Report back to the human exactly what the script's summary said it created,
+kept, or merged. Then walk through this checklist regardless of what the
+script reported (these are the fill-ins the script cannot do for you):
    - Fill in the `verify.typecheck` / `verify.lint` / `verify.e2e` commands in
      the `## sweap config` block (`verify.e2e` must run the full automated test
      suite — unit + integration + e2e — it is the authoritative merge gate).
@@ -41,8 +46,6 @@ at the same relative path, with these rules:
    - Generate a `CLAUDE_CODE_OAUTH_TOKEN` repo secret (`claude setup-token`,
      then `gh secret set`) so `.github/workflows/claude-review.yml` runs.
    - Write the first ROADMAP milestone with `/roadmap`.
-5. Report exactly which files were created, which were kept, and the fill-in
-   TODOs above.
 
 Do not commit — leave the scaffolded files staged-or-unstaged for the human to
 review, since CI and verify commands are stack-specific and must be filled in
