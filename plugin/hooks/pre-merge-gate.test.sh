@@ -50,12 +50,12 @@ case "$mode" in
       {"__typename":"CheckRun","name":"lint","status":"COMPLETED","conclusion":"SUCCESS"},
       {"__typename":"CheckRun","name":"e2e","status":"COMPLETED","conclusion":"SUCCESS"},
       {"__typename":"CheckRun","name":"review","status":"COMPLETED","conclusion":"SUCCESS"}
-    ],"mergeCommit":{"oid":"deadbeef"}}' ;;
+    ],"mergeStateStatus":"CLEAN","mergeCommit":{"oid":"deadbeef"}}' ;;
   skipped)
     echo '{"statusCheckRollup":[
       {"__typename":"CheckRun","name":"lint","status":"COMPLETED","conclusion":"SUCCESS"},
       {"__typename":"CheckRun","name":"optional","status":"COMPLETED","conclusion":"SKIPPED"}
-    ],"mergeCommit":{"oid":"deadbeef"}}' ;;
+    ],"mergeStateStatus":"CLEAN","mergeCommit":{"oid":"deadbeef"}}' ;;
   failure)
     echo '{"statusCheckRollup":[
       {"__typename":"CheckRun","name":"lint","status":"COMPLETED","conclusion":"SUCCESS"},
@@ -67,6 +67,22 @@ case "$mode" in
       {"__typename":"CheckRun","name":"lint","status":"COMPLETED","conclusion":"SUCCESS"},
       {"__typename":"CheckRun","name":"e2e","status":"IN_PROGRESS","conclusion":null}
     ],"mergeCommit":{"oid":"deadbeef"}}' ;;
+  behind)   # green checks, but the branch is BEHIND the base — stale green
+    echo '{"statusCheckRollup":[
+      {"__typename":"CheckRun","name":"lint","status":"COMPLETED","conclusion":"SUCCESS"},
+      {"__typename":"CheckRun","name":"e2e","status":"COMPLETED","conclusion":"SUCCESS"},
+      {"__typename":"CheckRun","name":"review","status":"COMPLETED","conclusion":"SUCCESS"}
+    ],"mergeStateStatus":"BEHIND","mergeCommit":{"oid":"deadbeef"}}' ;;
+  nostate)  # green checks, mergeStateStatus absent (old gh / API oddity)
+    echo '{"statusCheckRollup":[
+      {"__typename":"CheckRun","name":"lint","status":"COMPLETED","conclusion":"SUCCESS"},
+      {"__typename":"CheckRun","name":"e2e","status":"COMPLETED","conclusion":"SUCCESS"}
+    ],"mergeCommit":{"oid":"deadbeef"}}' ;;
+  unknownstate)  # green checks, GitHub still computing mergeability
+    echo '{"statusCheckRollup":[
+      {"__typename":"CheckRun","name":"lint","status":"COMPLETED","conclusion":"SUCCESS"},
+      {"__typename":"CheckRun","name":"e2e","status":"COMPLETED","conclusion":"SUCCESS"}
+    ],"mergeStateStatus":"UNKNOWN","mergeCommit":{"oid":"deadbeef"}}' ;;
 esac
 exit 0
 STUB
@@ -141,6 +157,24 @@ out="$(run_gate empty 'gh pr merge 42 --squash')"
 if is_deny "$out" && printf '%s' "$(reason "$out")" | grep -qi 'no checks'; then
   ok "d3) empty rollup -> deny-recoverable"
 else bad "d3) empty rollup -> deny-recoverable" "out: $out"; fi
+
+# (d4) green checks but branch BEHIND base -> DENY (stale green; combined state unverified)
+out="$(run_gate behind 'gh pr merge 42 --squash')"
+if is_deny "$out" && printf '%s' "$(reason "$out")" | grep -q 'BEHIND'; then
+  ok "d4) behind base -> deny (rebase first)"
+else bad "d4) behind -> deny" "out: $out"; fi
+
+# (d5) mergeStateStatus missing -> DENY (recoverable, fail-closed on uncertainty)
+out="$(run_gate nostate 'gh pr merge 42 --squash')"
+if is_deny "$out" && printf '%s' "$(reason "$out")" | grep -qi 'freshness'; then
+  ok "d5) mergeStateStatus missing -> deny-recoverable"
+else bad "d5) missing state -> deny-recoverable" "out: $out"; fi
+
+# (d6) mergeStateStatus UNKNOWN -> DENY (recoverable; GitHub still computing)
+out="$(run_gate unknownstate 'gh pr merge 42 --squash')"
+if is_deny "$out" && printf '%s' "$(reason "$out")" | grep -qi 'freshness'; then
+  ok "d6) mergeStateStatus UNKNOWN -> deny-recoverable"
+else bad "d6) UNKNOWN state -> deny-recoverable" "out: $out"; fi
 
 # (e1) --admin -> DENY (never queries gh; use green stub to prove it's the flag)
 out="$(run_gate green 'gh pr merge 42 --admin --squash')"

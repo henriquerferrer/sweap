@@ -14,6 +14,11 @@
 # e2e had FAILED got merged and briefly broke `main`. This hook removes the
 # human-reads-the-output link from the chain.
 #
+# It ALSO denies a PR whose branch is BEHIND its base (mergeStateStatus) —
+# green checks against an old base say nothing about the combined state that
+# would land, which is the hazard of parallel runs (see the parallel-runs
+# spec, 2026-07-18). Missing/UNKNOWN mergeability denies recoverably.
+#
 # DESIGN INVARIANTS (this hook STRENGTHENS the gate; it must never weaken it):
 #   - It only ever emits a DENY or stays silent. It NEVER emits an allow/approve,
 #     so it can only ADD denials on top of the normal permission flow — it can
@@ -179,7 +184,7 @@ verify_pr() {
     emit_deny "merge-gate: could not allocate a temp file to verify checks. Denying (recoverable) — re-run the merge."
     return 1
   fi
-  gh pr view "$pr" --json statusCheckRollup >"$tmp" 2>/dev/null &
+  gh pr view "$pr" --json statusCheckRollup,mergeStateStatus >"$tmp" 2>/dev/null &
   ghpid=$!
   ( sleep "$timeout"; kill -TERM "$ghpid" 2>/dev/null ) &
   watcher=$!
@@ -216,6 +221,20 @@ verify_pr() {
   ' 2>/dev/null)"
   if [ -n "$offenders" ]; then
     emit_deny "merge-gate: PR #$pr is NOT green — refusing to merge. Not-green checks: $offenders. Wait for them to pass (or fix a failure) and re-run; the gate is the control, not a prompt."
+    return 1
+  fi
+  # Base-freshness gate: green checks that ran against an OLD base are not
+  # evidence about the COMBINED state that would actually land (a "real
+  # conflict" is invisible per-branch). BEHIND ⇒ deny with the rebase recipe.
+  # Missing/UNKNOWN ⇒ deny recoverably (uncertainty is never an allow).
+  local mstate
+  mstate="$(printf '%s' "$json" | jq -r '(.mergeStateStatus // "") | ascii_upcase' 2>/dev/null)"
+  if [ "$mstate" = "BEHIND" ]; then
+    emit_deny "merge-gate: PR #$pr is BEHIND the base branch — its green checks ran against an old base, so the combined state is unverified. Rebase (git fetch origin && git rebase origin/main && git push --force-with-lease), wait for CI to go green on the rebased head, then re-run the merge."
+    return 1
+  fi
+  if [ -z "$mstate" ] || [ "$mstate" = "UNKNOWN" ]; then
+    emit_deny "merge-gate: could not determine PR #$pr's freshness against the base branch (mergeStateStatus: ${mstate:-missing}). The gate fails CLOSED — re-run the merge once GitHub reports mergeability."
     return 1
   fi
   return 0
