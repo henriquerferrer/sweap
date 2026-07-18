@@ -19,18 +19,25 @@
 #   1. Resolve the project dir from $CLAUDE_PROJECT_DIR, falling back to the
 #      `.cwd` field of the JSON payload on stdin. Silent no-op if empty.
 #   2. Only scaffold a real project (has a `.git`) — never a random dir.
-#   3. Fast-guard: if CLAUDE.md exists and already has a `## sweap config`
+#   3. Gitignore self-heal — runs on EVERY session start, BEFORE the
+#      fast-guard: ensure `.gitignore` excludes sweap's runtime files
+#      (`.claude/main-red-*.flag`, `.claude/sweap-board.md`), appending only the
+#      lines that are missing (never duplicating, never overwriting), creating
+#      `.gitignore` if absent. Because this precedes the fast-guard, projects
+#      scaffolded before a rule existed still gain it on their next session.
+#   4. Fast-guard: if CLAUDE.md exists and already has a `## sweap config`
 #      block, this project is already scaffolded — exit 0 immediately, no
-#      output, nothing touched.
-#   4. Otherwise copy every file under templates/ to the same relative path,
+#      output, nothing else touched (the gitignore self-heal in step 3 has
+#      already run).
+#   5. Otherwise copy every file under templates/ to the same relative path,
 #      skipping any destination that already exists (track what's created).
 #      If CLAUDE.md already existed (so it was skipped) and lacks
 #      `## sweap config`, append the template's appendable region (delimited
 #      by `<!-- sweap:begin -->` / `<!-- sweap:end -->` in
 #      templates/CLAUDE.md) — this carries the playbook pointer + config
 #      block + standing-prefs together, so the merge can never drop the
-#      playbook pointer. Ensure `.gitignore` excludes the red-main flag file.
-#   5. Emit a SessionStart `additionalContext` JSON message (falls back to
+#      playbook pointer.
+#   6. Emit a SessionStart `additionalContext` JSON message (falls back to
 #      plain stdout if jq is unavailable) summarizing what happened and the
 #      human fill-in TODOs.
 
@@ -60,13 +67,33 @@ fi
 
 [ -e "$proj/.git" ] || exit 0
 
-# --- 3. Idempotency fast-guard ----------------------------------------------
+# --- 3. Gitignore self-heal (runs BEFORE the fast-guard) --------------------
+# Ensure sweap's runtime files are excluded, never duplicated. This runs on
+# EVERY session start, ahead of the already-scaffolded fast-guard below, so that
+# projects scaffolded before a rule was added (e.g. the sweap-board entry) still
+# gain it on their next session — a fast-guard exit would otherwise skip it. Only
+# depends on $proj + the .git check above. Idempotent: grep-before-append, never
+# duplicate, never overwrite. Silent (the summary in step 6 is only reached on
+# the full-scaffold path; on the fast-guard path this heals quietly and exits 0).
+gitignore_action="unchanged"
+gi="$proj/.gitignore"
+for gitignore_line in '.claude/main-red-*.flag' '.claude/sweap-board.md'; do
+  if [ -f "$gi" ]; then
+    if ! grep -qF "$gitignore_line" "$gi" 2>/dev/null; then
+      printf '%s\n' "$gitignore_line" >> "$gi" 2>/dev/null && gitignore_action="appended"
+    fi
+  else
+    printf '%s\n' "$gitignore_line" > "$gi" 2>/dev/null && gitignore_action="created"
+  fi
+done
+
+# --- 4. Idempotency fast-guard ----------------------------------------------
 
 if [ -f "$proj/CLAUDE.md" ] && grep -qF '## sweap config' "$proj/CLAUDE.md" 2>/dev/null; then
   exit 0
 fi
 
-# --- 4. Scaffold -------------------------------------------------------------
+# --- 5. Scaffold -------------------------------------------------------------
 
 plugin_root="${CLAUDE_PLUGIN_ROOT:-}"
 tmpl="${plugin_root%/}/templates"
@@ -97,20 +124,7 @@ if [ "$existing_claude_md" = "1" ] && ! grep -qF '## sweap config' "$proj/CLAUDE
   fi
 fi
 
-# .gitignore: ensure sweap's runtime files are excluded, never duplicated.
-gitignore_action="unchanged"
-gi="$proj/.gitignore"
-for gitignore_line in '.claude/main-red-*.flag' '.claude/sweap-board.md'; do
-  if [ -f "$gi" ]; then
-    if ! grep -qF "$gitignore_line" "$gi" 2>/dev/null; then
-      printf '%s\n' "$gitignore_line" >> "$gi" 2>/dev/null && gitignore_action="appended"
-    fi
-  else
-    printf '%s\n' "$gitignore_line" > "$gi" 2>/dev/null && gitignore_action="created"
-  fi
-done
-
-# --- 5. Emit summary ---------------------------------------------------------
+# --- 6. Emit summary ---------------------------------------------------------
 
 msg="sweap: scaffolded project files on first session (auto-run by the SessionStart hook)."
 

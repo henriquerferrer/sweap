@@ -169,3 +169,27 @@ surface being roadmap + board only.
   the Uber-scale rates don't transfer).
 - Revisit K default and the co-dispatch judgment rule after two instrumented
   milestones.
+
+## Amendments (2026-07-19, post whole-branch review + empirical probe)
+
+- **Locked decision 5 mechanism corrected.** Empirical probe (throwaway PR #1
+  on this repo, no branch protection): a PR 1 commit behind base reported
+  `mergeStateStatus: CLEAN` — GitHub reports `BEHIND` only under strict
+  required-status-check protection, which free-plan target repos lack. The
+  hook now enforces freshness protection-independently: `BEHIND` remains a
+  fast-path deny; otherwise a bounded `gh api repos/{owner}/{repo}/compare/
+  <base>...<headOid>` check denies when `behind_by > 0`, and denies
+  recoverably on any uncertainty. The doctrine claim "stale-green merges are
+  mechanically impossible" is now true without branch protection.
+- **Board gitignore reachability.** The scaffold's gitignore self-heal now
+  runs before the already-scaffolded fast-guard, so existing projects gain
+  the `.claude/sweap-board.md` entry on their next session start; the
+  coordinator also double-checks before first dispatch.
+- **Local services at K≥2.** Coordinator-mode workers run CI-gated unless
+  the project declares its services parallel-safe (contention on a shared
+  local stack produces spurious failures).
+
+## Open items (amended)
+
+- A future `services.parallel-safe` config declaration if a project's local
+  stack genuinely supports concurrent e2e runs.

@@ -24,9 +24,14 @@ This mechanically, idempotently:
    `<!-- sweap:end -->` region (playbook pointer + config block + standing-prefs,
    together, so the playbook pointer can never be dropped by the merge). If a
    `## sweap config` block already exists, leaves it — idempotent.
-3. **Red-flag gitignore rule:** ensures the project's `.gitignore` excludes
-   `post-merge-redcheck.sh`'s marker file (`.claude/main-red-*.flag`), appending
-   the line only if missing, creating `.gitignore` if absent — never duplicated.
+3. **Runtime gitignore rules:** ensures the project's `.gitignore` excludes both
+   sweap runtime files — `post-merge-redcheck.sh`'s marker file
+   (`.claude/main-red-*.flag`) and the coordinator's parallel-runs board
+   (`.claude/sweap-board.md`) — appending each line only if missing, creating
+   `.gitignore` if absent, never duplicated. The scaffold self-heals these on
+   every session start (the gitignore step runs before the already-scaffolded
+   fast-guard), so an existing project gains a newly-added rule on its next
+   session; this command is the manual repair path.
 
 Report back to the human exactly what the script's summary said it created,
 kept, or merged. Then walk through this checklist regardless of what the

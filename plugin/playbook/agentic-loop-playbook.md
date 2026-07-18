@@ -240,7 +240,9 @@ may ADD dimensions it judges necessary; it may not remove tagged ones.
   `gh pr create`. **For `gh pr merge` this is no longer instruction-only:** the
   `pre-merge-gate` `PreToolUse` hook mechanically denies `--admin`/`--repo`/`-R`
   on merges (and enforces greenness — see the Merge-gate section). The standing
-  instruction still governs `gh pr create` (not hooked).
+  instruction still governs `gh pr create` (not hooked). Coordinator mode
+  additionally uses `git rebase` and `git push --force-with-lease` on item
+  branches as routine loop verbs.
 
 ## Deferred items (parked behind a future dependency)
 
@@ -468,10 +470,16 @@ disk: ROADMAP.md, the board, per-item progress files, git, PRs).**
 3. **Merge queue (FIFO, always-verify):** when a worker's PR is ready —
    rebase the branch onto current `main`, `git push --force-with-lease`,
    wait for CI green on the rebased head, then `gh pr merge <n> --squash`
-   (the pre-merge gate hook independently re-verifies greenness AND denies
-   a BEHIND PR, so stale-green merges are mechanically impossible).
+   (the pre-merge gate hook independently re-verifies greenness AND
+   mechanically verifies the head is not behind its base via the compare
+   API — branch-protection-independent — so stale-green merges are denied
+   even on free-plan repos where GitHub never reports BEHIND).
    **Speculative rebase:** the moment a merge lands, immediately rebase the
    next queued PR so its combined-state CI runs during otherwise-idle time.
+   The rebase runs inside the owning item's worktree (the branch is checked
+   out there — git will refuse it in the primary checkout). A textual conflict
+   during the rebase — including ROADMAP.md status-line conflicts — is
+   resolved by the owning worker, never by force-pushing over the other side.
    Diff-disjointness may pick queue ORDER (least-entangled first); it NEVER
    skips the combined-state CI run — there is no "looks independent"
    fast-path, by locked decision (industry skips are hermetic-build-graph
@@ -485,6 +493,9 @@ disk: ROADMAP.md, the board, per-item progress files, git, PRs).**
    externalized memory: on restart (`claude --continue` or a fresh
    session), rebuild all state from board + ROADMAP.md +
    `git worktree list` + open PRs. Losing the coordinator loses nothing.
+   Before the first dispatch of a run, ensure `.claude/sweap-board.md` is in
+   the project's `.gitignore` — append it if missing (the scaffold self-heals
+   this on session start, but the coordinator double-checks).
 
 **Failure handling (all existing doctrine, mapped):** worker blocked →
 escalate-don't-guess, mark `[blocked]`, notify, fill the slot with the next
@@ -493,6 +504,12 @@ worktree; it resumes from the progress file + git history (pick-up-cold).
 CI red after rebase — a semantic conflict, exactly what the queue exists to
 catch → the owning worker gets the standard ~3 distinct fix attempts, then
 `[blocked]` with the PR left open.
+
+**Local services at K≥2:** parallel workers sharing one local services stack
+(same DB, same ports) interfere and produce spurious failures that burn fix
+attempts. In coordinator mode, workers treat local services as unavailable and
+run CI-gated (CI runs per-PR, isolated, and is the authoritative gate anyway)
+unless the project explicitly declares its services parallel-safe.
 
 **Instrumentation (mandatory in the end-of-run summary):** max/mean
 concurrency achieved, rebases performed, conflicts hit (textual vs
