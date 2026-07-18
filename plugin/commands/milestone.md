@@ -86,6 +86,15 @@ the merge gate requires CI e2e green, so CI is the authoritative test gate. Say
 which mode you ended up in. Never block the run on Docker, or on the absence of
 `services.up` — the loop is identical either way.
 
+Parallel width (coordinator mode). Read `parallel:` from the `## sweap
+config` block (default 1; clamp values above 4 to 4 and say so). If it is 2
+or more, say the run will operate in **coordinator mode** per the playbook's
+"Parallel runs (coordinator mode)" section — frontier scheduling,
+worktree-isolated workers, the FIFO always-verify merge queue, and the
+`.claude/sweap-board.md` board file. The printed goal line is IDENTICAL to
+the serial form — the mode changes how the run executes, not its definition
+of done.
+
 Then **print** the exact goal line, filled in, for the user to paste — do NOT
 try to set `/goal` yourself (only the user can invoke it). Pick the template by
 run shape from "Resolve the run" above.
