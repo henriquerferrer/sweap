@@ -23,14 +23,33 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
 # --- stub `gh` ------------------------------------------------------------------
-# Behavior driven by GH_STUB (green|failure|pending|skipped|error|empty).
+# Two shapes the hook issues:
+#   - `gh pr view <n> --json ...` : rollup + mergeability. Mode is GH_STUB,
+#     overridable PER PR via GH_STUB_<n> (e.g. GH_STUB_43=failure) so
+#     chained-merge tests can make different PRs green/red independently.
+#   - `gh api repos/.../compare/<base>...<headOid> --jq .behind_by` : the
+#     protection-independent base-freshness check. Answer driven by GH_COMPARE:
+#     unset/`0` -> print `0` (head up-to-date); an integer like `2` -> print it
+#     (that many commits behind); `error` -> exit 1 (gh api unreachable).
 STUB_BIN="$WORK/bin"
 mkdir -p "$STUB_BIN"
 cat >"$STUB_BIN/gh" <<'STUB'
 #!/usr/bin/env bash
-# Minimal `gh pr view <n> --json ...` stub. Mode is GH_STUB, overridable
-# PER PR via GH_STUB_<n> (e.g. GH_STUB_43=failure) so chained-merge tests can
-# make different PRs green/red independently.
+
+# --- base-freshness compare shape ('gh api …/compare/… --jq .behind_by') -----
+# Detected by the `api` subcommand word; the compare answer is ground truth for
+# stale-green detection, so it is independent of mergeStateStatus/protection.
+for a in "$@"; do
+  if [ "$a" = "api" ]; then
+    case "${GH_COMPARE:-0}" in
+      error)  exit 1 ;;                                 # gh api failed / unreachable
+      ''|0)   echo 0; exit 0 ;;                         # default: head up-to-date
+      *)      printf '%s\n' "${GH_COMPARE}"; exit 0 ;;  # e.g. 2 commits behind
+    esac
+  fi
+done
+
+# --- pr view shape ('gh pr view <n> --json …') -------------------------------
 num=""
 seen_view=0
 for a in "$@"; do
@@ -50,12 +69,12 @@ case "$mode" in
       {"__typename":"CheckRun","name":"lint","status":"COMPLETED","conclusion":"SUCCESS"},
       {"__typename":"CheckRun","name":"e2e","status":"COMPLETED","conclusion":"SUCCESS"},
       {"__typename":"CheckRun","name":"review","status":"COMPLETED","conclusion":"SUCCESS"}
-    ],"mergeStateStatus":"CLEAN","mergeCommit":{"oid":"deadbeef"}}' ;;
+    ],"mergeStateStatus":"CLEAN","baseRefName":"main","headRefOid":"deadbeef","mergeCommit":{"oid":"deadbeef"}}' ;;
   skipped)
     echo '{"statusCheckRollup":[
       {"__typename":"CheckRun","name":"lint","status":"COMPLETED","conclusion":"SUCCESS"},
       {"__typename":"CheckRun","name":"optional","status":"COMPLETED","conclusion":"SKIPPED"}
-    ],"mergeStateStatus":"CLEAN","mergeCommit":{"oid":"deadbeef"}}' ;;
+    ],"mergeStateStatus":"CLEAN","baseRefName":"main","headRefOid":"deadbeef","mergeCommit":{"oid":"deadbeef"}}' ;;
   failure)
     echo '{"statusCheckRollup":[
       {"__typename":"CheckRun","name":"lint","status":"COMPLETED","conclusion":"SUCCESS"},
@@ -67,22 +86,34 @@ case "$mode" in
       {"__typename":"CheckRun","name":"lint","status":"COMPLETED","conclusion":"SUCCESS"},
       {"__typename":"CheckRun","name":"e2e","status":"IN_PROGRESS","conclusion":null}
     ],"mergeCommit":{"oid":"deadbeef"}}' ;;
-  behind)   # green checks, but the branch is BEHIND the base — stale green
+  behind)   # green checks; mergeStateStatus reports BEHIND (only under strict protection)
     echo '{"statusCheckRollup":[
       {"__typename":"CheckRun","name":"lint","status":"COMPLETED","conclusion":"SUCCESS"},
       {"__typename":"CheckRun","name":"e2e","status":"COMPLETED","conclusion":"SUCCESS"},
       {"__typename":"CheckRun","name":"review","status":"COMPLETED","conclusion":"SUCCESS"}
-    ],"mergeStateStatus":"BEHIND","mergeCommit":{"oid":"deadbeef"}}' ;;
-  nostate)  # green checks, mergeStateStatus absent (old gh / API oddity)
+    ],"mergeStateStatus":"BEHIND","baseRefName":"main","headRefOid":"deadbeef","mergeCommit":{"oid":"deadbeef"}}' ;;
+  nostate)  # green checks, mergeStateStatus ABSENT (old gh / API oddity); base/head present
     echo '{"statusCheckRollup":[
       {"__typename":"CheckRun","name":"lint","status":"COMPLETED","conclusion":"SUCCESS"},
       {"__typename":"CheckRun","name":"e2e","status":"COMPLETED","conclusion":"SUCCESS"}
-    ],"mergeCommit":{"oid":"deadbeef"}}' ;;
-  unknownstate)  # green checks, GitHub still computing mergeability
+    ],"baseRefName":"main","headRefOid":"deadbeef","mergeCommit":{"oid":"deadbeef"}}' ;;
+  unknownstate)  # green checks, GitHub still computing mergeStateStatus
     echo '{"statusCheckRollup":[
       {"__typename":"CheckRun","name":"lint","status":"COMPLETED","conclusion":"SUCCESS"},
       {"__typename":"CheckRun","name":"e2e","status":"COMPLETED","conclusion":"SUCCESS"}
-    ],"mergeStateStatus":"UNKNOWN","mergeCommit":{"oid":"deadbeef"}}' ;;
+    ],"mergeStateStatus":"UNKNOWN","baseRefName":"main","headRefOid":"deadbeef","mergeCommit":{"oid":"deadbeef"}}' ;;
+  blockedstate)  # green rollup, mergeStateStatus BLOCKED — freshness still decided by compare
+    echo '{"statusCheckRollup":[
+      {"__typename":"CheckRun","name":"lint","status":"COMPLETED","conclusion":"SUCCESS"},
+      {"__typename":"CheckRun","name":"e2e","status":"COMPLETED","conclusion":"SUCCESS"},
+      {"__typename":"CheckRun","name":"review","status":"COMPLETED","conclusion":"SUCCESS"}
+    ],"mergeStateStatus":"BLOCKED","baseRefName":"main","headRefOid":"deadbeef","mergeCommit":{"oid":"deadbeef"}}' ;;
+  unstablestate)  # all-green rollup, mergeStateStatus UNSTABLE — compare decides freshness
+    echo '{"statusCheckRollup":[
+      {"__typename":"CheckRun","name":"lint","status":"COMPLETED","conclusion":"SUCCESS"},
+      {"__typename":"CheckRun","name":"e2e","status":"COMPLETED","conclusion":"SUCCESS"},
+      {"__typename":"CheckRun","name":"review","status":"COMPLETED","conclusion":"SUCCESS"}
+    ],"mergeStateStatus":"UNSTABLE","baseRefName":"main","headRefOid":"deadbeef","mergeCommit":{"oid":"deadbeef"}}' ;;
 esac
 exit 0
 STUB
@@ -95,7 +126,8 @@ run_gate() {  # $1=GH_STUB, $2=command ; feeds mock PreToolUse JSON, prints stdo
   local json
   json="$(jq -cn --arg c "$cmd" --arg d "$WORK" \
     '{tool_name:"Bash",hook_event_name:"PreToolUse",cwd:$d,tool_input:{command:$c}}')"
-  PATH="$STUB_BIN:$PATH" GH_STUB="$stub" MERGE_GATE_GH_TIMEOUT="${MGT:-5}" \
+  PATH="$STUB_BIN:$PATH" GH_STUB="$stub" GH_COMPARE="${GH_COMPARE:-0}" \
+    MERGE_GATE_GH_TIMEOUT="${MGT:-5}" \
     bash "$GATE" <<<"$json"
 }
 
@@ -164,17 +196,55 @@ if is_deny "$out" && printf '%s' "$(reason "$out")" | grep -q 'BEHIND'; then
   ok "d4) behind base -> deny (rebase first)"
 else bad "d4) behind -> deny" "out: $out"; fi
 
-# (d5) mergeStateStatus missing -> DENY (recoverable, fail-closed on uncertainty)
+# (d5) mergeStateStatus MISSING but the compare API says the head is up-to-date
+# (behind_by=0) -> ALLOW. The compare check is now ground truth, so a missing
+# mergeStateStatus is no longer fatal when freshness is provable independently.
 out="$(run_gate nostate 'gh pr merge 42 --squash')"
-if is_deny "$out" && printf '%s' "$(reason "$out")" | grep -qi 'freshness'; then
-  ok "d5) mergeStateStatus missing -> deny-recoverable"
-else bad "d5) missing state -> deny-recoverable" "out: $out"; fi
+if is_deny "$out"; then bad "d5) missing state + compare-fresh -> allow" "got deny: $(reason "$out")"
+elif [ -z "$out" ]; then ok "d5) mergeStateStatus missing + compare fresh -> allow"
+else bad "d5) missing state + compare-fresh -> allow" "unexpected stdout: $out"; fi
 
-# (d6) mergeStateStatus UNKNOWN -> DENY (recoverable; GitHub still computing)
+# (d6) mergeStateStatus UNKNOWN but the compare API says fresh (behind_by=0) ->
+# ALLOW. Same principle: compare is ground truth, UNKNOWN is not fatal when the
+# head is provably not behind its base.
 out="$(run_gate unknownstate 'gh pr merge 42 --squash')"
+if is_deny "$out"; then bad "d6) UNKNOWN state + compare-fresh -> allow" "got deny: $(reason "$out")"
+elif [ -z "$out" ]; then ok "d6) mergeStateStatus UNKNOWN + compare fresh -> allow"
+else bad "d6) UNKNOWN state + compare-fresh -> allow" "unexpected stdout: $out"; fi
+
+# (d7) green + mergeStateStatus CLEAN but the compare API reports behind_by=2 ->
+# DENY. This is the real-world stale-green case the probe confirmed: a free-plan
+# repo reports CLEAN while the head is actually behind base. The deny names
+# BEHIND and gives the rebase recipe against the ACTUAL base branch (main).
+out="$(GH_COMPARE=2 run_gate green 'gh pr merge 42 --squash')"
+if is_deny "$out" \
+   && printf '%s' "$(reason "$out")" | grep -q 'BEHIND' \
+   && printf '%s' "$(reason "$out")" | grep -q 'origin/main'; then
+  ok "d7) CLEAN but compare behind_by=2 -> deny (BEHIND, rebase origin/main)"
+else bad "d7) stale-green via compare -> deny" "out: $out"; fi
+
+# (d8) green + CLEAN but the compare call ERRORS -> DENY (recoverable). Freshness
+# uncertainty is never an allow.
+out="$(GH_COMPARE=error run_gate green 'gh pr merge 42 --squash')"
 if is_deny "$out" && printf '%s' "$(reason "$out")" | grep -qi 'freshness'; then
-  ok "d6) mergeStateStatus UNKNOWN -> deny-recoverable"
-else bad "d6) UNKNOWN state -> deny-recoverable" "out: $out"; fi
+  ok "d8) compare API errors -> deny-recoverable (freshness)"
+else bad "d8) compare error -> deny-recoverable" "out: $out"; fi
+
+# (d9) scope-pin: green rollup + mergeStateStatus BLOCKED + compare fresh -> ALLOW.
+# BLOCKED is not BEHIND; with the head provably up-to-date the freshness gate
+# must not deny (only BEHIND/behind_by>0/uncertainty deny).
+out="$(run_gate blockedstate 'gh pr merge 42 --squash')"
+if is_deny "$out"; then bad "d9) BLOCKED + compare-fresh -> allow" "got deny: $(reason "$out")"
+elif [ -z "$out" ]; then ok "d9) BLOCKED mstate + compare fresh -> allow"
+else bad "d9) BLOCKED + compare-fresh -> allow" "unexpected stdout: $out"; fi
+
+# (d10) scope-pin: all-green rollup + mergeStateStatus UNSTABLE + compare fresh ->
+# ALLOW. Greenness is judged on the FULL rollup (all green here); UNSTABLE alone
+# (a non-required context) with a fresh head is not a merge blocker.
+out="$(run_gate unstablestate 'gh pr merge 42 --squash')"
+if is_deny "$out"; then bad "d10) UNSTABLE + compare-fresh -> allow" "got deny: $(reason "$out")"
+elif [ -z "$out" ]; then ok "d10) UNSTABLE mstate + compare fresh -> allow"
+else bad "d10) UNSTABLE + compare-fresh -> allow" "unexpected stdout: $out"; fi
 
 # (e1) --admin -> DENY (never queries gh; use green stub to prove it's the flag)
 out="$(run_gate green 'gh pr merge 42 --admin --squash')"

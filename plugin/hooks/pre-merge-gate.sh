@@ -14,10 +14,19 @@
 # e2e had FAILED got merged and briefly broke `main`. This hook removes the
 # human-reads-the-output link from the chain.
 #
-# It ALSO denies a PR whose branch is BEHIND its base (mergeStateStatus) —
-# green checks against an old base say nothing about the combined state that
-# would land, which is the hazard of parallel runs (see the parallel-runs
-# spec, 2026-07-18). Missing/UNKNOWN mergeability denies recoverably.
+# It ALSO denies a PR whose head is BEHIND its base — green checks against an old
+# base say nothing about the COMBINED state that would land, the core hazard of
+# parallel runs (see the parallel-runs spec, 2026-07-18). Freshness is enforced
+# PROTECTION-INDEPENDENTLY: `mergeStateStatus == BEHIND` is a fast-path deny, but
+# GitHub only reports BEHIND under strict required-status-check branch protection
+# (empirically verified — a free-plan repo one commit behind its base reports
+# mergeStateStatus CLEAN), so BEHIND alone is vacuous on the target repos this
+# runs against. For EVERY other mergeStateStatus the hook makes the ground-truth
+# call: `gh api repos/{owner}/{repo}/compare/<base>...<headOid> --jq .behind_by`
+# and denies when the head is behind by >0 commits. Any uncertainty about
+# freshness (missing base/head, compare error/timeout, non-numeric) denies
+# recoverably. This is what makes "stale-green merges are mechanically
+# impossible" true without branch protection.
 #
 # DESIGN INVARIANTS (this hook STRENGTHENS the gate; it must never weaken it):
 #   - It only ever emits a DENY or stays silent. It NEVER emits an allow/approve,
@@ -160,6 +169,37 @@ if [ -n "$cwd" ]; then
   }
 fi
 
+# bounded_run <timeout> <cmd...>: run <cmd> under its own watchdog so it always
+# finishes within <timeout> seconds (never relying on the harness hook timeout),
+# capturing its stdout to BR_OUT and its exit status to BR_RC. Returns non-zero
+# ONLY on an infra failure (could not allocate the temp file); on a normal or
+# timed-out run it returns 0 and the caller inspects BR_RC/BR_OUT. Factored so the
+# rollup-view call and the compare call share ONE watchdog implementation instead
+# of duplicating the block (both must stay bounded — see verify_pr's budget).
+BR_OUT=""
+BR_RC=0
+bounded_run() {
+  local timeout="$1"; shift
+  local tmp brpid watcher
+  [ "$timeout" -ge 1 ] 2>/dev/null || timeout=1
+  tmp="$(mktemp 2>/dev/null)" || tmp=""
+  if [ -z "$tmp" ]; then
+    BR_OUT=""; BR_RC=1
+    return 1
+  fi
+  "$@" >"$tmp" 2>/dev/null &
+  brpid=$!
+  ( sleep "$timeout"; kill -TERM "$brpid" 2>/dev/null ) &
+  watcher=$!
+  wait "$brpid" 2>/dev/null
+  BR_RC=$?
+  kill -TERM "$watcher" 2>/dev/null
+  wait "$watcher" 2>/dev/null
+  BR_OUT="$(cat "$tmp" 2>/dev/null)"
+  rm -f "$tmp"
+  return 0
+}
+
 # verify_pr <n>: query one PR's rollup (bounded by an internal timeout) and, if it
 # is not green or greenness can't be determined, emit a deny and return 1. Green
 # ⇒ return 0 silently.
@@ -171,31 +211,24 @@ fi
 # is not-green.
 verify_pr() {
   local pr="$1"
-  # Per-call timeout: caller passes a budget ($2) so a MULTI-PR batch's TOTAL
-  # verification time stays bounded (see the loop) — otherwise N × per-PR-timeout
-  # could exceed the harness hook timeout, which would kill the hook and (the
-  # harness treating a killed hook as non-blocking) fail OPEN. Falls back to the
-  # per-PR default for single-PR use.
-  local timeout="${2:-${MERGE_GATE_GH_TIMEOUT:-10}}"
-  local tmp ghpid watcher ghrc json count offenders
-  [ "$timeout" -ge 1 ] 2>/dev/null || timeout=1
-  tmp="$(mktemp 2>/dev/null)" || tmp=""
-  if [ -z "$tmp" ]; then
+  # Per-call budget ($2) so a MULTI-PR batch's TOTAL verification time stays
+  # bounded (see the loop) — otherwise N × per-PR-timeout could exceed the harness
+  # hook timeout, which would kill the hook and (the harness treating a killed hook
+  # as non-blocking) fail OPEN. Falls back to the per-PR default for single-PR use.
+  # The budget covers BOTH bounded calls this PR may make (rollup view, then the
+  # compare check): the view runs first, the compare gets whatever remains.
+  local budget="${2:-${MERGE_GATE_GH_TIMEOUT:-10}}"
+  local json count offenders mstate base head behind remaining deadline
+  [ "$budget" -ge 1 ] 2>/dev/null || budget=1
+  deadline=$(( $(date +%s) + budget ))
+
+  if ! bounded_run "$budget" gh pr view "$pr" --json statusCheckRollup,mergeStateStatus,baseRefName,headRefOid; then
     emit_deny "merge-gate: could not allocate a temp file to verify checks. Denying (recoverable) — re-run the merge."
     return 1
   fi
-  gh pr view "$pr" --json statusCheckRollup,mergeStateStatus >"$tmp" 2>/dev/null &
-  ghpid=$!
-  ( sleep "$timeout"; kill -TERM "$ghpid" 2>/dev/null ) &
-  watcher=$!
-  wait "$ghpid" 2>/dev/null
-  ghrc=$?
-  kill -TERM "$watcher" 2>/dev/null
-  wait "$watcher" 2>/dev/null
-  json="$(cat "$tmp" 2>/dev/null)"
-  rm -f "$tmp"
+  json="$BR_OUT"
 
-  if [ "$ghrc" != "0" ] || [ -z "$json" ] || ! printf '%s' "$json" | jq -e . >/dev/null 2>&1; then
+  if [ "$BR_RC" != "0" ] || [ -z "$json" ] || ! printf '%s' "$json" | jq -e . >/dev/null 2>&1; then
     emit_deny "merge-gate: could not verify PR #$pr's checks (gh errored or timed out). The gate fails CLOSED — it does not know the checks are green. Re-run the merge once gh recovers; a genuinely-green PR will pass."
     return 1
   fi
@@ -224,17 +257,46 @@ verify_pr() {
     return 1
   fi
   # Base-freshness gate: green checks that ran against an OLD base are not
-  # evidence about the COMBINED state that would actually land (a "real
-  # conflict" is invisible per-branch). BEHIND ⇒ deny with the rebase recipe.
-  # Missing/UNKNOWN ⇒ deny recoverably (uncertainty is never an allow).
-  local mstate
+  # evidence about the COMBINED state that would actually land (a "real conflict"
+  # is invisible per-branch). Enforced PROTECTION-INDEPENDENTLY:
+  #   - mergeStateStatus == BEHIND ⇒ deny immediately (no compare needed). This is
+  #     the fast path, but GitHub only reports BEHIND under strict required-check
+  #     branch protection, so on a free-plan repo it is effectively never seen.
+  #   - EVERY other state (CLEAN/BLOCKED/UNSTABLE/DIRTY/missing/UNKNOWN/anything)
+  #     ⇒ ask the ground truth: how many commits is the head behind its base?
+  #     `gh api repos/{owner}/{repo}/compare/<base>...<headOid> --jq .behind_by`
+  #     (gh resolves {owner}/{repo} from cwd). behind_by > 0 ⇒ deny with the rebase
+  #     recipe against the ACTUAL base branch; == 0 ⇒ fresh, fall through to allow.
+  # Any uncertainty (missing base/head, compare error/timeout, non-numeric result)
+  # denies recoverably — uncertainty is never an allow.
   mstate="$(printf '%s' "$json" | jq -r '(.mergeStateStatus // "") | ascii_upcase' 2>/dev/null)"
   if [ "$mstate" = "BEHIND" ]; then
-    emit_deny "merge-gate: PR #$pr is BEHIND the base branch — its green checks ran against an old base, so the combined state is unverified. Rebase (git fetch origin && git rebase origin/main && git push --force-with-lease), wait for CI to go green on the rebased head, then re-run the merge."
+    emit_deny "merge-gate: PR #$pr is BEHIND the base branch (mergeStateStatus) — its green checks ran against an old base, so the combined state is unverified. Rebase (git fetch origin && git rebase origin/main && git push --force-with-lease), wait for CI to go green on the rebased head, then re-run the merge."
     return 1
   fi
-  if [ -z "$mstate" ] || [ "$mstate" = "UNKNOWN" ]; then
-    emit_deny "merge-gate: could not determine PR #$pr's freshness against the base branch (mergeStateStatus: ${mstate:-missing}). The gate fails CLOSED — re-run the merge once GitHub reports mergeability."
+
+  base="$(printf '%s' "$json" | jq -r '.baseRefName // empty' 2>/dev/null)"
+  head="$(printf '%s' "$json" | jq -r '.headRefOid // empty' 2>/dev/null)"
+  if [ -z "$base" ] || [ -z "$head" ]; then
+    emit_deny "merge-gate: could not read PR #$pr's base branch / head commit to verify freshness against the base. The gate fails CLOSED — re-run the merge once gh reports them."
+    return 1
+  fi
+
+  remaining=$(( deadline - $(date +%s) ))
+  if [ "$remaining" -lt 1 ]; then
+    emit_deny "merge-gate: ran out of the time budget before the base-freshness (compare) check for PR #$pr. The gate fails CLOSED on this uncertainty — re-run the merge (merge one PR at a time so each has budget for both checks)."
+    return 1
+  fi
+
+  # Same bounded watchdog as the view call; compare gets the remaining budget.
+  bounded_run "$remaining" gh api "repos/{owner}/{repo}/compare/${base}...${head}" --jq .behind_by
+  behind="$BR_OUT"
+  if [ "$BR_RC" != "0" ] || ! printf '%s' "$behind" | grep -qE '^[0-9]+$'; then
+    emit_deny "merge-gate: could not determine PR #$pr's freshness against base '$base' (the compare API errored, timed out, or returned a non-numeric result). The gate fails CLOSED — re-run the merge once gh recovers."
+    return 1
+  fi
+  if [ "$behind" -gt 0 ]; then
+    emit_deny "merge-gate: PR #$pr is BEHIND base '$base' by $behind commit(s) — its green checks ran against an old base, so the combined state that would land is unverified (branch protection does not report this on free-plan repos; the compare API is the ground truth). Rebase (git fetch origin && git rebase origin/$base && git push --force-with-lease), wait for CI to go green on the rebased head, then re-run the merge."
     return 1
   fi
   return 0
