@@ -97,17 +97,18 @@ if [ "$existing_claude_md" = "1" ] && ! grep -qF '## sweap config' "$proj/CLAUDE
   fi
 fi
 
-# .gitignore: ensure the red-main flag file is excluded, never duplicated.
-gitignore_line='.claude/main-red-*.flag'
+# .gitignore: ensure sweap's runtime files are excluded, never duplicated.
 gitignore_action="unchanged"
 gi="$proj/.gitignore"
-if [ -f "$gi" ]; then
-  if ! grep -qF "$gitignore_line" "$gi" 2>/dev/null; then
-    printf '%s\n' "$gitignore_line" >> "$gi" 2>/dev/null && gitignore_action="appended"
+for gitignore_line in '.claude/main-red-*.flag' '.claude/sweap-board.md'; do
+  if [ -f "$gi" ]; then
+    if ! grep -qF "$gitignore_line" "$gi" 2>/dev/null; then
+      printf '%s\n' "$gitignore_line" >> "$gi" 2>/dev/null && gitignore_action="appended"
+    fi
+  else
+    printf '%s\n' "$gitignore_line" > "$gi" 2>/dev/null && gitignore_action="created"
   fi
-else
-  printf '%s\n' "$gitignore_line" > "$gi" 2>/dev/null && gitignore_action="created"
-fi
+done
 
 # --- 5. Emit summary ---------------------------------------------------------
 
@@ -120,7 +121,7 @@ if [ "$merged_claude_md" = "1" ]; then
   msg="$msg Merged sweap config + playbook pointer into your existing CLAUDE.md."
 fi
 if [ "$gitignore_action" != "unchanged" ]; then
-  msg="$msg .gitignore: $gitignore_action the '$gitignore_line' rule."
+  msg="$msg .gitignore: $gitignore_action sweap runtime ignore rules (.claude/main-red-*.flag, .claude/sweap-board.md)."
 fi
 
 msg="$msg TODO before this is a working pipeline: (1) fill in verify.typecheck / verify.lint / verify.e2e in CLAUDE.md's '## sweap config' block (verify.e2e must run the full suite — unit+integration+e2e); (2) fill in the '# <fill in for your stack>' recipe bodies in justfile (lint, typecheck, test, e2e, optionally services-up/services-down); (3) fill in the '<fill in for your stack>' steps in .github/workflows/ci.yml (toolchain setup, e2e prerequisites, e2e artifact path); (4) write the first ROADMAP milestone with /roadmap. Run /agentic-loop-init any time to re-run or repair the scaffold."
