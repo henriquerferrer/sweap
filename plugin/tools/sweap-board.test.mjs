@@ -196,3 +196,17 @@ test("createServer serves / and /state.json (loopback smoke test)", async () => 
   await new Promise((res) => srv.close(res));
   rmSync(dir, { recursive: true });
 });
+
+test("createServer caches gh across rapid /state.json requests", async () => {
+  const dir = fixture({ "CLAUDE.md": "## sweap config\n", "roadmap/F1.1.md": "---\nid: F1.1\ntitle: x\nstatus: todo\ndepends_on: []\n---\n" });
+  let ghCalls = 0;
+  const gh = async () => { ghCalls++; return { stdout: "[]", code: 0 }; };
+  const srv = createServer({ projectDir: dir, git: async () => ({ stdout: "", code: 0 }), gh });
+  await new Promise((res) => srv.listen(0, "127.0.0.1", res));
+  const port = srv.address().port;
+  await fetch(`http://127.0.0.1:${port}/state.json`).then((r) => r.json());
+  await fetch(`http://127.0.0.1:${port}/state.json`).then((r) => r.json());
+  assert.equal(ghCalls, 1);
+  await new Promise((res) => srv.close(res));
+  rmSync(dir, { recursive: true });
+});

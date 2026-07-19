@@ -11,10 +11,10 @@ const run = (cmd) => (args) => new Promise((resolve) => {
 });
 
 export function createServer({ projectDir, git = run("git"), gh = run("gh"), ghCacheMs = 15000 }) {
-  let ghCache = { at: 0, promise: null };
+  let ghCache = { key: null, at: 0, promise: null };
   const cachedGh = (args) => {
-    const now = Date.now();
-    if (!ghCache.promise || now - ghCache.at > ghCacheMs) { ghCache = { at: now, promise: gh(args) }; }
+    const key = JSON.stringify(args); const now = Date.now();
+    if (ghCache.key !== key || !ghCache.promise || now - ghCache.at > ghCacheMs) { ghCache = { key, at: now, promise: gh(args) }; }
     return ghCache.promise;
   };
   const PAGE = renderPage();
@@ -45,7 +45,11 @@ function parseArgs(argv) {
 
 async function listenWithFallback(srv, port, host, tries = 10) {
   for (let p = port; p < port + tries; p++) {
-    const ok = await new Promise((res) => { srv.once("error", (e) => { if (e.code === "EADDRINUSE") res(false); else throw e; }); srv.listen(p, host, () => res(true)); });
+    const ok = await new Promise((resolve, reject) => {
+      const onErr = (e) => { if (e.code === "EADDRINUSE") resolve(false); else reject(e); };
+      srv.once("error", onErr);
+      srv.listen(p, host, () => { srv.removeListener("error", onErr); resolve(true); });
+    });
     if (ok) return p;
   }
   throw new Error(`no free port in ${port}..${port + tries}`);
@@ -60,7 +64,9 @@ const isMain = import.meta.url === `file://${process.argv[1]}`;
 if (isMain) {
   const args = parseArgs(process.argv.slice(2).filter((a) => a !== "serve"));
   const srv = createServer({ projectDir: args.projectDir });
-  const port = await listenWithFallback(srv, args.port, "127.0.0.1");
+  let port;
+  try { port = await listenWithFallback(srv, args.port, "127.0.0.1"); }
+  catch (e) { process.stderr.write(`sweap-board: cannot start — ${e.message}\n`); process.exit(1); }
   const url = `http://127.0.0.1:${port}/`;
   process.stdout.write(`sweap-board: ${url}  (project: ${args.projectDir})\nread-only — Ctrl-C to stop\n`);
   if (args.open) openBrowser(url);
