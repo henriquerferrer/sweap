@@ -1,0 +1,67 @@
+#!/usr/bin/env node
+// sweap-board.mjs — loopback-only, read-only viewer server + CLI.
+// Reads state; NEVER writes files, mutates the board, or invokes the pipeline.
+import http from "node:http";
+import { execFile } from "node:child_process";
+import { buildState } from "./sweap-board.lib.mjs";
+import { renderPage } from "./sweap-board.page.mjs";
+
+const run = (cmd) => (args) => new Promise((resolve) => {
+  execFile(cmd, args, { maxBuffer: 8 * 1024 * 1024 }, (err, stdout) => resolve({ stdout: stdout || "", code: err ? (err.code || 1) : 0 }));
+});
+
+export function createServer({ projectDir, git = run("git"), gh = run("gh"), ghCacheMs = 15000 }) {
+  let ghCache = { at: 0, promise: null };
+  const cachedGh = (args) => {
+    const now = Date.now();
+    if (!ghCache.promise || now - ghCache.at > ghCacheMs) { ghCache = { at: now, promise: gh(args) }; }
+    return ghCache.promise;
+  };
+  const PAGE = renderPage();
+  return http.createServer(async (req, res) => {
+    if (req.method !== "GET") { res.writeHead(405); return res.end("read-only"); }
+    try {
+      if (req.url === "/" || req.url.startsWith("/index")) { res.writeHead(200, { "content-type": "text/html; charset=utf-8" }); return res.end(PAGE); }
+      if (req.url.startsWith("/state.json")) {
+        const state = await buildState(projectDir, { git, gh: cachedGh, now: Date.now() });
+        res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+        return res.end(JSON.stringify(state));
+      }
+      res.writeHead(404); res.end("not found");
+    } catch (e) { res.writeHead(500); res.end("error: " + e.message); }
+  });
+}
+
+function parseArgs(argv) {
+  const a = { port: 7878, open: true, projectDir: process.cwd() };
+  for (let i = 0; i < argv.length; i++) {
+    const v = argv[i];
+    if (v === "--port") a.port = parseInt(argv[++i], 10);
+    else if (v === "--no-open") a.open = false;
+    else if (v === "--project") a.projectDir = argv[++i];
+  }
+  return a;
+}
+
+async function listenWithFallback(srv, port, host, tries = 10) {
+  for (let p = port; p < port + tries; p++) {
+    const ok = await new Promise((res) => { srv.once("error", (e) => { if (e.code === "EADDRINUSE") res(false); else throw e; }); srv.listen(p, host, () => res(true)); });
+    if (ok) return p;
+  }
+  throw new Error(`no free port in ${port}..${port + tries}`);
+}
+
+function openBrowser(url) {
+  const cmd = process.platform === "darwin" ? "open" : process.platform === "win32" ? "explorer" : "xdg-open";
+  execFile(cmd, [url], () => {});
+}
+
+const isMain = import.meta.url === `file://${process.argv[1]}`;
+if (isMain) {
+  const args = parseArgs(process.argv.slice(2).filter((a) => a !== "serve"));
+  const srv = createServer({ projectDir: args.projectDir });
+  const port = await listenWithFallback(srv, args.port, "127.0.0.1");
+  const url = `http://127.0.0.1:${port}/`;
+  process.stdout.write(`sweap-board: ${url}  (project: ${args.projectDir})\nread-only — Ctrl-C to stop\n`);
+  if (args.open) openBrowser(url);
+}

@@ -180,3 +180,19 @@ test("renderPage returns a self-contained HTML doc with the poll targets", () =>
   assert.ok(!/https?:\/\//.test(html.replace(/https?:\/\/[^"']*w3\.org[^"']*/g, "")), "no external asset URLs");
   assert.match(html, /prefers-color-scheme/);    // theme-aware
 });
+
+import { createServer } from "./sweap-board.mjs";
+
+test("createServer serves / and /state.json (loopback smoke test)", async () => {
+  const dir = fixture({ "CLAUDE.md": "## sweap config\n", "roadmap/F1.1.md": "---\nid: F1.1\ntitle: x\nstatus: todo\ndepends_on: []\n---\n" });
+  const srv = createServer({ projectDir: dir, git: async () => ({ stdout: "", code: 0 }), gh: async () => ({ stdout: "[]", code: 0 }) });
+  await new Promise((res) => srv.listen(0, "127.0.0.1", res));
+  const port = srv.address().port;
+  const html = await fetch(`http://127.0.0.1:${port}/`).then((r) => r.text());
+  assert.match(html, /<!doctype html>/i);
+  const state = await fetch(`http://127.0.0.1:${port}/state.json`).then((r) => r.json());
+  assert.equal(state.backlog[0].items[0].id, "F1.1");
+  assert.equal(state.run.active, false);
+  await new Promise((res) => srv.close(res));
+  rmSync(dir, { recursive: true });
+});
