@@ -86,10 +86,11 @@ test("isUnblocked: item dep must be done; bare-milestone dep needs ALL its items
   assert.equal(isUnblocked(byId.get("F5.1"), byId, byM), false);  // milestone F9 has no items
 });
 
-test("compareItems orders debt first, then numeric id (F1.9 before F1.10)", () => {
-  const a = mk("F1.10", "todo"), b = mk("F1.9", "todo"), debt = mk("F1.2", "todo", [], { followupOf: "F1" });
-  const sorted = [a, b, debt].sort(compareItems).map((i) => i.id);
-  assert.deepEqual(sorted, ["F1.2", "F1.9", "F1.10"]);
+test("compareItems: debt-first overrides numeric; else numeric id (F1.9 before F1.10)", () => {
+  const debt = mk("F1.20", "todo", [], { followupOf: "F1" }); // numerically last, but debt → must lead
+  const a = mk("F1.10", "todo"), b = mk("F1.9", "todo"), c = mk("F1.2", "todo");
+  const sorted = [a, b, c, debt].sort(compareItems).map((i) => i.id);
+  assert.deepEqual(sorted, ["F1.20", "F1.2", "F1.9", "F1.10"]);
 });
 
 test("deriveBacklog produces frontier, blocked, grouped backlog, edges", () => {
