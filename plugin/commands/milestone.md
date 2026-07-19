@@ -14,12 +14,12 @@ Resolve the run:
 - Read `backlog.prefix` from the `## sweap config` block in `CLAUDE.md` (default
   `F`) as a comma-separated LIST of one or more milestone-tag prefixes (e.g. `F`
   or `F, DS`) — these are the prefixes used below.
-- **Milestone `M`** = the first argument if given (e.g. `F2` or `DS.3`, using
+- **Milestone `M`** = the first argument if given (e.g. `F2` or `DS3`, using
   any configured prefix); otherwise the next runnable milestone —
   across ALL configured prefixes, in the index's milestone order — that has
   `status: todo` item files whose dependencies are all satisfied (the next
   runnable milestone). A milestone is a milestone regardless of prefix: a
-  `DS.3` run gets the same audit-inclusive goal as an `F2` run.
+  `DS3` run gets the same audit-inclusive goal as an `F2` run.
 - **Audit debt `D`** = the outstanding audit follow-ups from the audit-debt scan
   below.
 - **Turns** = the second argument if given; otherwise `turns.default` from the
@@ -38,7 +38,7 @@ resolving the milestone, scan `backlog.dir` for newly-unblocked
 autonomous run (e.g. a hand-merged dependency) and the end-of-run scan never
 fired. (A frontmatter scan — no header matching needed.) An item counts as unblocked when
 either: (a) every **item-level** `depends_on` entry (a dotted ID like `F4.3`
-or `DS.4`, any configured prefix) has its file at `status: done`; or (b) a
+or `DS3.4`, any configured prefix) has its file at `status: done`; or (b) a
 **milestone-level** entry (a bare tag like `F#` or `DS#`) has *completed* —
 item files for that milestone exist and every one is `status: done` (this
 pre-flight is the designated surfacing point for milestone-level deps, which

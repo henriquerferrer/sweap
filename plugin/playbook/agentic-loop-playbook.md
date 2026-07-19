@@ -477,7 +477,7 @@ no cron, no standing agent. Standard template:
 > Stop when only [blocked] items remain, or after N turns.*
 
 This applies to **every** milestone regardless of prefix — a second prefix
-(e.g. `DS.*`) gets audited exactly like the primary one (`/milestone` resolves
+(e.g. `DS*`) gets audited exactly like the primary one (`/milestone` resolves
 across all configured prefixes and always emits the audit clause; see
 `backlog.prefix` above). A milestone `/goal` that omits the audit-and-triage
 clause is **malformed**: the run drains its items but stops before auditing,

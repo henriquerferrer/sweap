@@ -16,7 +16,7 @@ Resolve the milestone:
   or `F, DS`) — the milestone arg (below) names which one this milestone uses;
   when authoring a brand-new milestone with no arg, default to the first
   listed prefix.
-- The first argument if given (e.g. `F3` or `DS.4`, naming its prefix
+- The first argument if given (e.g. `F3` or `DS4`, naming its prefix
   explicitly); otherwise the next milestone from the index's "Later milestones"
   sketch that has **no item files yet** under `backlog.dir` (the next one to
   author), using the default prefix above.

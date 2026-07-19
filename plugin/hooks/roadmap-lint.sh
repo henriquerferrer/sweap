@@ -32,7 +32,8 @@ fails=0
 fail() { echo "FAIL: $1"; fails=1; }
 
 # --- frontmatter: first block delimited by --- lines, must start at line 1 ---
-fm="$(awk 'NR==1{ if ($0!="---") exit; next } /^---$/{ exit } { print }' "$file")"
+# (`sub(/\r$/,"")` first so a CRLF checkout doesn't make line 1 `---\r` != `---`.)
+fm="$(awk '{ sub(/\r$/,"") } NR==1{ if ($0!="---") exit; next } /^---$/{ exit } { print }' "$file")"
 if [ -z "$fm" ]; then
   fail "missing frontmatter (file must start with a --- block)"
 fi
@@ -60,8 +61,21 @@ if [ "$status" = "blocked" ] && [ -z "$(get blocked)" ]; then
   fail "blocked item missing blocked: (the question awaiting an ANSWER)"
 fi
 
-# --- depends_on: inline [a, b]; entries containing a dot are item-level and
-# must resolve to a file; bare milestone tags (no dot) are allowed as-is -----
+# --- depends_on: the flat inline [a, b] form the whole greppable substrate
+# assumes. A YAML block list (or a bare scalar) reads as an empty inline value
+# and would silently skip dependency resolution, so reject anything that is not
+# `[...]` outright — the lint is where that format contract is enforced.
+if printf '%s\n' "$fm" | grep -q '^depends_on:'; then
+  dep_raw="$(get depends_on)"
+  case "$dep_raw" in
+    \[*\]) : ;;
+    *) fail "depends_on must be an inline [a, b] list (got: '${dep_raw:-<empty or block-style>}')" ;;
+  esac
+fi
+
+# Entries containing a dot are item-level and must resolve to a file; bare
+# milestone tags (no dot) are allowed as-is (see the milestone/item naming
+# scheme: milestone = <prefix><n>, item = <prefix><n>.<m> — exactly one dot).
 deps="$(get depends_on | tr -d '[]' | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
 while IFS= read -r dep; do
   [ -n "$dep" ] || continue
@@ -75,7 +89,7 @@ $deps
 DEPS
 
 # --- body sections: ## Spec (three named bullets) + ## Acceptance ------------
-body="$(awk 'NR==1 && $0=="---" { infm=1; next } infm && /^---$/ { infm=0; next } !infm { print }' "$file")"
+body="$(awk '{ sub(/\r$/,"") } NR==1 && $0=="---" { infm=1; next } infm && /^---$/ { infm=0; next } !infm { print }' "$file")"
 section() { printf '%s\n' "$body" | awk -v h="^## $1" 'BEGIN{on=0} $0~h{on=1;next} /^## /{on=0} on{print}'; }
 
 spec="$(section "Spec")"
@@ -88,11 +102,17 @@ if printf '%s' "$spec" | grep -q '[^[:space:]]'; then
   done
 fi
 
-# Unfilled <...> placeholders make a todo item undispatched-able; done/other
-# statuses are historical records and are not re-gated.
+# Unfilled template placeholders make a todo item undispatched-able. A
+# placeholder is an ellipsis (`<...>` / `<…>`) or an angle-bracketed lowercase
+# English phrase (has an internal space; only [a-z], space, `/`, `-`) — this
+# deliberately does NOT match generic types (`Array<string>`,
+# `Map<string, number>` — the comma/uppercase excludes them), JSX
+# (`<UserCard …>` — leading uppercase excludes it), or signatures, all of which
+# legitimately appear in an Interfaces bullet. done/other statuses are
+# historical records and are not re-gated.
 if [ "$status" = "todo" ]; then
-  if printf '%s\n%s\n' "$spec" "$acc" | grep -q '<[^>]*>'; then
-    fail "unfilled <...> placeholder in Spec/Acceptance of a todo item"
+  if printf '%s\n%s\n' "$spec" "$acc" | grep -Eq '<\.\.\.>|<…>|<[a-z][a-z /-]*[[:space:]][a-z /-]*>'; then
+    fail "unfilled placeholder (<...> or <lowercase phrase>) in Spec/Acceptance of a todo item"
   fi
 fi
 

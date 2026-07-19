@@ -258,6 +258,57 @@ depends_on: []
 '
 check "done item with <...> placeholder passes (rule gates todo only)" 0 "$WORK/F2.11.md"
 
+# Regression (review finding 1): generic types / JSX in an Interfaces bullet are
+# real content, not template placeholders — a valid todo item must NOT be failed.
+mk F3.1.md '---
+id: F3.1
+title: generic types are not placeholders
+status: todo
+depends_on: [F1.1]
+---
+
+# F3.1 — generic types are not placeholders
+
+## Spec
+- **Surface:** src/parse.ts
+- **Interfaces:** parse(input: Array<string>) -> Map<string, number>; renders <UserCard user={u} />
+- **Out of scope:** streaming
+
+## Acceptance (e2e)
+- parsing two items yields a 2-entry map
+'
+check "generic types / JSX in Interfaces do NOT trip the placeholder rule (todo passes)" 0 "$WORK/F3.1.md"
+
+# Regression (review finding 2): a YAML block-style depends_on reads as empty
+# inline and would silently skip dep resolution — the lint must reject the
+# off-contract form outright (here it also names a dangling dep, F8.8).
+mk F3.2.md '---
+id: F3.2
+title: block-style depends_on
+status: todo
+depends_on:
+  - F1.1
+  - F8.8
+---
+
+# F3.2 — block-style depends_on
+
+## Spec
+- **Surface:** x
+- **Interfaces:** y
+- **Out of scope:** z
+
+## Acceptance (e2e)
+- ok
+'
+check "block-style depends_on (not inline [a, b]) fails" 1 "$WORK/F3.2.md"
+
+# Regression (review finding 3): a CRLF checkout must not fail a valid item.
+printf '%s\r\n' '---' 'id: crlf' 'title: crlf ok' 'status: todo' 'depends_on: []' '---' '' \
+  '# crlf — crlf ok' '' '## Spec' '- **Surface:** x' '- **Interfaces:** y' \
+  '- **Out of scope:** z' '' '## Acceptance (e2e)' '- ok' > "$WORK/crlf.md"
+check "CRLF line endings still pass a valid todo item" 0 "$WORK/crlf.md"
+
 check "missing file fails" 1 "$WORK/does-not-exist.md"
 
 out="$(bash "$LINT" 2>&1)"; rc=$?
