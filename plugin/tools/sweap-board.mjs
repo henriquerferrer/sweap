@@ -6,11 +6,11 @@ import { execFile } from "node:child_process";
 import { buildState } from "./sweap-board.lib.mjs";
 import { renderPage } from "./sweap-board.page.mjs";
 
-const run = (cmd) => (args) => new Promise((resolve) => {
-  execFile(cmd, args, { maxBuffer: 8 * 1024 * 1024 }, (err, stdout) => resolve({ stdout: stdout || "", code: err ? (err.code || 1) : 0 }));
+const run = (cmd, cwd) => (args) => new Promise((resolve) => {
+  execFile(cmd, args, { cwd, maxBuffer: 8 * 1024 * 1024 }, (err, stdout) => resolve({ stdout: stdout || "", code: err ? (err.code || 1) : 0 }));
 });
 
-export function createServer({ projectDir, git = run("git"), gh = run("gh"), ghCacheMs = 15000 }) {
+export function createServer({ projectDir, git = run("git", projectDir), gh = run("gh", projectDir), ghCacheMs = 15000 }) {
   let ghCache = { key: null, at: 0, promise: null };
   const cachedGh = (args) => {
     const key = JSON.stringify(args); const now = Date.now();

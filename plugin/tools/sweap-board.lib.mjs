@@ -165,6 +165,7 @@ export async function buildState(projectDir, { git, gh, now }) {
   const { backlogDir } = readConfig(projectDir);
   const items = loadItems(projectDir, backlogDir);
   if (items.some((i) => i.malformed)) notes.push("one or more item files are malformed (shown flagged)");
+  if (items.length === 0) notes.push(`no backlog items found under ${backlogDir}`);
   const { frontier, blocked, backlog, edges } = deriveBacklog(items);
   const byId = new Map(items.map((i) => [i.id, i]));
 
@@ -191,17 +192,18 @@ export async function buildState(projectDir, { git, gh, now }) {
   const linkWt = (item) => ann.wtByItem[item.id] || worktrees.find((w) => refMatchesId(w.branch, item.id)) || null;
 
   const inFlight = items
-    .filter((i) => i.status !== "done" && (ann.wtByItem[i.id] || ann.prByItem[i.id] != null || linkWt(i) || linkPr(i)))
+    .filter((i) => i.status !== "done" && i.status !== "blocked" && (ann.wtByItem[i.id] || ann.prByItem[i.id] != null || linkWt(i) || linkPr(i)))
     .map((i) => {
       const wt = linkWt(i); const pr = linkPr(i);
       return { id: i.id, title: i.title, step: ann.steps[i.id] || null, worktree: wt ? (wt.worktree || basename(wt.path || "")) : null, branch: wt ? wt.branch : null, pr: pr ? pr.number : null, ci: pr && pr.statusCheckRollup ? ciSummary(pr.statusCheckRollup) : "unknown" };
     });
 
   const inFlightPrs = new Set(inFlight.map((f) => f.pr).filter(Boolean));
-  const mergeQueue = (prs || []).filter((p) => inFlightPrs.has(p.number)).map((p) => ({ pr: p.number, title: p.title, ci: ciSummary(p.statusCheckRollup), mergeState: p.mergeStateStatus || null }));
+  const inFlightIds = new Set(inFlight.map((f) => f.id));
+  const mergeQueue = (prs || []).filter((p) => inFlightPrs.has(p.number)).map((p) => ({ pr: p.number, title: p.title, ci: ciSummary(p.statusCheckRollup), mergeState: p.mergeStateStatus || null })).sort((a, b) => a.pr - b.pr);
 
   const active = boardText.trim().length > 0 || inFlight.length > 0;
   if (!active) notes.push("no run in flight");
 
-  return { generatedAt: now, project: basename(projectDir), run: { active, prsAvailable }, frontier: frontier.map((i) => ({ id: i.id, title: i.title, lane: i.lane, reviewDimensions: i.reviewDimensions })), inFlight, mergeQueue, blocked, backlog: backlog.map((g) => ({ milestone: g.milestone, items: g.items.map((i) => ({ id: i.id, title: i.title, status: i.status, dependsOn: i.dependsOn, malformed: i.malformed })) })), edges, notes };
+  return { generatedAt: now, project: basename(projectDir), run: { active, prsAvailable }, frontier: frontier.filter((i) => !inFlightIds.has(i.id)).map((i) => ({ id: i.id, title: i.title, lane: i.lane, reviewDimensions: i.reviewDimensions })), inFlight, mergeQueue, blocked, backlog: backlog.map((g) => ({ milestone: g.milestone, items: g.items.map((i) => ({ id: i.id, title: i.title, status: i.status, dependsOn: i.dependsOn, malformed: i.malformed })) })), edges, notes };
 }

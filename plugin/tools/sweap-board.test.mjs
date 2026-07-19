@@ -210,3 +210,27 @@ test("createServer caches gh across rapid /state.json requests", async () => {
   await new Promise((res) => srv.close(res));
   rmSync(dir, { recursive: true });
 });
+
+test("buildState: in-flight item is not in frontier; blocked item is not in-flight", async () => {
+  const dir = fixture({
+    "CLAUDE.md": "## sweap config\nbacklog.dir: roadmap/\n",
+    "roadmap/F1.1.md": "---\nid: F1.1\ntitle: login\nstatus: todo\ndepends_on: []\n---\n",
+    "roadmap/F1.2.md": "---\nid: F1.2\ntitle: ready\nstatus: todo\ndepends_on: []\n---\n",
+    "roadmap/F1.3.md": "---\nid: F1.3\ntitle: stuck\nstatus: blocked\nblocked: which db?\ndepends_on: []\n---\n",
+    ".claude/sweap-board.md": "F1.1 | review | wt-a@feat-F1.1 | PR #31 | -\nF1.3 | blocked | wt-c@feat-F1.3 | PR #33 | which db?\n",
+  });
+  const git = async () => ({ stdout: "worktree /a\nbranch refs/heads/feat-F1.1\n\nworktree /c\nbranch refs/heads/feat-F1.3\n\n", code: 0 });
+  const gh = async () => ({ stdout: JSON.stringify([
+    { number: 31, title: "login", headRefName: "feat-F1.1", state: "OPEN", statusCheckRollup: [{ conclusion: "SUCCESS" }], mergeStateStatus: "CLEAN" },
+    { number: 33, title: "stuck", headRefName: "feat-F1.3", state: "OPEN", statusCheckRollup: [{ conclusion: "FAILURE" }], mergeStateStatus: "BLOCKED" },
+  ]), code: 0 });
+  const s = await buildState(dir, { git, gh, now: 9 });
+  const frontierIds = s.frontier.map((i) => i.id);
+  const inFlightIds = s.inFlight.map((i) => i.id);
+  assert.ok(!frontierIds.includes("F1.1"), "in-flight F1.1 must NOT be in frontier");
+  assert.ok(frontierIds.includes("F1.2"), "un-dispatched F1.2 stays in frontier");
+  assert.ok(inFlightIds.includes("F1.1"));
+  assert.ok(!inFlightIds.includes("F1.3"), "blocked F1.3 must NOT be in-flight");
+  assert.deepEqual(s.blocked.map((b) => b.id), ["F1.3"]);
+  rmSync(dir, { recursive: true });
+});
