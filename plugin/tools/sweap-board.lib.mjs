@@ -72,7 +72,7 @@ export function isUnblocked(item, byId, byMilestone) {
   return item.dependsOn.every((dep) => {
     if (dep.includes(".")) { const d = byId.get(dep); return Boolean(d && d.status === "done"); }
     const items = byMilestone.get(dep) || [];
-    return items.length > 0 && items.some((i) => i.status === "done");
+    return items.length > 0 && items.every((i) => i.status === "done");
   });
 }
 

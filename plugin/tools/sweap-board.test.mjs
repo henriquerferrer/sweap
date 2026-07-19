@@ -67,14 +67,23 @@ test("milestoneOf takes the segment before the first dot", () => {
   assert.equal(milestoneOf("DS3.4"), "DS3");
 });
 
-test("isUnblocked: item dep must be done; bare-milestone dep needs all its items done", () => {
-  const items = [mk("F1.1", "done"), mk("F1.2", "todo", ["F1.1"]), mk("F2.1", "todo", ["F1"]), mk("F2.2", "todo", ["F9"])];
+test("isUnblocked: item dep must be done; bare-milestone dep needs ALL its items done", () => {
+  const items = [
+    mk("F1.1", "done"),
+    mk("F1.2", "done"),
+    mk("F1.3", "done", ["F1.1"]),
+    mk("F2.1", "todo", ["F1"]),
+    mk("F3.1", "todo"),
+    mk("F4.1", "todo", ["F3"]),
+    mk("F5.1", "todo", ["F9"]),
+  ];
   const byId = new Map(items.map((i) => [i.id, i]));
   const byM = new Map();
-  for (const i of items) { const m = milestoneOf(i.id); (byM.get(m) || byM.set(m, []).get(m)).push(i); }
-  assert.equal(isUnblocked(items[1], byId, byM), true);   // F1.2 dep F1.1 done
-  assert.equal(isUnblocked(items[2], byId, byM), true);   // F2.1 dep milestone F1 (F1.1 done)
-  assert.equal(isUnblocked(items[3], byId, byM), false);  // F2.2 dep milestone F9 (no items)
+  for (const i of items) { const m = milestoneOf(i.id); if (!byM.has(m)) byM.set(m, []); byM.get(m).push(i); }
+  assert.equal(isUnblocked(byId.get("F1.3"), byId, byM), true);   // item dep on done F1.1
+  assert.equal(isUnblocked(byId.get("F2.1"), byId, byM), true);   // milestone F1 fully done
+  assert.equal(isUnblocked(byId.get("F4.1"), byId, byM), false);  // milestone F3 has a todo item
+  assert.equal(isUnblocked(byId.get("F5.1"), byId, byM), false);  // milestone F9 has no items
 });
 
 test("compareItems orders debt first, then numeric id (F1.9 before F1.10)", () => {
