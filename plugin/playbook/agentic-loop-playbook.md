@@ -664,6 +664,7 @@ flag per existing doctrine; never retry-until-green.
 | Headless `claude -p` + auto permission mode | Scripted/CI-triggered sessions; classifier gates commands | Scripts/CI/events |
 | Agentic CI (GitHub Actions) | Claude reviews every PR; merge gated on green e2e + clean review | Git events |
 | `claude --continue` / `--resume` | Pick a session back up after a crash/reboot; long sessions survive via context summarization | User |
+| `/board` (read-only viewer) | Local loopback page showing the live run (frontier/in-flight/merge-queue/blocked) + backlog + dep graph; derives state from item files + git + PRs, never writes | User runs; safe during autonomous runs |
 
 ## Model policy
 
