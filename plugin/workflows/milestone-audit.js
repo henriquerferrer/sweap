@@ -1,7 +1,7 @@
 export const meta = {
   name: 'milestone-audit',
   description: 'Adversarial cross-feature audit of a merged milestone (finders → refuters → confirmed findings)',
-  whenToUse: 'After the last item of a ROADMAP milestone merges, before the next milestone brainstorm. Pass {range: "<base>..<head>"} or let the Scope stage infer it from the backlog file (ROADMAP.md by default; backlog.file in the project CLAUDE.md config).',
+  whenToUse: 'After the last item of a milestone merges, before the next milestone brainstorm. Pass {range: "<base>..<head>"} or let the Scope stage infer it from the item files at status: done under backlog.dir (roadmap/ by default; backlog.file is the index).',
   phases: [
     { title: 'Scope', detail: 'map the milestone surface (tables, routes, server fns) and resolve audit.lenses' },
     { title: 'Find', detail: 'one finder per lens over the merged whole' },
@@ -94,8 +94,8 @@ const milestone = args?.milestone ?? 'the most recently completed milestone'
 phase('Scope')
 const scope = await agent(
   `In this repo, determine the merged commit range and surface for ${milestone}.` +
-    (range ? ` Use the range ${range}.` : ` Infer the range from the backlog file's [done] items' merge PR links and git log --oneline --merges.`) +
-    ` Return: the range, the list of changed files grouped by area (db schema/migrations, server fns, routes, tests), new tables, new permission actions, and the milestone's acceptance criteria copied from the backlog file.`,
+    (range ? ` Use the range ${range}.` : ` Infer the range from the milestone's item files at status: done (their merge PR links) and git log --oneline --merges.`) +
+    ` Return: the range, the list of changed files grouped by area (db schema/migrations, server fns, routes, tests), new tables, new permission actions, and the milestone's acceptance criteria copied from its item files.`,
   { label: 'scope', phase: 'Scope' }
 )
 

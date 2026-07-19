@@ -1,6 +1,6 @@
 ---
 name: milestone-cross-check
-description: Completeness critic for a drafted milestone ROADMAP section. Use AFTER an interactive superpowers:brainstorming pass has produced draft items and BEFORE writing them to ROADMAP.md. Reviews the draft against a fixed lens and surfaces ONLY the net-new forks/gaps the brainstorm missed — it does NOT rewrite items or expand scope; it flags gaps for the human to resolve. Distilled from the product-management write-spec lens (non-goals, persona coverage, success signals, open questions).
+description: Completeness critic for a milestone's drafted item files. Use AFTER an interactive superpowers:brainstorming pass has produced draft items and BEFORE writing them under backlog.dir (roadmap/). Reviews the draft against a fixed lens and surfaces ONLY the net-new forks/gaps the brainstorm missed — it does NOT rewrite items or expand scope; it flags gaps for the human to resolve. Distilled from the product-management write-spec lens (non-goals, persona coverage, success signals, open questions).
 ---
 
 # Milestone cross-check
@@ -25,7 +25,8 @@ the author's context inherits the author's blind spots).
 
 Give the critic: the drafted milestone items, plus the real repo context it must
 check against —
-- `ROADMAP.md` (prior milestones, house format, the project's core invariants),
+- the backlog (the `ROADMAP.md` index + prior milestones' item files under
+  `roadmap/`; the item schema lives in the playbook's "Backlog format" section),
 - the project's role/permission definitions (the actual role/permission matrix),
 - the shipped data model and prior specs (the entities the new milestone
   interacts with).

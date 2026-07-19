@@ -4,16 +4,16 @@ argument-hint: "[milestone] [cadence] — e.g. F2 nightly (cadence: 'nightly' or
 ---
 
 Read `CLAUDE.md` (incl. the `## sweap config` block),
-`${CLAUDE_PLUGIN_ROOT}/playbook/agentic-loop-playbook.md`, and `ROADMAP.md`
-(`backlog.file`) first.
+`${CLAUDE_PLUGIN_ROOT}/playbook/agentic-loop-playbook.md`, and the backlog
+(`backlog.file` index + item files under `backlog.dir`) first.
 
 Resolve the run exactly as `/milestone` does:
 - Read `backlog.prefix` from the `## sweap config` block in `CLAUDE.md` (default
   `F`) — the milestone-tag prefix used below.
 - **Milestone `M`** = the first argument if given (e.g. `F2` using the
-  configured prefix); otherwise the lowest-numbered milestone in `ROADMAP.md`
-  that has `[todo]` items whose dependencies are all `[done]` (the next
-  runnable milestone).
+  configured prefix); otherwise the next runnable milestone in the index's
+  order that has `status: todo` item files whose dependencies are all
+  satisfied (the next runnable milestone).
 - **Turns** = `turns.default` from the `## sweap config` block (default `160`).
   `/loop-schedule` takes no turn-bound argument — its second argument is the
   cadence — so the turn bound always comes from config.
@@ -36,11 +36,12 @@ handing the goal condition to the schedule's prompt instead.
 Kickoff prompt template (fill in `<MILESTONE>` and `<TURNS>` from the resolved
 values above):
 
-> Drain the top unblocked backlog items in ROADMAP.md per the sweap playbook.
+> Drain the backlog's unblocked items in frontier order (index + item files
+> under `backlog.dir`) per the sweap playbook.
 > For each item: work in an isolated worktree, TDD (include RED+GREEN
 > evidence), dispatch a fresh-context review, open a PR, and merge only when
 > the gate is green (the pre-merge-gate hook enforces this). Escalate any
-> blocker to a `[blocked]` ROADMAP entry plus a notification instead of
+> blocker to a `status: blocked` item file plus a notification instead of
 > guessing. When the last <MILESTONE> item merges, run `/milestone-audit` for
 > that range and triage the confirmed findings. Stop when only `[blocked]`
 > items remain, or after <TURNS> turns. Notify with a merged-PRs and
