@@ -1,5 +1,5 @@
 ---
-description: Scaffold sweap's project-owned files (CLAUDE.md config, ROADMAP, justfile, .github) into this repo. Idempotent.
+description: Scaffold sweap's project-owned files (CLAUDE.md config, ROADMAP index + roadmap/ items dir, justfile, .github) into this repo. Idempotent.
 ---
 
 This project is normally auto-scaffolded on first session by the sweap plugin's
@@ -50,7 +50,8 @@ script reported (these are the fill-ins the script cannot do for you):
      section (or generate them via the `agentic-ci` skill).
    - Generate a `CLAUDE_CODE_OAUTH_TOKEN` repo secret (`claude setup-token`,
      then `gh secret set`) so `.github/workflows/claude-review.yml` runs.
-   - Write the first ROADMAP milestone with `/roadmap`.
+   - Write the first milestone with `/roadmap` (one file per item under
+     `roadmap/`; the `ROADMAP.md` index lists milestones only).
 
 Do not commit — leave the scaffolded files staged-or-unstaged for the human to
 review, since CI and verify commands are stack-specific and must be filled in
