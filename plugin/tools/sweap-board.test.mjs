@@ -167,3 +167,16 @@ test("buildState: a malformed item file is flagged, not fatal", async () => {
   assert.ok(s.notes.some((n) => /malformed/i.test(n)));
   rmSync(dir, { recursive: true });
 });
+
+import { renderPage } from "./sweap-board.page.mjs";
+
+test("renderPage returns a self-contained HTML doc with the poll targets", () => {
+  const html = renderPage();
+  assert.match(html, /<!doctype html>/i);
+  for (const id of ["frontier", "inflight", "mergequeue", "blocked", "backlog", "graph", "updated", "notes", "project"]) {
+    assert.ok(html.includes(`id="${id}"`), `missing #${id}`);
+  }
+  assert.match(html, /\/state\.json/);           // client polls the endpoint
+  assert.ok(!/https?:\/\//.test(html.replace(/https?:\/\/[^"']*w3\.org[^"']*/g, "")), "no external asset URLs");
+  assert.match(html, /prefers-color-scheme/);    // theme-aware
+});
