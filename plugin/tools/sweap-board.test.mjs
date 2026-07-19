@@ -57,3 +57,38 @@ test("loadItems parses items and flags malformed", () => {
   assert.equal(byId["F1.3.md"].malformed, true); // id != filename
   rmSync(dir, { recursive: true });
 });
+
+import { isUnblocked, compareItems, deriveBacklog, milestoneOf } from "./sweap-board.lib.mjs";
+
+const mk = (id, status, deps = [], extra = {}) => ({ id, title: id, status, dependsOn: deps, reviewDimensions: [], lane: null, followupOf: null, blocked: null, malformed: false, file: id + ".md", ...extra });
+
+test("milestoneOf takes the segment before the first dot", () => {
+  assert.equal(milestoneOf("F1.2"), "F1");
+  assert.equal(milestoneOf("DS3.4"), "DS3");
+});
+
+test("isUnblocked: item dep must be done; bare-milestone dep needs all its items done", () => {
+  const items = [mk("F1.1", "done"), mk("F1.2", "todo", ["F1.1"]), mk("F2.1", "todo", ["F1"]), mk("F2.2", "todo", ["F9"])];
+  const byId = new Map(items.map((i) => [i.id, i]));
+  const byM = new Map();
+  for (const i of items) { const m = milestoneOf(i.id); (byM.get(m) || byM.set(m, []).get(m)).push(i); }
+  assert.equal(isUnblocked(items[1], byId, byM), true);   // F1.2 dep F1.1 done
+  assert.equal(isUnblocked(items[2], byId, byM), true);   // F2.1 dep milestone F1 (F1.1 done)
+  assert.equal(isUnblocked(items[3], byId, byM), false);  // F2.2 dep milestone F9 (no items)
+});
+
+test("compareItems orders debt first, then numeric id (F1.9 before F1.10)", () => {
+  const a = mk("F1.10", "todo"), b = mk("F1.9", "todo"), debt = mk("F1.2", "todo", [], { followupOf: "F1" });
+  const sorted = [a, b, debt].sort(compareItems).map((i) => i.id);
+  assert.deepEqual(sorted, ["F1.2", "F1.9", "F1.10"]);
+});
+
+test("deriveBacklog produces frontier, blocked, grouped backlog, edges", () => {
+  const items = [mk("F1.1", "done"), mk("F1.2", "todo", ["F1.1"]), mk("F1.3", "blocked", [], { blocked: "which scope?" }), mk("F1.4", "todo", ["F1.3"])];
+  const d = deriveBacklog(items);
+  assert.deepEqual(d.frontier.map((i) => i.id), ["F1.2"]);          // F1.4 blocked by non-done F1.3
+  assert.deepEqual(d.blocked.map((b) => [b.id, b.question]), [["F1.3", "which scope?"]]);
+  assert.equal(d.backlog[0].milestone, "F1");
+  assert.equal(d.backlog[0].items.length, 4);
+  assert.ok(d.edges.some((e) => e.from === "F1.1" && e.to === "F1.2"));
+});

@@ -65,3 +65,44 @@ export function loadItems(projectDir, backlogDir) {
     };
   });
 }
+
+export const milestoneOf = (id) => String(id).split(".")[0];
+
+export function isUnblocked(item, byId, byMilestone) {
+  return item.dependsOn.every((dep) => {
+    if (dep.includes(".")) { const d = byId.get(dep); return Boolean(d && d.status === "done"); }
+    const items = byMilestone.get(dep) || [];
+    return items.length > 0 && items.some((i) => i.status === "done");
+  });
+}
+
+const numKey = (id) => String(id).split(".").map((s) => { const m = s.match(/\d+/); return m ? parseInt(m[0], 10) : 0; });
+
+export function compareItems(a, b) {
+  const ad = a.followupOf ? 0 : 1, bd = b.followupOf ? 0 : 1;
+  if (ad !== bd) return ad - bd;
+  const ak = numKey(a.id), bk = numKey(b.id);
+  for (let i = 0; i < Math.max(ak.length, bk.length); i++) { const d = (ak[i] || 0) - (bk[i] || 0); if (d) return d; }
+  return String(a.id).localeCompare(String(b.id));
+}
+
+export function deriveBacklog(items) {
+  const byId = new Map(items.map((i) => [i.id, i]));
+  const byMilestone = new Map();
+  for (const i of items) { const m = milestoneOf(i.id); if (!byMilestone.has(m)) byMilestone.set(m, []); byMilestone.get(m).push(i); }
+
+  const frontier = items
+    .filter((i) => i.status === "todo" && isUnblocked(i, byId, byMilestone))
+    .sort(compareItems);
+
+  const blocked = items.filter((i) => i.status === "blocked").map((i) => ({ id: i.id, title: i.title, question: i.blocked || "(no question recorded)" }));
+
+  const backlog = [...byMilestone.entries()]
+    .sort((a, b) => compareItems({ id: a[0] + ".0", followupOf: null }, { id: b[0] + ".0", followupOf: null }))
+    .map(([milestone, its]) => ({ milestone, items: [...its].sort(compareItems) }));
+
+  const edges = [];
+  for (const i of items) for (const dep of i.dependsOn) if (dep.includes(".") && byId.has(dep)) edges.push({ from: dep, to: i.id });
+
+  return { frontier, blocked, backlog, edges };
+}
