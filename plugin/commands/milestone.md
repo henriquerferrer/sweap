@@ -87,7 +87,7 @@ which mode you ended up in. Never block the run on Docker, or on the absence of
 `services.up` — the loop is identical either way.
 
 Parallel width (coordinator mode). Read `parallel:` from the `## sweap
-config` block (default 1; clamp values above 4 to 4 and say so). If it is 2
+config` block (default 2; clamp values above 4 to 4 and say so). If it is 2
 or more, say the run will operate in **coordinator mode** per the playbook's
 "Parallel runs (coordinator mode)" section — frontier scheduling,
 worktree-isolated workers, the FIFO always-verify merge queue, and the

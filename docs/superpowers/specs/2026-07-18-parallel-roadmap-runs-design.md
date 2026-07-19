@@ -188,6 +188,13 @@ surface being roadmap + board only.
 - **Local services at K≥2.** Coordinator-mode workers run CI-gated unless
   the project declares its services parallel-safe (contention on a shared
   local stack produces spurious failures).
+- **Default width changed 1 → 2 (Henrique's direction, 2026-07-19).**
+  Supersedes locked decision 7's "default 1, no silent behavior change"
+  rationale: all sweap projects are Henrique's own, and coordinator mode
+  degrades to the serial loop automatically on a width-1 frontier, so the
+  conservative default bought nothing. `parallel: 1` remains the explicit
+  serial opt-out; the supervised first trial before unattended `parallel: 2`
+  use still applies.
 
 ## Open items (amended)
 

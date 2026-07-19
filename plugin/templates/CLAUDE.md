@@ -17,7 +17,7 @@ audit.lenses:     default
 review.dimensions: security, ui, migration
 notify:           push
 turns.default:    160
-parallel:         1                        # concurrent roadmap items: 1 = serial; 2-3 enables coordinator mode (cap 4) — see playbook "Parallel runs"
+parallel:         2                        # concurrent roadmap items: default 2 = coordinator mode; set 1 for serial (cap 4) — see playbook "Parallel runs"
 ```
 
 ## Standing preferences — treat as already answered, do not re-ask

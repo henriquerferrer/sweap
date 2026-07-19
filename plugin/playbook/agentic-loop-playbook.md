@@ -44,8 +44,8 @@ overrides only the keys that differ from the baked defaults. The keys:
   Default **`push`**.
 - **`turns.default`** — the default turn budget for an autonomous run. Default
   **`160`**.
-- **`parallel`** — max concurrent roadmap items. Default **`1`** (the serial
-  loop). `2`–`3` enables coordinator mode (see **Parallel runs (coordinator
+- **`parallel`** — max concurrent roadmap items. Default **`2`** (coordinator
+  mode). Set `1` for the strictly serial loop (see **Parallel runs (coordinator
   mode)**); hard cap **4** — clamp anything higher to 4 and say so.
 
 References to `ROADMAP.md`, the milestone prefix `F`, and `just …` recipe names
@@ -444,8 +444,10 @@ gains nothing and simply runs the serial loop.
 
 ## Parallel runs (coordinator mode)
 
-Active when the `## sweap config` block declares `parallel: 2` or more
-(default `1` = the serial loop; hard cap 4). Evidence base and locked
+Active when `parallel:` is 2 or more — the **default is `2`**, so coordinator
+mode is the standard run shape; declare `parallel: 1` to opt back into the
+strictly serial loop (hard cap 4). A width-1 frontier (serial dependency
+chain) degrades to the serial loop automatically either way. Evidence base and locked
 decisions: the parallel-roadmap-runs spec (2026-07-18) in the sweap plugin
 repo. The shape is **thin coordinator, fat gates** — the gates do the
 verifying; the coordinator only schedules.
