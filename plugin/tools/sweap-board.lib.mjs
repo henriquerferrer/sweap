@@ -3,6 +3,8 @@
 // Reads item files with the same flat-frontmatter contract roadmap-lint enforces.
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { existsSync } from "node:fs";
+import { basename } from "node:path";
 
 export function parseFrontmatter(text) {
   const norm = String(text).replace(/\r\n?/g, "\n");
@@ -105,4 +107,93 @@ export function deriveBacklog(items) {
   for (const i of items) for (const dep of i.dependsOn) if (dep.includes(".") && byId.has(dep)) edges.push({ from: dep, to: i.id });
 
   return { frontier, blocked, backlog, edges };
+}
+
+export function parseWorktrees(stdout) {
+  const out = [];
+  let cur = null;
+  for (const line of String(stdout).split("\n")) {
+    if (line.startsWith("worktree ")) { if (cur) out.push(cur); cur = { path: line.slice(9), branch: null }; }
+    else if (line.startsWith("branch ") && cur) cur.branch = line.slice(7).replace("refs/heads/", "");
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+
+export function parseBoard(text) {
+  const ann = { steps: {}, prByItem: {}, wtByItem: {}, questions: {} };
+  if (!text) return ann;
+  for (const raw of String(text).split("\n")) {
+    const parts = raw.split("|").map((s) => s.trim());
+    if (parts.length < 2) continue;
+    const id = parts[0].replace(/^[-*#\s>]+/, "").trim();
+    if (!/^[A-Za-z]+\d/.test(id)) continue;
+    if (parts[1]) ann.steps[id] = parts[1];
+    const wt = raw.match(/(\S+)@(\S+)/); if (wt) ann.wtByItem[id] = { worktree: wt[1], branch: wt[2] };
+    const pr = raw.match(/PR\s*#?(\d+)/i); if (pr) ann.prByItem[id] = parseInt(pr[1], 10);
+    const last = parts[parts.length - 1]; if (last && last !== "-") ann.questions[id] = last;
+  }
+  return ann;
+}
+
+export function ciSummary(rollup) {
+  if (!Array.isArray(rollup) || rollup.length === 0) return "unknown";
+  const states = rollup.map((c) => (c.conclusion || c.status || "").toUpperCase());
+  if (states.some((s) => s === "FAILURE" || s === "TIMED_OUT" || s === "CANCELLED" || s === "ERROR")) return "failing";
+  if (states.every((s) => s === "SUCCESS" || s === "NEUTRAL" || s === "SKIPPED")) return "passing";
+  return "pending";
+}
+
+async function readGh(gh, notes) {
+  try {
+    const { stdout, code } = await gh(["pr", "list", "--json", "number,title,headRefName,state,statusCheckRollup,mergeStateStatus"]);
+    if (code !== 0) { notes.push("PR/CI unavailable (gh returned non-zero)"); return null; }
+    return JSON.parse(stdout || "[]");
+  } catch { notes.push("PR/CI unavailable (gh not runnable)"); return null; }
+}
+
+export async function buildState(projectDir, { git, gh, now }) {
+  const notes = [];
+  const { backlogDir } = readConfig(projectDir);
+  const items = loadItems(projectDir, backlogDir);
+  if (items.some((i) => i.malformed)) notes.push("one or more item files are malformed (shown flagged)");
+  const { frontier, blocked, backlog, edges } = deriveBacklog(items);
+  const byId = new Map(items.map((i) => [i.id, i]));
+
+  let worktrees = [];
+  try { const g = await git(["worktree", "list", "--porcelain"]); if (g.code === 0) worktrees = parseWorktrees(g.stdout); else notes.push("git worktrees unavailable"); }
+  catch { notes.push("git worktrees unavailable"); }
+
+  const prs = await readGh(gh, notes);
+  const prsAvailable = prs !== null;
+
+  let boardText = "";
+  const boardPath = join(projectDir, ".claude", "sweap-board.md");
+  if (existsSync(boardPath)) { try { boardText = readFileSync(boardPath, "utf8"); } catch { /* ignore */ } }
+  const ann = parseBoard(boardText);
+
+  const prByRef = new Map((prs || []).map((p) => [p.headRefName, p]));
+  const linkPr = (item) => {
+    if (ann.prByItem[item.id] != null) return (prs || []).find((p) => p.number === ann.prByItem[item.id]) || { number: ann.prByItem[item.id] };
+    const wt = ann.wtByItem[item.id];
+    if (wt && prByRef.has(wt.branch)) return prByRef.get(wt.branch);
+    for (const p of prs || []) if (p.headRefName.includes(item.id)) return p;
+    return null;
+  };
+  const linkWt = (item) => ann.wtByItem[item.id] || worktrees.find((w) => w.branch && w.branch.includes(item.id)) || null;
+
+  const inFlight = items
+    .filter((i) => i.status !== "done" && (ann.wtByItem[i.id] || ann.prByItem[i.id] != null || linkWt(i) || linkPr(i)))
+    .map((i) => {
+      const wt = linkWt(i); const pr = linkPr(i);
+      return { id: i.id, title: i.title, step: ann.steps[i.id] || null, worktree: wt ? (wt.worktree || basename(wt.path || "")) : null, branch: wt ? wt.branch : null, pr: pr ? pr.number : null, ci: pr && pr.statusCheckRollup ? ciSummary(pr.statusCheckRollup) : "unknown" };
+    });
+
+  const inFlightPrs = new Set(inFlight.map((f) => f.pr).filter(Boolean));
+  const mergeQueue = (prs || []).filter((p) => inFlightPrs.has(p.number)).map((p) => ({ pr: p.number, title: p.title, ci: ciSummary(p.statusCheckRollup), mergeState: p.mergeStateStatus || null }));
+
+  const active = boardText.trim().length > 0 || inFlight.length > 0;
+  if (!active) notes.push("no run in flight");
+
+  return { generatedAt: now, project: basename(projectDir), run: { active, prsAvailable }, frontier: frontier.map((i) => ({ id: i.id, title: i.title, lane: i.lane, reviewDimensions: i.reviewDimensions })), inFlight, mergeQueue, blocked, backlog: backlog.map((g) => ({ milestone: g.milestone, items: g.items.map((i) => ({ id: i.id, title: i.title, status: i.status, dependsOn: i.dependsOn, malformed: i.malformed })) })), edges, notes };
 }

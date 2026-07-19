@@ -102,3 +102,52 @@ test("deriveBacklog produces frontier, blocked, grouped backlog, edges", () => {
   assert.equal(d.backlog[0].items.length, 4);
   assert.ok(d.edges.some((e) => e.from === "F1.1" && e.to === "F1.2"));
 });
+
+import { parseWorktrees, ciSummary, buildState } from "./sweap-board.lib.mjs";
+
+test("parseWorktrees reads porcelain output", () => {
+  const out = "worktree /repo\nHEAD abc\nbranch refs/heads/main\n\nworktree /repo/.wt/a\nHEAD def\nbranch refs/heads/feat-F1.1\n\n";
+  const w = parseWorktrees(out);
+  assert.equal(w.length, 2);
+  assert.equal(w[1].branch, "feat-F1.1");
+});
+
+test("ciSummary collapses a statusCheckRollup", () => {
+  assert.equal(ciSummary([{ conclusion: "SUCCESS" }, { conclusion: "SUCCESS" }]), "passing");
+  assert.equal(ciSummary([{ conclusion: "SUCCESS" }, { conclusion: "FAILURE" }]), "failing");
+  assert.equal(ciSummary([{ status: "IN_PROGRESS" }]), "pending");
+  assert.equal(ciSummary([]), "unknown");
+});
+
+test("buildState: active run links item -> worktree + PR + CI; gh failure degrades", async () => {
+  const dir = fixture({
+    "CLAUDE.md": "## sweap config\nbacklog.dir: roadmap/\n",
+    "roadmap/F1.1.md": "---\nid: F1.1\ntitle: login\nstatus: todo\ndepends_on: []\n---\n",
+    "roadmap/F1.2.md": "---\nid: F1.2\ntitle: db\nstatus: blocked\nblocked: which engine?\ndepends_on: []\n---\n",
+    ".claude/sweap-board.md": "F1.1 | review | wt-a@feat-F1.1 | PR #31 | -\n",
+  });
+  const git = async () => ({ stdout: "worktree /x\nbranch refs/heads/feat-F1.1\n\n", code: 0 });
+  const gh = async () => ({ stdout: JSON.stringify([{ number: 31, title: "login", headRefName: "feat-F1.1", state: "OPEN", statusCheckRollup: [{ conclusion: "SUCCESS" }], mergeStateStatus: "CLEAN" }]), code: 0 });
+  const s = await buildState(dir, { git, gh, now: 1000 });
+  assert.equal(s.run.active, true);
+  assert.equal(s.run.prsAvailable, true);
+  assert.equal(s.generatedAt, 1000);
+  assert.equal(s.inFlight[0].id, "F1.1");
+  assert.equal(s.inFlight[0].pr, 31);
+  assert.equal(s.inFlight[0].ci, "passing");
+  assert.equal(s.inFlight[0].step, "review");
+  assert.deepEqual(s.blocked.map((b) => b.id), ["F1.2"]);
+
+  const bad = await buildState(dir, { git, gh: async () => ({ stdout: "", code: 1 }), now: 2 });
+  assert.equal(bad.run.prsAvailable, false);
+  assert.ok(bad.notes.some((n) => /PR.*unavailable/i.test(n)));
+  rmSync(dir, { recursive: true });
+});
+
+test("buildState: no board, no worktrees => inactive run, backlog still present", async () => {
+  const dir = fixture({ "CLAUDE.md": "## sweap config\n", "roadmap/F1.1.md": "---\nid: F1.1\ntitle: x\nstatus: todo\ndepends_on: []\n---\n" });
+  const s = await buildState(dir, { git: async () => ({ stdout: "worktree /x\nbranch refs/heads/main\n\n", code: 0 }), gh: async () => ({ stdout: "[]", code: 0 }), now: 5 });
+  assert.equal(s.run.active, false);
+  assert.equal(s.backlog[0].items[0].id, "F1.1");
+  rmSync(dir, { recursive: true });
+});
