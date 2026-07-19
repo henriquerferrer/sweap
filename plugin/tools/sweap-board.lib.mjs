@@ -144,6 +144,14 @@ export function ciSummary(rollup) {
   return "pending";
 }
 
+const escId = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+// Match an item id inside a branch/PR ref only at a token boundary, so "F1.1"
+// does NOT match "feat-F1.10" (a different item). Case-insensitive.
+export function refMatchesId(ref, id) {
+  if (!ref || !id) return false;
+  return new RegExp("(^|[^0-9A-Za-z.])" + escId(id) + "(?![0-9.])", "i").test(String(ref));
+}
+
 async function readGh(gh, notes) {
   try {
     const { stdout, code } = await gh(["pr", "list", "--json", "number,title,headRefName,state,statusCheckRollup,mergeStateStatus"]);
@@ -177,10 +185,10 @@ export async function buildState(projectDir, { git, gh, now }) {
     if (ann.prByItem[item.id] != null) return (prs || []).find((p) => p.number === ann.prByItem[item.id]) || { number: ann.prByItem[item.id] };
     const wt = ann.wtByItem[item.id];
     if (wt && prByRef.has(wt.branch)) return prByRef.get(wt.branch);
-    for (const p of prs || []) if (p.headRefName.includes(item.id)) return p;
+    for (const p of prs || []) if (refMatchesId(p.headRefName, item.id)) return p;
     return null;
   };
-  const linkWt = (item) => ann.wtByItem[item.id] || worktrees.find((w) => w.branch && w.branch.includes(item.id)) || null;
+  const linkWt = (item) => ann.wtByItem[item.id] || worktrees.find((w) => refMatchesId(w.branch, item.id)) || null;
 
   const inFlight = items
     .filter((i) => i.status !== "done" && (ann.wtByItem[i.id] || ann.prByItem[i.id] != null || linkWt(i) || linkPr(i)))

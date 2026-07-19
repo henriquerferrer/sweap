@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseFrontmatter, parseList, readConfig, loadItems } from "./sweap-board.lib.mjs";
+import { parseFrontmatter, parseList, readConfig, loadItems, refMatchesId } from "./sweap-board.lib.mjs";
 
 function fixture(files) {
   const dir = mkdtempSync(join(tmpdir(), "swb-"));
@@ -149,5 +149,21 @@ test("buildState: no board, no worktrees => inactive run, backlog still present"
   const s = await buildState(dir, { git: async () => ({ stdout: "worktree /x\nbranch refs/heads/main\n\n", code: 0 }), gh: async () => ({ stdout: "[]", code: 0 }), now: 5 });
   assert.equal(s.run.active, false);
   assert.equal(s.backlog[0].items[0].id, "F1.1");
+  rmSync(dir, { recursive: true });
+});
+
+test("refMatchesId matches an id only at a token boundary", () => {
+  assert.equal(refMatchesId("feat-F1.1", "F1.1"), true);
+  assert.equal(refMatchesId("F1.1", "F1.1"), true);
+  assert.equal(refMatchesId("feat-F1.1-login", "F1.1"), true);
+  assert.equal(refMatchesId("feat-F1.10", "F1.1"), false);   // must NOT match a longer id
+  assert.equal(refMatchesId(null, "F1.1"), false);
+});
+
+test("buildState: a malformed item file is flagged, not fatal", async () => {
+  const dir = fixture({ "CLAUDE.md": "## sweap config\n", "roadmap/F1.1.md": "no frontmatter here\n" });
+  const s = await buildState(dir, { git: async () => ({ stdout: "", code: 0 }), gh: async () => ({ stdout: "[]", code: 0 }), now: 7 });
+  assert.equal(s.backlog[0].items[0].malformed, true);
+  assert.ok(s.notes.some((n) => /malformed/i.test(n)));
   rmSync(dir, { recursive: true });
 });
