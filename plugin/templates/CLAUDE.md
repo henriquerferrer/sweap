@@ -3,7 +3,8 @@
 <!-- sweap:begin -->
 **Read the sweap playbook before any feature work:** it defines the operating
 model, autonomy rules, and how to resume interrupted work. Specs live in
-`docs/superpowers/specs/`, plans in `docs/superpowers/plans/`. Backlog: `ROADMAP.md`.
+`docs/superpowers/specs/`, plans in `docs/superpowers/plans/`. Backlog:
+`ROADMAP.md` (index) + `roadmap/` (one file per item).
 
 ## sweap config (read by pipeline commands — override only what differs)
 ```
@@ -11,6 +12,7 @@ verify.typecheck: <your typecheck cmd>     # e.g. pnpm check-types / tsc --noEmi
 verify.lint:      <your lint cmd>
 verify.e2e:       <your e2e cmd>           # authoritative merge gate — must run the FULL suite (unit+integration+e2e), e.g. `just ci-local`
 backlog.file:     ROADMAP.md
+backlog.dir:      roadmap/                  # one file per item — see playbook "Backlog format"
 backlog.prefix:   F                        # one or more comma-separated prefixes, e.g. `F` or `F, DS`
 # services.up:    just services-up          # uncomment only if you have local test services
 audit.lenses:     default
@@ -32,8 +34,9 @@ parallel:         2                        # concurrent roadmap items: default 2
 - Do not rationalize skipping a code review ("nothing to review", "trivial
   adapter"). Every task gets its fresh-context review.
 - When blocked or ambiguous in an unattended run: escalate, don't guess —
-  record the question on the item in ROADMAP.md, notify, move to the next item.
-- Honor each ROADMAP item's `review-dimensions` tags.
+  record the question in the item file's `blocked:` key (status: blocked),
+  notify, move to the next item.
+- Honor each backlog item's `review-dimensions` tags.
 - At the end of an autonomous run: notify with merged-PRs + blocked-items summary.
 <!-- sweap:end -->
 
