@@ -20,12 +20,15 @@ overrides only the keys that differ from the baked defaults. The keys:
   merge gate** (project-specific; e.g. `just e2e`). It must run the project's
   full automated test suite (unit + integration + e2e) — there is no separate
   unit-test key; passing `verify.e2e` is what certifies unit tests passed too.
-- **`backlog.file`** — the backlog/roadmap file. Default **`ROADMAP.md`**.
+- **`backlog.file`** — the backlog **index** file (milestone list + the
+  later-milestones sketch; never per-item status). Default **`ROADMAP.md`**.
+- **`backlog.dir`** — the per-item backlog directory, one file per item — see
+  **Backlog format (file-per-item)**. Default **`roadmap/`**.
 - **`backlog.prefix`** — the milestone-tag prefix(es), as one or more
   comma-separated values (e.g. `F` or `F, DS`). Default **`F`** (so milestones
   read `F1`, `F2`, … and items `F1.1`, `F1.2`, …). When more than one prefix is
   configured, `/milestone` resolves the next runnable milestone across ALL of
-  them, in top-of-file order — a milestone is a milestone regardless of prefix.
+  them, in the index's listed order — a milestone is a milestone regardless of prefix.
   Referred to below as *the milestone prefix*.
 - **`services.up`** — optional command that brings up local test services. **Omit
   it entirely if the project has no local services** — the pipeline then runs in
@@ -52,6 +55,89 @@ References to `ROADMAP.md`, the milestone prefix `F`, and `just …` recipe name
 below are the baked defaults; a project that overrides them reads its own values
 through this block. When a project's config declares a value, that value wins.
 
+## Backlog format (file-per-item)
+
+The backlog is two layers, split by state lifetime. Evidence (2026-07-19
+roadmap-substrate spec): every verified lab system coordinates parallel agents
+through per-task files — a single mutable backlog file is the one pattern the
+evidence rules out, and shared-file mutation (not markdown itself) is the
+hazard.
+
+- **`ROADMAP.md`** (`backlog.file`) — the human-facing **index**: the
+  milestone list in priority order plus the "Later milestones" sketch.
+  Direction-level only; it never carries per-item status, so it changes only
+  at milestone boundaries (human-in-the-loop moments) and is never a
+  concurrent-write hotspot.
+- **`roadmap/`** (`backlog.dir`) — **one file per item**: `roadmap/<ID>.md`
+  (e.g. `roadmap/F1.2.md`), the single source of truth for that item's
+  status, dependencies, and spec. Parallel workers touch disjoint item files
+  by construction.
+- **`roadmap/archive/`** — dropped items move here (`status: dropped` plus a
+  `dropped_reason:` key): a reversible soft-delete, visible in git history.
+- **`.claude/sweap-board.md`** (gitignored) stays the *ephemeral* layer —
+  in-flight claims and queue order only (see Parallel runs).
+
+Item file schema. Frontmatter keys are single-line and `depends_on` is an
+inline `[a, b]` list — keep it flat so `roadmap-lint.sh` and plain greps stay
+trivial (this flatness is a format contract, not a style preference):
+
+    ---
+    id: F1.2                 # must equal the filename (F1.2.md)
+    title: <short feature name>
+    status: todo             # todo | blocked | deferred | done (dropped: archive only)
+    depends_on: []           # item IDs (F1.1) and/or bare milestone tags (F2)
+    review-dimensions: []    # from the review.dimensions config set
+    lane:                    # optional; same-lane items NEVER co-dispatch
+    followup_of:             # optional milestone tag — marks an audit-debt item
+    premise:                 # REQUIRED when deferred — machine-checkable predicate
+    blocked:                 # REQUIRED when blocked — the question awaiting "> ANSWER:"
+    ---
+
+    # F1.2 — <title>
+
+    ## Spec
+    - **Surface:** <files/modules this item is expected to touch>
+    - **Interfaces:** <contracts produced/consumed — exact names/signatures wherever two concurrent items share one>
+    - **Out of scope:** <what this item deliberately does not do>
+
+    ## Acceptance (e2e)
+    - <observable behavior a test asserts>
+
+    ## Notes
+    <optional: "> ANSWER:" threads, UNBLOCKED annotations, links>
+
+**Spec gate (mechanical, one gate, two call sites).** An item is runnable
+only if `roadmap-lint.sh` passes on its file — frontmatter valid and
+consistent, item-level `depends_on` entries resolve to existing files,
+`## Spec` (all three bullets) and `## Acceptance` present, no unfilled `<…>`
+placeholders on a `todo` item. `/roadmap` runs it on every new/changed item
+file before the milestone PR opens; the dispatching session (serial loop or
+coordinator) runs it again before dispatch. A todo item failing lint is not
+runnable: fix it if the fix is mechanical, else escalate (status: blocked
+with the question). Evidence: vague delegation is the dominant
+parallel-dispatch failure mode; a self-contained spec naming surface,
+interfaces, and out-of-scope is the lab-converged prerequisite — and when two
+concurrent items share a contract, the **Interfaces** bullet is where it gets
+pre-declared.
+
+**Frontier order** (replaces the old "top-of-file order"): debt first (items
+with `followup_of:` set), then milestone order as listed in the index, then
+numeric item order within a milestone (numeric segment compare: F1.9 before
+F1.10). An item is *unblocked* when every `depends_on` entry is satisfied —
+item-level entry (has a dot): that file reads `status: done`; bare milestone
+entry: that milestone is complete (every one of its item files is done).
+
+**Legacy migration (one-time, agentic).** A project whose `backlog.file`
+still contains item headers (`### … [todo]`-style) migrates before its next
+`/roadmap` or `/milestone` proceeds: one PR through the gate that moves every
+item into a `backlog.dir` file (parsed fields → frontmatter; `Depends on:` →
+`depends_on`; `Premise:` → `premise:`; items under `## <milestone> audit
+follow-ups` sections → `followup_of: <milestone>`; body bullets → Spec /
+Acceptance, filling Spec gaps best-effort and leaving `<…>` placeholders
+where genuinely unknown), rewrites the index, and deletes the legacy
+sections. The session performs the split itself (no shell parser) and lints
+every produced file.
+
 ## Operating model — the per-feature loop
 
 One feature = one session. Target 10–25 turns per feature; consistently >30 means
@@ -67,8 +153,8 @@ the item is scoped too big — split it.
    PR (see Environment parity).
 3. **Adversarial review:** dispatch a fresh-context review agent that sees only
    the diff + the plan. Fix confirmed findings.
-4. **Conditional review dimensions** (from the item's `review-dimensions` tags
-   in `ROADMAP.md` — see below): run each required extra reviewer before the PR.
+4. **Conditional review dimensions** (from the item file's `review-dimensions`
+   frontmatter — see below): run each required extra reviewer before the PR.
 5. **Merge, clean up (see End-of-run hygiene), next item.**
 
 ## Environment parity (local machine vs. Claude Code web / cloud)
@@ -76,8 +162,8 @@ the item is scoped too big — split it.
 The loop runs identically in any environment because **CI is the authoritative
 test gate, not the local machine.** CI runs the verify gates (including
 `verify.e2e`) against the same services on every PR, and the merge gate requires
-every CI check green — so an item **cannot** reach `[done]` without e2e passing
-in CI, regardless of where it was written.
+every CI check green — so an item **cannot** reach `status: done` without e2e
+passing in CI, regardless of where it was written.
 
 - **Local (services available):** if `services.up` is declared, `/milestone` runs
   it (starting the daemon if the command is daemon/Docker-based), then the local
@@ -96,9 +182,9 @@ requirement, and it holds in both environments.
 
 ## Kickoff commands
 
-- **`/roadmap [milestone]`** — brainstorm the next milestone into `ROADMAP.md`
-  items (the 3-phase decide → cross-check → reconcile). Defaults to the next
-  unspecced milestone. Interactive.
+- **`/roadmap [milestone]`** — brainstorm the next milestone into item files
+  under `roadmap/` plus the index (the 3-phase decide → cross-check →
+  reconcile). Defaults to the next unspecced milestone. Interactive.
 - **`/milestone [milestone] [turns]`** — if `services.up` is declared, brings up
   local test services itself (starting the daemon if needed; falls back to
   CI-gated mode when services are unavailable), then prints the ready-to-paste
@@ -107,9 +193,9 @@ requirement, and it holds in both environments.
   exists only because a human must invoke `/goal`. Ritual:
   `claude --permission-mode auto` → `/milestone` → paste.
 
-## Review dimensions (tagged per ROADMAP item)
+## Review dimensions (tagged per backlog item)
 
-Each roadmap item carries `review-dimensions: [...]`, drawn from the project's
+Each item file carries `review-dimensions: [...]` frontmatter, drawn from the project's
 `review.dimensions` set (default `security`, `ui`, `migration`). Rules:
 
 - **`security`** — required for any item touching auth, permissions,
@@ -184,7 +270,13 @@ may ADD dimensions it judges necessary; it may not remove tagged ones.
   out from under it, so that one is left for the explicit manual step (or the next
   hook pass once the session has moved on). The hook is belt-and-suspenders: still
   run/verify the cleanup yourself.
-- `ROADMAP.md` status updates are part of the item's PR, not separate commits.
+- Item status updates (the `status:` flip in the item's `roadmap/<ID>.md`) are
+  part of the item's PR, not separate commits — conflict-free by construction
+  (disjoint files). Verified, not trusted (agent-self-reported task state is
+  unreliable — Anthropic's own agent-teams docs): after a merge lands, confirm
+  the merged item file on `main` reads `status: done`; a missed flip is a
+  worker error, fixed through the next gated PR (e.g. folded into the next
+  queued item's branch), never by committing to `main`.
 - At goal end (met or stopped): if `notify` is `push`, send a push notification
   summarizing merged PRs and blocked items; list any leftover worktrees/branches
   in the final message; the primary checkout is already current (see above), so
@@ -262,33 +354,34 @@ run and escalates, or a human has to remember it isn't really ready. `[deferred]
 encodes "not ready, don't look" once, mechanically.
 
 **Premise (required on every deferred item).** Each deferred item carries a
-`Premise:` line — the assumption it is waiting on, written wherever possible as a
+`premise:` frontmatter key — the assumption it is waiting on, written wherever possible as a
 **machine-checkable predicate**, not prose. Good: *"a `billing_events` table
 exists with the expected columns"*, *"the target milestone's spec AC-3 still
 reads X"*. This is the small authoring discipline that buys the autonomy below — a
 checkable premise is one no human ever has to adjudicate.
 
 **Dependency granularity — item-level vs. milestone-level.** The unblock scan is
-*item-level*: it fires when a `Depends on:` entry that names a **taggable item**
-(a numbered sub-item like `F4.3`, using the configured milestone prefix) turns
-`[done]`. A dependency on a **whole milestone** — a bare `F4`, whose section
-header never carries a status tag (only numbered sub-items do) — is **not**
-auto-scannable and must not be treated as `[done]` by text-match (nor as
-vacuously done because the milestone has no items yet). A bare-milestone
-dependency is unblocked when that milestone **completes** — its section exists and
-every item in it is `[done]` — which coincides with the milestone-audit and the
-next `/roadmap`, a human-in-the-loop boundary. So milestone-level deferrals
-**surface at the milestone boundary** (the `/milestone` pre-flight backstop and
-the next roadmap pass), not via the automated end-of-run item scan. Rule of
-thumb: once the target items exist, rewrite `Depends on:` to item granularity so
-the scan can fire; a bare-milestone dep is a deliberate "resurface when that
-milestone completes" marker, not an auto-promote trigger.
+*item-level*: it fires when a `depends_on` entry that names an **item** (a
+dotted ID like `F4.3`, using the configured milestone prefix) turns
+`status: done` in its file. A dependency on a **whole milestone** — a bare
+`F4`, which has no single file to read a status from — is **not**
+auto-scannable and must not be treated as done by text-match (nor as
+vacuously done because the milestone has no item files yet). A bare-milestone
+dependency is unblocked when that milestone **completes** — item files for
+that milestone exist and every one is `status: done` — which coincides with
+the milestone-audit and the next `/roadmap`, a human-in-the-loop boundary. So
+milestone-level deferrals **surface at the milestone boundary** (the
+`/milestone` pre-flight backstop and the next roadmap pass), not via the
+automated end-of-run item scan. Rule of thumb: once the target item files
+exist, rewrite `depends_on` to item granularity so the scan can fire; a
+bare-milestone dep is a deliberate "resurface when that milestone completes"
+marker, not an auto-promote trigger.
 
-**Lifecycle — an item is *unblocked* when every `Depends on:` item is `[done]`.**
+**Lifecycle — an item is *unblocked* when every `depends_on` item is `status: done`.**
 Unblocked ≠ ready; it **never auto-promotes**. On unblock the agent evaluates the
 premise and takes exactly one path:
 
-1. **Premise machine-checkable AND verifiably holds** → auto-promote to `[todo]`.
+1. **Premise machine-checkable AND verifiably holds** → auto-promote to `status: todo`.
    No human touch. This is the common case (the dependency landed roughly as
    planned) and it must be *verified*, not guessed — the failure mode of a wrong
    promote is a stale feature built against a dead assumption that passes every
@@ -297,26 +390,27 @@ premise and takes exactly one path:
    not-checkable and escalate (path 2/3). Bias toward escalation: a needless
    escalation costs one notification; a wrong auto-promote ships silently.
 2. **Premise not machine-checkable, or the check fails but the item still makes
-   sense** → **escalate for re-spec.** Keep it `[deferred]`, annotate it
-   `> **UNBLOCKED (YYYY-MM-DD):** <what shipped vs. the premise>`, and list it in
-   the end-of-run summary. The re-spec itself flows into the next `/roadmap`
-   conversation — no new standalone touchpoint.
-3. **No longer makes sense** → **propose drop.** Move the item to the
-   `## Archived / dropped` section with a one-line reason. This is a *reversible*
-   soft-delete (it stays in git history and the archive section), so it does NOT
+   sense** → **escalate for re-spec.** Keep it `status: deferred`, annotate it
+   `> **UNBLOCKED (YYYY-MM-DD):** <what shipped vs. the premise>` under its
+   `## Notes`, and list it in the end-of-run summary. The re-spec itself flows
+   into the next `/roadmap` conversation — no new standalone touchpoint.
+3. **No longer makes sense** → **propose drop.** Move the file to
+   `roadmap/archive/` with `status: dropped` and a one-line `dropped_reason:`.
+   This is a *reversible*
+   soft-delete (it stays in git history and the archive dir), so it does NOT
    block on the human's confirmation — they veto async if they disagree. (Drop is
    cheap and reversible; promote is expensive and invisible — gate each to its
    cost of being wrong.)
 
-**When the check runs (it is stateless — just "are this item's `Depends on:` all
-`[done]`?", recomputed from `ROADMAP.md`, so missing it once costs nothing):**
+**When the check runs (it is stateless — just "are this item's `depends_on` all
+done?", recomputed from the item files, so missing it once costs nothing):**
 
 - **Primary — end of every run.** Any run that merges a PR scans for
   newly-unblocked deferred items and applies the lifecycle above, surfacing
   paths 2/3 in the end-of-run summary. The dependency landing *is* a merge in that
   run, so the merging agent is best placed to notice.
 - **Backstop — `/milestone` pre-flight.** `/milestone` re-runs the same scan when
-  it reads `ROADMAP.md`, catching anything unblocked *outside* an autonomous run
+  it reads the backlog, catching anything unblocked *outside* an autonomous run
   (e.g. a hand-merged dependency).
 
 Un-checkable premises are not a hole in this design — they are its **sorting
@@ -329,15 +423,15 @@ where product direction lives, which no gate can verify.
 
 ## Milestone brainstorm (before a milestone starts)
 
-Authoring a milestone's `ROADMAP.md` items is direction-loop work —
+Authoring a milestone's item files is direction-loop work —
 interactive-only, done with the human. It runs in three phases; the pair of a
 decisive pass and an independent completeness critic is the same finder/refuter
 shape as the audit.
 
 1. **Decide** (interactive) — `superpowers:brainstorming` with the human.
    Socratic, one question at a time; it *locks* the core decisions and produces
-   draft items in the ROADMAP house format (status tag, `Depends on:`,
-   `review-dimensions:`, e2e acceptance criteria). This is where the human's
+   draft items in the item-file format (frontmatter + Spec/Acceptance body —
+   see **Backlog format (file-per-item)**). This is where the human's
    decisions get extracted.
 2. **Cross-check** (automated) — dispatch a fresh-context critic using the
    `milestone-cross-check` skill. It reviews the draft against a fixed lens
@@ -348,8 +442,9 @@ shape as the audit.
    from the product-management `write-spec` lens so we own it with no plugin
    dependency.)
 3. **Reconcile** (brief, interactive) — the human answers the net-new forks; then
-   the items are written into `ROADMAP.md`'s active section via a PR through the
-   gate.
+   one item file per drafted item is written under `backlog.dir` (plus the
+   index's milestone-list update), each linted by `roadmap-lint.sh`, and it all
+   lands as one PR through the gate.
 
 Rationale: a single decisive pass is fast but blind-spotted. The A/B that
 motivated this: a decisive pass locked a milestone's core but missed timezone
@@ -374,9 +469,9 @@ interactions, systemic patterns, and plan-level mistakes.
 final clause so the audit fires once, automatically, at the milestone boundary —
 no cron, no standing agent. Standard template:
 
-> *First, every outstanding audit follow-up item in `ROADMAP.md` is [done] (the
+> *First, every outstanding audit follow-up item in the backlog is [done] (the
 > `/milestone` run drains them debt-first — see the bucket-2 note above); then
-> every unblocked <milestone> item in `ROADMAP.md` is [done] per the definition
+> every unblocked <milestone> item in the backlog is [done] per the definition
 > of done; and when the last item merges, run `/milestone-audit` for that range,
 > triage the confirmed findings (below), and post a summary before stopping.
 > Stop when only [blocked] items remain, or after N turns.*
@@ -403,20 +498,19 @@ workflow does silently.
 1. **Bug** (code fails its own spec): the session opens a follow-on fix-PR
    through the gate. Hands-off in an unattended run (no human needed), but still a
    separate gated PR — the audit workflow never edits code.
-2. **Small gap / non-urgent** (races, infra): append as an audit-follow-up
-   fix-item (using the milestone prefix, e.g. `FA.*`) at the top of `ROADMAP.md`
-   (`[todo]`, tagged), under this milestone's `## <milestone> audit follow-ups`
-   section. Hands-off. These are **auto-folded, debt-first, into the next
+2. **Small gap / non-urgent** (races, infra): write it as a new item file under
+   `backlog.dir` with `followup_of: <milestone>` set (`status: todo`, tagged,
+   lint-clean). Hands-off. These are **auto-folded, debt-first, into the next
    `/milestone` run** — its pre-flight audit-debt scan collects every unblocked
-   `[todo]` under a `## <milestone> audit follow-ups` section and drains it ahead
+   `status: todo` item file with `followup_of:` set and drains it ahead
    of the named milestone (or as a standalone **debt-only run** when no milestone
    is runnable). Bucket-2 is a tracked queue with a defined drain, not a
    dead-drop — nobody has to remember it.
 3. **Design / scope gap** (the feature *should* do something it never promised):
    this is a **direction-loop** change, not correctness — do NOT spec or build
-   it. Write it to `ROADMAP.md` as a `[blocked]` entry with the question verbatim,
-   push-notify the human, and move on. It waits for their `> ANSWER:` line exactly
-   like any escalation. This is how a change-of-direction gets back to a human:
+   it. Write it as a `status: blocked` item file with the question verbatim in
+   `blocked:`, push-notify the human, and move on. It waits for their
+   `> ANSWER:` line exactly like any escalation. This is how a change-of-direction gets back to a human:
    a notification plus a waiting roadmap entry, never an autonomous scope
    expansion. The dividing line between bucket 1 and 3 is the acceptance
    criteria — failed-the-spec is a bug; not-in-the-spec is a direction call.
@@ -460,15 +554,23 @@ state, blocked question if any. Workers never merge; the coordinator owns
 the queue.
 
 **Coordinator (holds no implementation state — everything durable lives on
-disk: ROADMAP.md, the board, per-item progress files, git, PRs).**
+disk: the backlog index + item files, the board, per-item progress files,
+git, PRs).**
 
-1. **Frontier:** every unblocked `[todo]` item, debt-first, top-of-file
-   order — the `/milestone` picker taking the top K instead of the top 1.
-   Recompute after every merge or block (a merge may unblock items).
+1. **Frontier:** every unblocked `status: todo` item that **passes
+   `roadmap-lint.sh`** (the spec gate — a todo item failing lint is not
+   runnable: fix mechanically or escalate), in frontier order (debt-first,
+   then index milestone order, then numeric item order) — the `/milestone`
+   picker taking the top K instead of the top 1. Recompute after every merge
+   or block (a merge may unblock items), and dispatch **event-driven**: the
+   moment a merge frees or unblocks a slot, fill it — never hold dispatch
+   waiting for the rest of a "wave" to finish.
 2. **Dispatch** up to `parallel:` workers as background agents in isolated
-   worktrees. Co-dispatch judgment rule: never two items plausibly touching
-   the same surface at once; two `migration`-tagged items NEVER run
-   together.
+   worktrees. Co-dispatch rules: items sharing a `lane:` value NEVER run
+   together (a declared coupled chain is serial by construction); two
+   `migration`-tagged items NEVER run together; and judgment on top — never
+   co-dispatch two items plausibly touching the same surface (the
+   **Interfaces** bullets are the first thing to compare).
 3. **Merge queue (FIFO, always-verify):** when a worker's PR is ready —
    rebase the branch onto current `main`, `git push --force-with-lease`,
    wait for CI green on the rebased head, then `gh pr merge <n> --squash`
@@ -480,8 +582,9 @@ disk: ROADMAP.md, the board, per-item progress files, git, PRs).**
    next queued PR so its combined-state CI runs during otherwise-idle time.
    The rebase runs inside the owning item's worktree (the branch is checked
    out there — git will refuse it in the primary checkout). A textual conflict
-   during the rebase — including ROADMAP.md status-line conflicts — is
-   resolved by the owning worker, never by force-pushing over the other side.
+   during the rebase — rare by construction now that status lives in per-item
+   files and the index changes only at milestone boundaries — is resolved by
+   the owning worker, never by force-pushing over the other side.
    Diff-disjointness may pick queue ORDER (least-entangled first); it NEVER
    skips the combined-state CI run — there is no "looks independent"
    fast-path, by locked decision (industry skips are hermetic-build-graph
@@ -493,19 +596,27 @@ disk: ROADMAP.md, the board, per-item progress files, git, PRs).**
    <blocked question or ->`, plus the current merge-queue order. The board
    is BOTH the human's at-a-glance status surface and the coordinator's
    externalized memory: on restart (`claude --continue` or a fresh
-   session), rebuild all state from board + ROADMAP.md +
+   session), rebuild all state from board + the backlog (index + item files) +
    `git worktree list` + open PRs. Losing the coordinator loses nothing.
    Before the first dispatch of a run, ensure `.claude/sweap-board.md` is in
    the project's `.gitignore` — append it if missing (the scaffold self-heals
    this on session start, but the coordinator double-checks).
 
+**Width is review bandwidth, not worker capacity.** A dispatch slot is held
+until the item's PR *merges* — not until code-complete — so open unmerged PRs
+consume width and the queue self-throttles to what actually lands. This is
+the practitioner-converged constraint ("it's only so much my mind can
+review"): more workers than the merge queue can absorb just piles up unmerged
+branches going stale. Raise `parallel:` only when the instrumentation shows
+the queue, not the workers, is idle.
+
 **Failure handling (all existing doctrine, mapped):** worker blocked →
-escalate-don't-guess, mark `[blocked]`, notify, fill the slot with the next
+escalate-don't-guess, mark `status: blocked`, notify, fill the slot with the next
 frontier item. Worker dies mid-feature → re-dispatch onto the same
 worktree; it resumes from the progress file + git history (pick-up-cold).
 CI red after rebase — a semantic conflict, exactly what the queue exists to
 catch → the owning worker gets the standard ~3 distinct fix attempts, then
-`[blocked]` with the PR left open.
+`status: blocked` with the PR left open.
 
 **Local services at K≥2:** parallel workers sharing one local services stack
 (same DB, same ports) interfere and produce spurious failures that burn fix
@@ -528,12 +639,13 @@ flag per existing doctrine; never retry-until-green.
 1. **Correctness loop — fully automated.** Gates: `verify.typecheck`,
    `verify.lint`, the `verify.e2e` gate, immutable tests, fresh-context agent
    review, agentic CI on PRs. No human needed for a PR to be trustworthy.
-2. **Prompting loop — fully automated.** `ROADMAP.md` is the interface: the agent
-   always picks the top unblocked item. Loops/cron/headless runs keep sessions
+2. **Prompting loop — fully automated.** The backlog is the interface (index +
+   item files): the agent always picks the first unblocked item in frontier
+   order. Loops/cron/headless runs keep sessions
    going without a human typing prompts. **Escalate, don't guess:** if an item is
-   ambiguous or a gate stays red after ~3 distinct attempts, mark the item
-   blocked with a written question in `ROADMAP.md`, notify the human, move to the
-   next item. Never bluff through ambiguity.
+   ambiguous or a gate stays red after ~3 distinct attempts, set the item's
+   file to `status: blocked` with the written question in `blocked:`, notify
+   the human, move to the next item. Never bluff through ambiguity.
 3. **Direction loop — stays human.** The human writes/re-aims the roadmap and
    acceptance criteria (~1 hr/week), answers blocked questions async
    (~15 min/day), and personally approves anything irreversible: production
@@ -602,9 +714,10 @@ the human's standing answers — treat them as given, do not re-ask in a session
 ## Build order to full autonomy
 
 1. **Agentic CI** — GitHub Actions: e2e on PRs + Claude PR review + merge gating.
-2. **`ROADMAP.md`** — the first milestone broken into 3–5 feature-sized items with
-   acceptance criteria; a rough sketch of the next milestones. This is the
-   direction-loop artifact; its quality bounds everything downstream.
+2. **The backlog** — the `ROADMAP.md` index plus the first milestone broken
+   into 3–5 feature-sized item files with acceptance criteria; a rough sketch
+   of the next milestones in the index. This is the direction-loop artifact;
+   its quality bounds everything downstream.
 3. **Supervised runs** — a few `/goal`-driven sessions with the human watching,
    to calibrate escalate-vs-proceed judgment. Goal conditions must name the
    verification commands and include a turn bound (`or stop after N turns`).
@@ -613,11 +726,12 @@ the human's standing answers — treat them as given, do not re-ask in a session
 
 ## How to pick up this work cold
 
-1. Read this file, then `git log --oneline -20` and `ROADMAP.md` (if it exists yet).
-2. If `ROADMAP.md` is missing, the current task is step 2 of the build order:
+1. Read this file, then `git log --oneline -20` and the backlog (`ROADMAP.md`
+   index + `roadmap/`, if they exist yet).
+2. If the backlog is missing, the current task is step 2 of the build order:
    draft it with the human (or from the notes in `docs/superpowers/specs/`), don't
    invent scope.
-3. Otherwise: take the top unblocked roadmap item and run the per-feature loop.
+3. Otherwise: take the first unblocked item in frontier order and run the per-feature loop.
 4. Check `docs/superpowers/plans/` for an in-flight plan with unchecked steps —
    that means a feature was interrupted mid-implementation; resume it before
    starting anything new.
