@@ -68,11 +68,17 @@ export function loadItems(projectDir, backlogDir) {
   });
 }
 
-export const milestoneOf = (id) => String(id).split(".")[0];
+// A milestone id is an item id with its last dotted segment removed:
+// F1.1 -> F1, DS.2.1 -> DS.2, DS.1 -> DS. This is dot-depth-agnostic, so a
+// milestone whose ids carry a dot (DS.2) groups its items (DS.2.1) correctly.
+export const milestoneOf = (id) => String(id).replace(/\.[^.]*$/, "");
 
 export function isUnblocked(item, byId, byMilestone) {
   return item.dependsOn.every((dep) => {
-    if (dep.includes(".")) { const d = byId.get(dep); return Boolean(d && d.status === "done"); }
+    // A dep that names an actual item is satisfied when that item is done;
+    // otherwise treat it as a milestone dep (all its items done). Classifying by
+    // membership (not by counting dots) is what makes multi-segment ids work.
+    if (byId.has(dep)) return byId.get(dep).status === "done";
     const items = byMilestone.get(dep) || [];
     return items.length > 0 && items.every((i) => i.status === "done");
   });
@@ -104,7 +110,7 @@ export function deriveBacklog(items) {
     .map(([milestone, its]) => ({ milestone, items: [...its].sort(compareItems) }));
 
   const edges = [];
-  for (const i of items) for (const dep of i.dependsOn) if (dep.includes(".") && byId.has(dep)) edges.push({ from: dep, to: i.id });
+  for (const i of items) for (const dep of i.dependsOn) if (byId.has(dep)) edges.push({ from: dep, to: i.id });
 
   return { frontier, blocked, backlog, edges };
 }

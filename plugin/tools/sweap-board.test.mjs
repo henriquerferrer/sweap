@@ -62,9 +62,30 @@ import { isUnblocked, compareItems, deriveBacklog, milestoneOf } from "./sweap-b
 
 const mk = (id, status, deps = [], extra = {}) => ({ id, title: id, status, dependsOn: deps, reviewDimensions: [], lane: null, followupOf: null, blocked: null, malformed: false, file: id + ".md", ...extra });
 
-test("milestoneOf takes the segment before the first dot", () => {
+test("milestoneOf strips the last dotted segment (multi-dot aware)", () => {
   assert.equal(milestoneOf("F1.2"), "F1");
   assert.equal(milestoneOf("DS3.4"), "DS3");
+  assert.equal(milestoneOf("DS.2.1"), "DS.2");   // dotted milestone id
+  assert.equal(milestoneOf("DS.1"), "DS");
+});
+
+test("multi-dot ids: DS.2.x group under DS.2 and a dotted-milestone dep resolves", () => {
+  const items = [
+    mk("DS.2.1", "done"),
+    mk("DS.2.2", "done"),
+    mk("DS.3.1", "todo", ["DS.2"]),      // depends on the whole DS.2 milestone (all done)
+    mk("DS.3.2", "todo", ["DS.2.1"]),    // depends on a specific two-dot item (done)
+    mk("DS.3.3", "todo", ["DS.3.1"]),    // depends on a not-yet-done sibling
+  ];
+  const d = deriveBacklog(items);
+  const groups = Object.fromEntries(d.backlog.map((g) => [g.milestone, g.items.map((i) => i.id)]));
+  assert.deepEqual(groups["DS.2"], ["DS.2.1", "DS.2.2"]);          // grouped under DS.2, not DS
+  assert.deepEqual(groups["DS.3"], ["DS.3.1", "DS.3.2", "DS.3.3"]);
+  const frontier = d.frontier.map((i) => i.id);
+  assert.ok(frontier.includes("DS.3.1"), "dep on complete milestone DS.2 -> ready");
+  assert.ok(frontier.includes("DS.3.2"), "dep on done item DS.2.1 -> ready");
+  assert.ok(!frontier.includes("DS.3.3"), "dep on todo DS.3.1 -> not ready");
+  assert.ok(d.edges.some((e) => e.from === "DS.2.1" && e.to === "DS.3.2"));  // item edge drawn
 });
 
 test("isUnblocked: item dep must be done; bare-milestone dep needs ALL its items done", () => {
