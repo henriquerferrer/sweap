@@ -26,9 +26,13 @@ overrides only the keys that differ from the baked defaults. The keys:
   **Backlog format (file-per-item)**. Default **`roadmap/`**.
 - **`backlog.prefix`** — the milestone-tag prefix(es), as one or more
   comma-separated values (e.g. `F` or `F, DS`). Default **`F`** (so milestones
-  read `F1`, `F2`, … and items `F1.1`, `F1.2`, …). When more than one prefix is
-  configured, `/milestone` resolves the next runnable milestone across ALL of
-  them, in the index's listed order — a milestone is a milestone regardless of prefix.
+  read `F1`, `F2`, … and items `F1.1`, `F1.2`, …). Ids may be multi-segment: a
+  milestone can itself carry a dot (`DS.2`) with items one level deeper
+  (`DS.2.1`) — a milestone id is any item id minus its last dotted segment, and
+  dependency resolution is dot-depth-agnostic (see **Backlog format**). When
+  more than one prefix is configured, `/milestone` resolves the next runnable
+  milestone across ALL of them, in the index's listed order — a milestone is a
+  milestone regardless of prefix.
   Referred to below as *the milestone prefix*.
 - **`services.up`** — optional command that brings up local test services. **Omit
   it entirely if the project has no local services** — the pipeline then runs in
@@ -107,10 +111,14 @@ trivial (this flatness is a format contract, not a style preference):
     <optional: "> ANSWER:" threads, UNBLOCKED annotations, links>
 
 **Spec gate (mechanical, one gate, two call sites).** An item is runnable
-only if `roadmap-lint.sh` passes on its file — frontmatter valid and
-consistent, item-level `depends_on` entries resolve to existing files,
-`## Spec` (all three bullets) and `## Acceptance` present, no unfilled `<…>`
-placeholders on a `todo` item. `/roadmap` runs it on every new/changed item
+only if `roadmap-lint.sh` passes on its file. For a `todo` item that is the
+full spec: valid frontmatter, every `depends_on` entry resolves (to an item
+file, or to a milestone that has item files), `## Spec` (all three bullets) +
+`## Acceptance` present, and no unfilled `<…>` placeholders. `blocked`,
+`deferred`, and `done` items are **records** — they need only valid
+frontmatter (plus `blocked:`/`premise:` where the status requires it), NOT a
+`## Spec`/`## Acceptance`; a deferred or blocked item earns its full spec when
+it is promoted to `todo`. `/roadmap` runs it on every new/changed item
 file before the milestone PR opens; the dispatching session (serial loop or
 coordinator) runs it again before dispatch. A todo item failing lint is not
 runnable: fix it if the fix is mechanical, else escalate (status: blocked
@@ -123,20 +131,28 @@ pre-declared.
 **Frontier order** (replaces the old "top-of-file order"): debt first (items
 with `followup_of:` set), then milestone order as listed in the index, then
 numeric item order within a milestone (numeric segment compare: F1.9 before
-F1.10). An item is *unblocked* when every `depends_on` entry is satisfied —
-item-level entry (has a dot): that file reads `status: done`; bare milestone
-entry: that milestone is complete (every one of its item files is done).
+F1.10). An item is *unblocked* when every `depends_on` entry is satisfied — an
+entry that names an **item** (an item file exists for it) is satisfied when
+that item is `status: done`; an entry that names a **milestone** (no item file
+of its own, but it has item files under it) is satisfied when every item in it
+is done. Classification is by which files exist, not by counting dots, so
+multi-segment ids (a `DS.2` milestone whose items are `DS.2.1`, `DS.2.2`)
+resolve correctly alongside `F1`/`F1.1`.
 
 **Legacy migration (one-time, agentic).** A project whose `backlog.file`
 still contains item headers (`### … [todo]`-style) migrates before its next
 `/roadmap` or `/milestone` proceeds: one PR through the gate that moves every
 item into a `backlog.dir` file (parsed fields → frontmatter; `Depends on:` →
 `depends_on`; `Premise:` → `premise:`; items under `## <milestone> audit
-follow-ups` sections → `followup_of: <milestone>`; body bullets → Spec /
-Acceptance, filling Spec gaps best-effort and leaving `<…>` placeholders
-where genuinely unknown), rewrites the index, and deletes the legacy
-sections. The session performs the split itself (no shell parser) and lints
-every produced file.
+follow-ups` sections → `followup_of: <milestone>`), rewrites the index, and
+deletes the legacy sections. Because the spec gate is todo-only, **done /
+blocked / deferred items migrate as plain records** — frontmatter plus their
+existing prose preserved under `## Notes`, no `## Spec`/`## Acceptance`
+required. Only the `todo` items need a synthesized `## Spec` (Surface /
+Interfaces / Out of scope) + `## Acceptance (e2e)`. The session performs the
+split (a purpose-built parser for the project's specific legacy format is
+fine) and lints every produced file; multi-segment ids (a `DS.2` milestone
+with `DS.2.1` items) are supported.
 
 ## Operating model — the per-feature loop
 

@@ -159,3 +159,24 @@ arXiv 2606.00953, SPOQ arXiv 2606.03115, format study arXiv 2602.05447,
 practitioner posts: Willison, J. Vincent, Cherny, Steinberger, Ronacher).
 Full verified-claim record in the session's memory file
 (`research_parallel_roadmap.md`).
+
+## Amendments (2026-07-31, from the consumer A pilot migration)
+
+Assessing the real consumer A backlog (57 items, DS milestones with dotted ids)
+surfaced two format gaps; both fixed:
+
+1. **Spec gate is todo-only.** `## Spec` (three bullets) + `## Acceptance` and
+   the placeholder check now apply only to `status: todo` items. `blocked` /
+   `deferred` / `done` are records — valid frontmatter (+ `blocked:`/`premise:`
+   as the status requires) is all the lint asks. This lets a legacy migration
+   carry historical done items across as plain records instead of synthesizing
+   specs for work already shipped. Locked decision 3 is relaxed accordingly.
+
+2. **Multi-segment ids.** Locked decision 2's "milestone = no dot, item = one
+   dot" is generalized: a milestone id is any item id minus its last dotted
+   segment (`DS.2.1` → `DS.2`; `F1.1` → `F1`). `roadmap-lint.sh` and
+   `sweap-board`'s `milestoneOf`/`isUnblocked` classify a dependency by which
+   files exist (item file → item; else has child item files → milestone; else a
+   dotted entry is dangling, a no-dot entry is a bare/forward milestone), not by
+   counting dots — so a `DS.2` milestone with `DS.2.1` items works without
+   renaming.
