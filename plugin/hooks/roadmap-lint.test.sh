@@ -309,6 +309,100 @@ printf '%s\r\n' '---' 'id: crlf' 'title: crlf ok' 'status: todo' 'depends_on: []
   '- **Out of scope:** z' '' '## Acceptance (e2e)' '- ok' > "$WORK/crlf.md"
 check "CRLF line endings still pass a valid todo item" 0 "$WORK/crlf.md"
 
+# --- #1: the ## Spec/## Acceptance gate is todo-only; records migrate as-is ---
+mk R1.1.md '---
+id: R1.1
+title: historical done record, no spec sections
+status: done
+depends_on: []
+---
+
+# R1.1 — historical done record
+
+Just prose carried over by a legacy migration. No ## Spec, no ## Acceptance.
+'
+check "done item WITHOUT ## Spec/## Acceptance passes (records are not gated)" 0 "$WORK/R1.1.md"
+
+mk R1.2.md '---
+id: R1.2
+title: blocked, awaiting a decision
+status: blocked
+blocked: which provider?
+depends_on: []
+---
+
+# R1.2 — blocked
+
+No spec yet; it earns one when promoted to todo.
+'
+check "blocked item WITHOUT spec sections passes (needs blocked:, not a full spec)" 0 "$WORK/R1.2.md"
+
+mk R1.3.md '---
+id: R1.3
+title: todo still needs a spec
+status: todo
+depends_on: []
+---
+
+# R1.3 — todo without spec
+
+no sections here
+'
+check "todo item WITHOUT ## Spec/## Acceptance still fails" 1 "$WORK/R1.3.md"
+
+# --- #4: dot-depth-agnostic dependency resolution (multi-segment ids) ---------
+# Milestone DS.2 whose items are the two-dot ids DS.2.1 / DS.2.2.
+mk DS.2.1.md '---
+id: DS.2.1
+title: ds child one
+status: done
+depends_on: []
+---
+
+# DS.2.1 — child one
+prose
+'
+mk DS.2.2.md '---
+id: DS.2.2
+title: ds child two
+status: done
+depends_on: []
+---
+
+# DS.2.2 — child two
+prose
+'
+mk MD.1.md '---
+id: MD.1
+title: depends on a dotted milestone and a multi-dot item
+status: todo
+depends_on: [DS.2, DS.2.1]
+---
+
+# MD.1 — dotted deps
+
+## Spec
+- **Surface:** src/x.ts
+- **Interfaces:** none
+- **Out of scope:** y
+
+## Acceptance (e2e)
+- it resolves both deps
+'
+check "dep on dotted milestone DS.2 (has items) AND multi-dot item DS.2.1 both resolve" 0 "$WORK/MD.1.md"
+
+mk MD.2.md '---
+id: MD.2
+title: dangling dotted dep
+status: done
+depends_on: [ZZ.9.9]
+---
+
+# MD.2 — dangling
+prose
+'
+check "dotted dep that is neither an item nor a milestone-with-items fails" 1 "$WORK/MD.2.md"
+
 check "missing file fails" 1 "$WORK/does-not-exist.md"
 
 out="$(bash "$LINT" 2>&1)"; rc=$?
