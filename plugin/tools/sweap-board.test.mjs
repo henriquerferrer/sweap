@@ -353,3 +353,12 @@ test("buildState: in-flight item is not in frontier; blocked item is not in-flig
   assert.deepEqual(s.blocked.map((b) => b.id), ["F1.3"]);
   rmSync(dir, { recursive: true });
 });
+
+test("renderPage includes the Ideas capture form and list", () => {
+  const html = renderPage();
+  for (const id of ["idea-form", "idea-title", "idea-body", "idea-msg", "ideas"]) {
+    assert.ok(html.includes(`id="${id}"`), `missing #${id}`);
+  }
+  assert.match(html, /fetch\("\/ideas"/);       // the form posts to the endpoint
+  assert.ok(!/https?:\/\//.test(html.replace(/https?:\/\/[^"']*w3\.org[^"']*/g, "")), "still no external asset URLs");
+});

@@ -25,6 +25,11 @@ export function renderPage() {
   #notes { color:var(--warn); font-size:12px; } #notes span { margin-right:12px; }
   .ms { margin-bottom:10px; } .ms h3 { font-size:13px; margin:0 0 4px; }
   svg { max-width:100%; height:auto; } .empty { color:var(--muted); font-size:12px; }
+  #idea-form { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:8px; }
+  #idea-form input, #idea-form textarea { background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:6px 8px; font:inherit; }
+  #idea-title { flex:1 1 220px; } #idea-body { flex:1 1 100%; min-height:52px; resize:vertical; }
+  #idea-form button { background:var(--accent); color:#fff; border:0; border-radius:6px; padding:6px 14px; font:inherit; cursor:pointer; }
+  #idea-msg { font-size:12px; color:var(--bad); align-self:center; }
 </style></head>
 <body>
 <header><h1>sweap <span id="project">…</span></h1><span id="notes"></span><span id="updated"></span></header>
@@ -38,6 +43,14 @@ export function renderPage() {
     </div>
   </section>
   <section><h2>Backlog</h2><div id="backlog"></div></section>
+  <section><h2>Ideas (inbox — triaged by /roadmap)</h2>
+    <form id="idea-form">
+      <input id="idea-title" placeholder="idea title" maxlength="200" required/>
+      <button type="submit">Capture</button><span id="idea-msg"></span>
+      <textarea id="idea-body" placeholder="details (optional)"></textarea>
+    </form>
+    <div class="col" id="ideas"></div>
+  </section>
   <section><h2>Dependencies</h2><div id="graph"></div></section>
 </main>
 <script>
@@ -54,6 +67,7 @@ function draw(s) {
   renderList(document.getElementById("mergequeue"), s.mergeQueue, q => '<div class="item">PR #'+q.pr+' '+esc(q.title)+' <span class="badge ci-'+esc(q.ci)+'">'+esc(q.ci)+'</span></div>', "queue empty");
   renderList(document.getElementById("blocked"), s.blocked, b => '<div class="item"><b>'+esc(b.id)+'</b> '+esc(b.title)+'<div class="q">'+esc(b.question)+'</div></div>', "none blocked 🎉");
   document.getElementById("backlog").innerHTML = (s.backlog||[]).map(g => '<div class="ms"><h3>'+esc(g.milestone)+'</h3>'+g.items.map(i => '<div class="item'+(i.malformed?' malformed':'')+'"><span class="st-'+esc(i.status)+'">●</span> <b>'+esc(i.id)+'</b> '+esc(i.title)+' <span class="meta">'+esc(i.status)+(i.dependsOn&&i.dependsOn.length?' · deps: '+i.dependsOn.map(esc).join(", "):'')+'</span></div>').join("")+'</div>').join("") || '<div class="empty">no items</div>';
+  renderList(document.getElementById("ideas"), s.ideas, i => '<div class="item"><b>'+esc(i.title)+'</b> <span class="meta">'+esc(i.file)+(i.created?' · '+esc(i.created.slice(0,10)):'')+'</span></div>', "inbox empty");
   document.getElementById("graph").innerHTML = graphSvg(s);
 }
 function graphSvg(s) {
@@ -72,6 +86,17 @@ function graphSvg(s) {
 }
 async function tick() { try { const r = await fetch("/state.json", {cache:"no-store"}); draw(await r.json()); } catch (e) { document.getElementById("updated").textContent = "disconnected"; } }
 tick(); setInterval(tick, 3000);
+document.getElementById("idea-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const msg = document.getElementById("idea-msg");
+  const title = document.getElementById("idea-title").value.trim();
+  if (!title) return;
+  try {
+    const r = await fetch("/ideas", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title, body: document.getElementById("idea-body").value }) });
+    if (r.ok) { e.target.reset(); msg.textContent = ""; tick(); }
+    else { msg.textContent = "capture failed: " + await r.text(); }
+  } catch { msg.textContent = "capture failed: server unreachable"; }
+});
 </script>
 </body></html>`;
 }
