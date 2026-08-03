@@ -1,7 +1,7 @@
 // sweap-board.lib.mjs — pure, testable core for the read-only board viewer.
 // No process/network side effects: buildState() takes injected git/gh runners.
 // Reads item files with the same flat-frontmatter contract roadmap-lint enforces.
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { existsSync } from "node:fs";
 import { basename } from "node:path";
@@ -41,6 +41,25 @@ export function readConfig(projectDir) {
     backlogFile: grab("backlog.file") || defaults.backlogFile,
     backlogDir: dir.endsWith("/") ? dir : dir + "/",
   };
+}
+
+// Idea inbox: the board's ONLY write capability. Create-only — new uniquely
+// named files under <backlogDir>/ideas/, a subdir loadItems/lint/dep
+// resolution never read (same reason roadmap/archive/ is invisible).
+export const slugify = (title) =>
+  String(title).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+
+export function writeIdea(projectDir, backlogDir, { title, body = "", now }) {
+  const t = String(title || "").replace(/\s+/g, " ").trim();
+  const slug = slugify(t);
+  if (!t || !slug) throw new Error("title required");
+  const dir = join(projectDir, backlogDir, "ideas");
+  mkdirSync(dir, { recursive: true });
+  let file = slug + ".md";
+  for (let n = 2; existsSync(join(dir, file)); n++) file = `${slug}-${n}.md`;
+  const content = `---\ntitle: ${t}\ncreated: ${new Date(now).toISOString()}\n---\n\n${String(body || "").trim()}\n`;
+  writeFileSync(join(dir, file), content, { flag: "wx" });
+  return { file: join(backlogDir, "ideas", file) };
 }
 
 export function loadItems(projectDir, backlogDir) {

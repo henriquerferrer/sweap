@@ -1,9 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseFrontmatter, parseList, readConfig, loadItems, refMatchesId } from "./sweap-board.lib.mjs";
+import { parseFrontmatter, parseList, readConfig, loadItems, refMatchesId, slugify, writeIdea } from "./sweap-board.lib.mjs";
 
 function fixture(files) {
   const dir = mkdtempSync(join(tmpdir(), "swb-"));
@@ -39,6 +39,34 @@ test("readConfig reads backlog.file/backlog.dir or defaults", () => {
   const d2 = fixture({ "README.md": "x" });
   assert.deepEqual(readConfig(d2), { backlogFile: "ROADMAP.md", backlogDir: "roadmap/" });
   rmSync(d1, { recursive: true }); rmSync(d2, { recursive: true });
+});
+
+test("slugify reduces a title to [a-z0-9-]", () => {
+  assert.equal(slugify("Dark mode for the board!"), "dark-mode-for-the-board");
+  assert.equal(slugify("  F1.2  retry logic  "), "f1-2-retry-logic");
+  assert.equal(slugify("///"), "");
+});
+
+test("writeIdea creates roadmap/ideas/<slug>.md with frontmatter; suffixes collisions", () => {
+  const dir = fixture({ "CLAUDE.md": "## sweap config\n" });
+  const a = writeIdea(dir, "roadmap/", { title: "Dark mode", body: "for the board page", now: 1785736000000 });
+  assert.equal(a.file, join("roadmap/", "ideas", "dark-mode.md"));
+  const text = readFileSync(join(dir, a.file), "utf8");
+  assert.match(text, /^---\ntitle: Dark mode\ncreated: 2026-08-03T/);
+  assert.match(text, /---\n\nfor the board page\n$/);
+  const b = writeIdea(dir, "roadmap/", { title: "Dark mode", body: "", now: 1785736000000 });
+  assert.equal(b.file, join("roadmap/", "ideas", "dark-mode-2.md"));
+  assert.ok(existsSync(join(dir, b.file)));
+  rmSync(dir, { recursive: true });
+});
+
+test("writeIdea rejects empty and non-sluggable titles; flattens newlines", () => {
+  const dir = fixture({ "CLAUDE.md": "## sweap config\n" });
+  assert.throws(() => writeIdea(dir, "roadmap/", { title: "   ", body: "", now: 1 }), /title required/);
+  assert.throws(() => writeIdea(dir, "roadmap/", { title: "///", body: "", now: 1 }), /title required/);
+  const c = writeIdea(dir, "roadmap/", { title: "two\nlines", body: "", now: 1 });
+  assert.match(readFileSync(join(dir, c.file), "utf8"), /^---\ntitle: two lines\n/);
+  rmSync(dir, { recursive: true });
 });
 
 test("loadItems parses items and flags malformed", () => {
