@@ -3,7 +3,7 @@
 // Reads state; NEVER writes files, mutates the board, or invokes the pipeline.
 import http from "node:http";
 import { execFile } from "node:child_process";
-import { buildState } from "./sweap-board.lib.mjs";
+import { buildState, readConfig, writeIdea } from "./sweap-board.lib.mjs";
 import { renderPage } from "./sweap-board.page.mjs";
 
 const run = (cmd, cwd) => (args) => new Promise((resolve) => {
@@ -19,6 +19,25 @@ export function createServer({ projectDir, git = run("git", projectDir), gh = ru
   };
   const PAGE = renderPage();
   return http.createServer(async (req, res) => {
+    if (req.method === "POST" && req.url === "/ideas") {
+      let raw = "";
+      req.on("data", (c) => { raw += c; if (raw.length > 64 * 1024) { res.writeHead(413); res.end("too large"); req.destroy(); } });
+      req.on("end", () => {
+        if (res.writableEnded) return;
+        let parsed;
+        try { parsed = JSON.parse(raw || "{}"); } catch { res.writeHead(400); return res.end("invalid JSON"); }
+        try {
+          const { backlogDir } = readConfig(projectDir);
+          const { file } = writeIdea(projectDir, backlogDir, { title: parsed.title, body: parsed.body, now: Date.now() });
+          res.writeHead(201, { "content-type": "application/json" });
+          res.end(JSON.stringify({ file }));
+        } catch (e) {
+          res.writeHead(/title required/.test(e.message) ? 400 : 500);
+          res.end("error: " + e.message);
+        }
+      });
+      return;
+    }
     if (req.method !== "GET") { res.writeHead(405); return res.end("read-only"); }
     try {
       if (req.url === "/" || req.url.startsWith("/index")) { res.writeHead(200, { "content-type": "text/html; charset=utf-8" }); return res.end(PAGE); }
@@ -68,6 +87,6 @@ if (isMain) {
   try { port = await listenWithFallback(srv, args.port, "127.0.0.1"); }
   catch (e) { process.stderr.write(`sweap-board: cannot start — ${e.message}\n`); process.exit(1); }
   const url = `http://127.0.0.1:${port}/`;
-  process.stdout.write(`sweap-board: ${url}  (project: ${args.projectDir})\nread-only — Ctrl-C to stop\n`);
+  process.stdout.write(`sweap-board: ${url}  (project: ${args.projectDir})\nread-only (writes only new idea files under the roadmap ideas/ inbox) — Ctrl-C to stop\n`);
   if (args.open) openBrowser(url);
 }

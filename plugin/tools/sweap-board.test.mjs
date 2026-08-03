@@ -277,6 +277,45 @@ test("createServer serves / and /state.json (loopback smoke test)", async () => 
   rmSync(dir, { recursive: true });
 });
 
+async function ideaServer(files) {
+  const dir = fixture(files);
+  const srv = createServer({ projectDir: dir, git: async () => ({ stdout: "", code: 0 }), gh: async () => ({ stdout: "[]", code: 0 }) });
+  await new Promise((res) => srv.listen(0, "127.0.0.1", res));
+  const base = `http://127.0.0.1:${srv.address().port}`;
+  const close = async () => { await new Promise((res) => srv.close(res)); rmSync(dir, { recursive: true }); };
+  return { dir, base, close };
+}
+
+test("POST /ideas creates the file and returns 201 {file}; state.json picks it up", async () => {
+  const { dir, base, close } = await ideaServer({ "CLAUDE.md": "## sweap config\n" });
+  const r = await fetch(`${base}/ideas`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title: "Dark mode", body: "please" }) });
+  assert.equal(r.status, 201);
+  const { file } = await r.json();
+  assert.equal(file, join("roadmap/", "ideas", "dark-mode.md"));
+  assert.match(readFileSync(join(dir, file), "utf8"), /^---\ntitle: Dark mode\n/);
+  const state = await fetch(`${base}/state.json`).then((x) => x.json());
+  assert.deepEqual(state.ideas.map((i) => i.title), ["Dark mode"]);
+  await close();
+});
+
+test("POST /ideas: 400 on missing title and on invalid JSON", async () => {
+  const { base, close } = await ideaServer({ "CLAUDE.md": "## sweap config\n" });
+  const r1 = await fetch(`${base}/ideas`, { method: "POST", body: JSON.stringify({ title: "  " }) });
+  assert.equal(r1.status, 400);
+  const r2 = await fetch(`${base}/ideas`, { method: "POST", body: "not json{" });
+  assert.equal(r2.status, 400);
+  await close();
+});
+
+test("non-GET stays 405 everywhere except /ideas", async () => {
+  const { base, close } = await ideaServer({ "CLAUDE.md": "## sweap config\n" });
+  const r1 = await fetch(`${base}/state.json`, { method: "POST", body: "{}" });
+  assert.equal(r1.status, 405);
+  const r2 = await fetch(`${base}/ideas`, { method: "DELETE" });
+  assert.equal(r2.status, 405);
+  await close();
+});
+
 test("createServer caches gh across rapid /state.json requests", async () => {
   const dir = fixture({ "CLAUDE.md": "## sweap config\n", "roadmap/F1.1.md": "---\nid: F1.1\ntitle: x\nstatus: todo\ndepends_on: []\n---\n" });
   let ghCalls = 0;
