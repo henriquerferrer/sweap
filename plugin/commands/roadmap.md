@@ -40,11 +40,18 @@ review is asked for:
    (A frontmatter scan — no header matching needed.) Do NOT drain or reschedule
    them here — `/roadmap` stays a pure direction-loop command; execution
    scheduling is `/milestone`'s job.
+   Likewise surface the **idea inbox** (`<backlog.dir>ideas/*.md`, if any) as
+   read-only context — ideas captured from the board awaiting triage. Fold the
+   relevant ones into the brainstorm; do not copy them into items verbatim.
 2. **Cross-check** — dispatch a fresh-context critic via the
    `milestone-cross-check` skill. Report ONLY the net-new forks the brainstorm
    missed, each with a recommended default. Flag; never rewrite or expand scope.
 3. **Reconcile** — after the human answers the forks, write one item file per
-   drafted item under `backlog.dir`, update the index's milestone list (move the
+   drafted item under `backlog.dir`,
+   move every triaged idea file from `<backlog.dir>ideas/` to
+   `<backlog.dir>ideas/archive/` (provenance preserved, inbox drained — untriaged
+   ideas stay put),
+   update the index's milestone list (move the
    milestone out of "Later milestones"), and run
    `bash ${CLAUDE_PLUGIN_ROOT}/hooks/roadmap-lint.sh <file>` on every new item
    file — fix failures before the PR opens (authoring and dispatch share one

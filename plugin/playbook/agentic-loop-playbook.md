@@ -78,6 +78,11 @@ hazard.
   by construction.
 - **`roadmap/archive/`** — dropped items move here (`status: dropped` plus a
   `dropped_reason:` key): a reversible soft-delete, visible in git history.
+- **`roadmap/ideas/`** — the **idea inbox**: free-form idea files (frontmatter
+  `title:` + `created:` only — no id, no status) captured from the sweap-board
+  page's Ideas form. Invisible to lint, dep resolution, and the frontier (like
+  `archive/`). `/roadmap`'s decide phase surfaces them as read-only context;
+  reconcile moves triaged ones to `roadmap/ideas/archive/`.
 - **`.claude/sweap-board.md`** (gitignored) stays the *ephemeral* layer —
   in-flight claims and queue order only (see Parallel runs).
 
