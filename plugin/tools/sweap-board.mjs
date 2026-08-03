@@ -1,6 +1,9 @@
 #!/usr/bin/env node
-// sweap-board.mjs — loopback-only, read-only viewer server + CLI.
-// Reads state; NEVER writes files, mutates the board, or invokes the pipeline.
+// sweap-board.mjs — loopback-only viewer server + CLI, read-only against all
+// pipeline state (item files, git worktree list, gh pr list, the board
+// annotation file). Its ONLY write is create-only idea capture: POST /ideas
+// creates new files under <backlogDir>ideas/; it never modifies or deletes
+// anything, and never mutates the board or invokes the pipeline.
 import http from "node:http";
 import { execFile } from "node:child_process";
 import { buildState, readConfig, writeIdea } from "./sweap-board.lib.mjs";
@@ -9,6 +12,11 @@ import { renderPage } from "./sweap-board.page.mjs";
 const run = (cmd, cwd) => (args) => new Promise((resolve) => {
   execFile(cmd, args, { cwd, maxBuffer: 8 * 1024 * 1024 }, (err, stdout) => resolve({ stdout: stdout || "", code: err ? (err.code || 1) : 0 }));
 });
+
+// Loopback-only guard for the write route: accepts Host 127.0.0.1|localhost
+// (any port) and, when present, an Origin whose host is likewise loopback —
+// blocks CSRF/DNS-rebinding from a page loaded on some other origin.
+const localHost = (h) => /^(127\.0\.0\.1|localhost)(:\d+)?$/i.test(String(h || ""));
 
 export function createServer({ projectDir, git = run("git", projectDir), gh = run("gh", projectDir), ghCacheMs = 15000 }) {
   let ghCache = { key: null, at: 0, promise: null };
@@ -20,7 +28,15 @@ export function createServer({ projectDir, git = run("git", projectDir), gh = ru
   const PAGE = renderPage();
   return http.createServer(async (req, res) => {
     if (req.method === "POST" && req.url === "/ideas") {
+      if (!localHost(req.headers.host)) { res.writeHead(403); return res.end("forbidden"); }
+      const origin = req.headers.origin;
+      if (origin) {
+        let originHost;
+        try { originHost = new URL(origin).host; } catch { res.writeHead(403); return res.end("forbidden"); }
+        if (!localHost(originHost)) { res.writeHead(403); return res.end("forbidden"); }
+      }
       let raw = "";
+      req.setEncoding("utf8");
       req.on("data", (c) => { raw += c; if (raw.length > 64 * 1024) { res.writeHead(413); res.end("too large"); req.destroy(); } });
       req.on("end", () => {
         if (res.writableEnded) return;

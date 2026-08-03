@@ -1,5 +1,7 @@
-// sweap-board.lib.mjs — pure, testable core for the read-only board viewer.
-// No process/network side effects: buildState() takes injected git/gh runners.
+// sweap-board.lib.mjs — pure, testable core for the board viewer.
+// No process/network side effects, with one exception: writeIdea() is a
+// create-only fs-write helper (new files under <backlogDir>ideas/ only).
+// buildState() itself takes injected git/gh runners and touches no fs beyond reads.
 // Reads item files with the same flat-frontmatter contract roadmap-lint enforces.
 import { readFileSync, readdirSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
@@ -51,8 +53,12 @@ export const slugify = (title) =>
 
 export function writeIdea(projectDir, backlogDir, { title, body = "", now }) {
   const t = String(title || "").replace(/\s+/g, " ").trim();
-  const slug = slugify(t);
+  let slug = slugify(t);
   if (!t || !slug) throw new Error("title required");
+  // Cap the on-disk slug so an oversized title can't blow past filesystem
+  // name limits (ENAMETOOLONG) into an opaque 500 — truncate, then re-trim
+  // any trailing separator the cut may have exposed.
+  slug = slug.slice(0, 120).replace(/-+$/, "");
   const dir = join(projectDir, backlogDir, "ideas");
   mkdirSync(dir, { recursive: true });
   let file = slug + ".md";

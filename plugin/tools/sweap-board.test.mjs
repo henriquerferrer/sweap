@@ -2,7 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, basename } from "node:path";
+import http from "node:http";
 import { parseFrontmatter, parseList, readConfig, loadItems, refMatchesId, slugify, writeIdea, loadIdeas } from "./sweap-board.lib.mjs";
 
 function fixture(files) {
@@ -352,6 +353,61 @@ test("buildState: in-flight item is not in frontier; blocked item is not in-flig
   assert.ok(!inFlightIds.includes("F1.3"), "blocked F1.3 must NOT be in-flight");
   assert.deepEqual(s.blocked.map((b) => b.id), ["F1.3"]);
   rmSync(dir, { recursive: true });
+});
+
+test("POST /ideas: a traversal-shaped title is slugified, not path-joined; file stays inside ideas/", async () => {
+  const { dir, base, close } = await ideaServer({ "CLAUDE.md": "## sweap config\n" });
+  const r = await fetch(`${base}/ideas`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title: "../../etc/passwd" }) });
+  assert.equal(r.status, 201);
+  const { file } = await r.json();
+  assert.match(file, /^roadmap\/ideas\/etc-passwd(-\d+)?\.md$/);
+  assert.ok(existsSync(join(dir, file)), "file must exist inside the ideas dir");
+  assert.ok(!existsSync(join(dir, "etc", "passwd")), "no file must land outside the ideas dir");
+  await close();
+});
+
+test("POST /ideas: rejects a spoofed Host or Origin (CSRF/DNS-rebinding guard); normal loopback POST still 201", async () => {
+  const { base, close } = await ideaServer({ "CLAUDE.md": "## sweap config\n" });
+  const port = new URL(base).port;
+
+  // Node's fetch ignores a caller-supplied Host header, so drive a raw
+  // http.request to actually send a spoofed Host to the loopback server.
+  const rawPost = (headers) => new Promise((resolve, reject) => {
+    const req = http.request({ host: "127.0.0.1", port, path: "/ideas", method: "POST", headers: { "content-type": "application/json", ...headers } }, (res) => {
+      let body = ""; res.on("data", (c) => (body += c)); res.on("end", () => resolve({ status: res.statusCode, body }));
+    });
+    req.on("error", reject);
+    req.end(JSON.stringify({ title: "spoofed host" }));
+  });
+  const badHost = await rawPost({ host: "evil.example" });
+  assert.equal(badHost.status, 403);
+
+  const badOrigin = await fetch(`${base}/ideas`, { method: "POST", headers: { "content-type": "application/json", origin: "https://evil.example" }, body: JSON.stringify({ title: "spoofed origin" }) });
+  assert.equal(badOrigin.status, 403);
+
+  const ok = await fetch(`${base}/ideas`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title: "legit idea" }) });
+  assert.equal(ok.status, 201);
+  await close();
+});
+
+test("POST /ideas: a 1000-char title still 201s with a truncated (<=130 char) filename", async () => {
+  const { base, close } = await ideaServer({ "CLAUDE.md": "## sweap config\n" });
+  const title = "a".repeat(1000);
+  const r = await fetch(`${base}/ideas`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title }) });
+  assert.equal(r.status, 201);
+  const { file } = await r.json();
+  assert.ok(basename(file).length <= 130, `basename too long: ${basename(file).length}`);
+  await close();
+});
+
+test("POST /ideas: a multibyte title round-trips intact through the utf8 body read", async () => {
+  const { dir, base, close } = await ideaServer({ "CLAUDE.md": "## sweap config\n" });
+  const r = await fetch(`${base}/ideas`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title: "café idea" }) });
+  assert.equal(r.status, 201);
+  const { file } = await r.json();
+  const text = readFileSync(join(dir, file), "utf8");
+  assert.match(text, /^---\ntitle: café idea\n/);
+  await close();
 });
 
 test("renderPage includes the Ideas capture form and list", () => {
