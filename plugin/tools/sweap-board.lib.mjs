@@ -62,6 +62,19 @@ export function writeIdea(projectDir, backlogDir, { title, body = "", now }) {
   return { file: join(backlogDir, "ideas", file) };
 }
 
+export function loadIdeas(projectDir, backlogDir) {
+  const dir = join(projectDir, backlogDir, "ideas");
+  let files;
+  try { files = readdirSync(dir).filter((f) => f.endsWith(".md")); } catch { return []; }
+  return files
+    .map((f) => {
+      let fm = null;
+      try { fm = parseFrontmatter(readFileSync(join(dir, f), "utf8")).fm; } catch { /* unreadable: fall through */ }
+      return { file: f, title: (fm && fm.title) || f.replace(/\.md$/, ""), created: (fm && fm.created) || null };
+    })
+    .sort((a, b) => String(b.created || "").localeCompare(String(a.created || "")) || a.file.localeCompare(b.file));
+}
+
 export function loadItems(projectDir, backlogDir) {
   const dir = join(projectDir, backlogDir);
   let files;
@@ -189,6 +202,7 @@ export async function buildState(projectDir, { git, gh, now }) {
   const notes = [];
   const { backlogDir } = readConfig(projectDir);
   const items = loadItems(projectDir, backlogDir);
+  const ideas = loadIdeas(projectDir, backlogDir);
   if (items.some((i) => i.malformed)) notes.push("one or more item files are malformed (shown flagged)");
   if (items.length === 0) notes.push(`no backlog items found under ${backlogDir}`);
   const { frontier, blocked, backlog, edges } = deriveBacklog(items);
@@ -230,5 +244,5 @@ export async function buildState(projectDir, { git, gh, now }) {
   const active = boardText.trim().length > 0 || inFlight.length > 0;
   if (!active) notes.push("no run in flight");
 
-  return { generatedAt: now, project: basename(projectDir), run: { active, prsAvailable }, frontier: frontier.filter((i) => !inFlightIds.has(i.id)).map((i) => ({ id: i.id, title: i.title, lane: i.lane, reviewDimensions: i.reviewDimensions })), inFlight, mergeQueue, blocked, backlog: backlog.map((g) => ({ milestone: g.milestone, items: g.items.map((i) => ({ id: i.id, title: i.title, status: i.status, dependsOn: i.dependsOn, malformed: i.malformed })) })), edges, notes };
+  return { generatedAt: now, project: basename(projectDir), run: { active, prsAvailable }, frontier: frontier.filter((i) => !inFlightIds.has(i.id)).map((i) => ({ id: i.id, title: i.title, lane: i.lane, reviewDimensions: i.reviewDimensions })), inFlight, mergeQueue, blocked, ideas, backlog: backlog.map((g) => ({ milestone: g.milestone, items: g.items.map((i) => ({ id: i.id, title: i.title, status: i.status, dependsOn: i.dependsOn, malformed: i.malformed })) })), edges, notes };
 }

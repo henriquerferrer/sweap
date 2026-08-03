@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseFrontmatter, parseList, readConfig, loadItems, refMatchesId, slugify, writeIdea } from "./sweap-board.lib.mjs";
+import { parseFrontmatter, parseList, readConfig, loadItems, refMatchesId, slugify, writeIdea, loadIdeas } from "./sweap-board.lib.mjs";
 
 function fixture(files) {
   const dir = mkdtempSync(join(tmpdir(), "swb-"));
@@ -214,6 +214,37 @@ test("buildState: a malformed item file is flagged, not fatal", async () => {
   const s = await buildState(dir, { git: async () => ({ stdout: "", code: 0 }), gh: async () => ({ stdout: "[]", code: 0 }), now: 7 });
   assert.equal(s.backlog[0].items[0].malformed, true);
   assert.ok(s.notes.some((n) => /malformed/i.test(n)));
+  rmSync(dir, { recursive: true });
+});
+
+test("loadIdeas reads the inbox, newest first; missing dir -> []; ignores ideas/archive/", () => {
+  const dir = fixture({
+    "roadmap/ideas/old-idea.md": "---\ntitle: Old idea\ncreated: 2026-08-01T10:00:00.000Z\n---\n\nx\n",
+    "roadmap/ideas/new-idea.md": "---\ntitle: New idea\ncreated: 2026-08-03T10:00:00.000Z\n---\n",
+    "roadmap/ideas/archive/done-idea.md": "---\ntitle: Done\ncreated: 2026-07-01T10:00:00.000Z\n---\n",
+    "roadmap/ideas/junk.md": "no frontmatter\n",
+  });
+  const ideas = loadIdeas(dir, "roadmap/");
+  assert.deepEqual(ideas.map((i) => i.file), ["new-idea.md", "old-idea.md", "junk.md"]);
+  assert.equal(ideas[0].title, "New idea");
+  assert.equal(ideas[2].title, "junk");          // falls back to filename
+  assert.equal(ideas[2].created, null);
+  assert.ok(!ideas.some((i) => i.file === "done-idea.md"), "archive/ must be invisible");
+  const empty = fixture({ "CLAUDE.md": "x" });
+  assert.deepEqual(loadIdeas(empty, "roadmap/"), []);
+  rmSync(empty, { recursive: true });
+  rmSync(dir, { recursive: true });
+});
+
+test("buildState exposes ideas; ideas never appear in backlog/frontier", async () => {
+  const dir = fixture({
+    "CLAUDE.md": "## sweap config\n",
+    "roadmap/F1.1.md": "---\nid: F1.1\ntitle: x\nstatus: todo\ndepends_on: []\n---\n",
+    "roadmap/ideas/dark-mode.md": "---\ntitle: Dark mode\ncreated: 2026-08-03T10:00:00.000Z\n---\n",
+  });
+  const s = await buildState(dir, { git: async () => ({ stdout: "", code: 0 }), gh: async () => ({ stdout: "[]", code: 0 }), now: 3 });
+  assert.deepEqual(s.ideas.map((i) => i.title), ["Dark mode"]);
+  assert.deepEqual(s.backlog.flatMap((g) => g.items.map((i) => i.id)), ["F1.1"], "ideas must not leak into backlog");
   rmSync(dir, { recursive: true });
 });
 
