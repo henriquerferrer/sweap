@@ -476,7 +476,11 @@ Phase 2 makes that second lens a standard, cheap step instead of luck.
 ## Milestone audit (after a milestone completes)
 
 When the last item of a milestone merges, run the saved audit workflow via
-`/milestone-audit` (optionally with `{range: "<base>..<head>"}`). It audits the
+`/milestone-audit`, always passing the milestone id being audited —
+`{milestone: "<id>"}`, optionally with `{range: "<base>..<head>"}` too when
+known. Passing the milestone id is what lets the workflow refuse to run if it
+resolves a different one (see "Audit evidence" below) — omitting it disables
+that guard. It audits the
 merged whole with the finder lenses declared in `audit.lenses` — by default **the
 generic default lens set defined in the audit workflow** (correctness,
 authz/security, data-integrity, concurrency/races, test-integrity, api-contract),
@@ -494,7 +498,8 @@ no cron, no standing agent. Standard template:
 > *First, every outstanding audit follow-up item in the backlog is [done] (the
 > `/milestone` run drains them debt-first — see the bucket-2 note above); then
 > every unblocked <milestone> item in the backlog is [done] per the definition
-> of done; and when the last item merges, run `/milestone-audit` for that range,
+> of done; and when the last item merges, run `/milestone-audit` with
+> `{milestone: "<milestone>", range: "<base>..<head>"}` for that range,
 > triage the confirmed findings (below), and post a summary before stopping.
 > Stop when only [blocked] items remain, or after N turns.*
 
@@ -515,6 +520,24 @@ and reports confirmed findings, never edits code. What happens next is the
 **triage** the surrounding session performs (below): a bucket-1 fix is a
 deliberate, gated *follow-on* PR the session opens, not something the audit
 workflow does silently.
+
+**Audit evidence (mandatory).** The audit only counts if it runs *after* the
+milestone's last item has actually merged to the project's default branch —
+never from an integration branch, a worktree, or any pre-merge state, since
+the workflow reads the merged repo itself. Goal-met requires the workflow's
+returned `{milestone, range, stats}` to be quoted verbatim in the run's
+summary; a prose "audit clean" claim with no quoted workflow artifact is a
+malformed run, not a completed one. A 0-confirmed result is only acceptable
+evidence when the echoed `milestone` matches the one that was just shipped —
+if it names a different milestone, the run audited the wrong thing and must
+be treated as failed, not clean (a 2026-07 run once passed a stringified range
+where the workflow expected `{range, milestone}`; the string was silently
+discarded, the Scope stage fell back to "most recently completed milestone",
+and the run audited the prior milestone while reporting the newly-shipped one
+clean). The workflow now throws instead of guessing whenever the args shape
+is ambiguous or the resolved milestone doesn't match what was requested — a
+thrown error is the correct outcome for a misconfigured run, not something to
+route around.
 
 **Findings triage (three buckets — the session running the audit sorts them).**
 1. **Bug** (code fails its own spec): the session opens a follow-on fix-PR

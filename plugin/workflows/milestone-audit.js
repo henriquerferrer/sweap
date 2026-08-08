@@ -1,7 +1,7 @@
 export const meta = {
   name: 'milestone-audit',
   description: 'Adversarial cross-feature audit of a merged milestone (finders → refuters → confirmed findings)',
-  whenToUse: 'After the last item of a milestone merges, before the next milestone brainstorm. Pass {range: "<base>..<head>"} or let the Scope stage infer it from the item files at status: done under backlog.dir (roadmap/ by default; backlog.file is the index).',
+  whenToUse: 'After the last item of a milestone merges, before the next milestone brainstorm. Pass {range: "<base>..<head>", milestone: "F#"} (a bare milestone-id string is also accepted, e.g. "F6") or omit args and let the Scope stage infer the range from the item files at status: done under backlog.dir (roadmap/ by default; backlog.file is the index). The workflow throws if the resolved milestone does not match a requested one — it never silently falls back to auditing whatever merged most recently.',
   phases: [
     { title: 'Scope', detail: 'map the milestone surface (tables, routes, server fns) and resolve audit.lenses' },
     { title: 'Find', detail: 'one finder per lens over the merged whole' },
@@ -88,23 +88,71 @@ const LENS_CONFIG = {
   },
 }
 
-const range = args?.range ?? null
-const milestone = args?.milestone ?? 'the most recently completed milestone'
+// Loose-equality helper for milestone ids: an LLM-formatted scope response
+// can drift ("Milestone F6", trailing whitespace, case) without actually
+// naming a different milestone. Trim, case-fold, and strip a leading
+// "milestone " label before comparing — genuinely different ids still
+// compare unequal.
+const normalizeMilestoneId = (id) =>
+  typeof id === 'string' ? id.trim().toLowerCase().replace(/^milestone\s+/, '') : id
+
+// args is either an object {range, milestone}, a bare string (treated as the
+// requested milestone id, e.g. "F6"), or absent/null. A bare string that
+// LOOKS like it embeds a range (contains ".." or the word "range") or looks
+// like a serialized object/array (starts with "{" or "[") is almost
+// certainly a caller that meant to pass {range: "...", milestone: "..."} as
+// an object and stringified it by mistake — silently falling back to "most
+// recently completed milestone" in that case is exactly how a 2026-07 run
+// audited the prior milestone (DS.4) and reported the newly-shipped one (F6)
+// clean. Fail loudly instead of guessing.
+if (typeof args === 'string' && /\.\.|range|^\s*[[{]/i.test(args)) {
+  throw new Error(
+    `milestone-audit: pass args as an object {range: "...", milestone: "F#"} — got a string: ${JSON.stringify(args)}`
+  )
+}
+
+const requestedMilestone = typeof args === 'string' ? args : (args?.milestone ?? null)
+const range = typeof args === 'string' ? null : (args?.range ?? null)
+const milestone = requestedMilestone ?? 'the most recently completed milestone'
+
+const SCOPE = {
+  type: 'object',
+  required: ['milestone', 'range', 'summary'],
+  properties: {
+    milestone: { type: 'string', description: 'the milestone id actually resolved, e.g. "F6"' },
+    range: { type: 'string', description: 'the resolved commit range, "<base>..<head>"' },
+    summary: {
+      type: 'string',
+      description: 'the prose surface map: changed files grouped by area (db schema/migrations, server fns, routes, tests), new tables, new permission actions, and the acceptance criteria copied from its item files',
+    },
+  },
+}
 
 phase('Scope')
 const scope = await agent(
   `In this repo, determine the merged commit range and surface for ${milestone}.` +
     (range ? ` Use the range ${range}.` : ` Infer the range from the milestone's item files at status: done (their merge PR links) and git log --oneline --merges.`) +
-    ` Return: the range, the list of changed files grouped by area (db schema/migrations, server fns, routes, tests), new tables, new permission actions, and the milestone's acceptance criteria copied from its item files.`,
-  { label: 'scope', phase: 'Scope' }
+    ` Return: the milestone id you actually resolved, the range, and a summary covering the list of changed files grouped by area (db schema/migrations, server fns, routes, tests), new tables, new permission actions, and the milestone's acceptance criteria copied from its item files.`,
+  { label: 'scope', phase: 'Scope', schema: SCOPE }
 )
+
+if (requestedMilestone && normalizeMilestoneId(scope?.milestone) !== normalizeMilestoneId(requestedMilestone)) {
+  throw new Error(
+    `milestone-audit: requested milestone "${requestedMilestone}" but the Scope stage resolved "${scope?.milestone}" — refusing to audit the wrong milestone.`
+  )
+}
+
+log(`scope resolved: milestone=${scope?.milestone} range=${scope?.range}`)
+
+const scopeHeader = `Milestone ${scope?.milestone} (range ${scope?.range}):\n`
+const scopeSummary = scopeHeader + (scope?.summary ?? '')
 
 const lensConfig = await agent(
   `Read the '## sweap config' block in this project's CLAUDE.md and find the 'audit.lenses' key.\n` +
     ` - If the key is absent, or set to the literal string 'default': return mode 'default' and an empty lenses array.\n` +
     ` - If set to 'default + [x, y, ...]': return mode 'default-plus'; for each named extra (x, y, ...) draft a lens {key, prompt} — a concrete audit instruction for that domain concern, grounded in this project's actual code/specs and the milestone scope below (not a generic placeholder).\n` +
     ` - If set to an explicit list with no 'default' token: return mode 'explicit' and draft a lens {key, prompt} for each named entry the same way — these REPLACE the generic defaults for this run.\n\n` +
-    `Milestone scope (from a prior mapping agent):\n${scope}`,
+    `Milestone scope (from a prior mapping agent):\n${scopeSummary}`,
   { label: 'lens-config', phase: 'Scope', schema: LENS_CONFIG }
 )
 
@@ -119,7 +167,7 @@ const found = await pipeline(
   LENSES,
   (lens) =>
     agent(
-      `${lens.prompt}\n\nMilestone scope (from a prior mapping agent):\n${scope}\n\nRead the actual code before claiming anything. Only report findings you can support with specific code evidence. No style nits — defects only.`,
+      `${lens.prompt}\n\nMilestone scope (from a prior mapping agent):\n${scopeSummary}\n\nRead the actual code before claiming anything. Only report findings you can support with specific code evidence. No style nits — defects only.`,
       { label: `find:${lens.key}`, phase: 'Find', schema: FINDINGS, effort: 'high' }
     ),
   (result, lens) =>
@@ -153,4 +201,9 @@ log(`${all.length} raw findings, ${killed} refuted, ${confirmed.length} confirme
 
 const order = { critical: 0, high: 1, medium: 2, low: 3 }
 confirmed.sort((a, b) => order[a.severity] - order[b.severity])
-return { confirmed, stats: { raw: all.length, refuted: killed, confirmed: confirmed.length } }
+return {
+  milestone: scope?.milestone,
+  range: scope?.range,
+  confirmed,
+  stats: { raw: all.length, refuted: killed, confirmed: confirmed.length },
+}
