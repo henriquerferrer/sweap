@@ -275,5 +275,36 @@ commit_all "$R"
 run_gate "$R" --check
 check "follow-up completing after record doesn't invalidate it" 0
 
+# T16: no debt -> any file list passes
+R="$(new_repo t16)"
+mk_item "$R" F1.1 todo
+commit_all "$R"
+run_gate "$R" --files roadmap/F1.2.md src/a.ts
+check "no debt => merge mode passes" 0
+
+# T17: debt + code-only PR -> pass
+R="$(new_repo t17)"
+mk_item "$R" F1.1 done
+commit_all "$R"
+run_gate "$R" --files src/a.ts docs/x.md
+check "debt + code-only PR => pass" 0
+
+# T18: debt + roadmap-advancing PR -> deny
+run_gate "$R" --files roadmap/F2.1.md src/a.ts
+check "debt + item-file PR => deny" 1
+check_out "deny names the debt" "FAIL: audit debt .*F1"
+
+# T19: debt + discharge PR (record + follow-up in same PR) -> pass
+run_gate "$R" --files roadmap/audits/F1.md roadmap/F1.9.md ROADMAP.md
+check "discharge PR passes" 0
+
+# T20: debt + record for a NON-debt milestone does not discharge -> deny
+run_gate "$R" --files roadmap/audits/F9.md roadmap/F2.1.md
+check "wrong-milestone record does not discharge" 1
+
+# T21: subdir files (ideas/) are not item files -> pass
+run_gate "$R" --files roadmap/ideas/some-idea.md
+check "ideas/ files do not trigger the gate" 0
+
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" = 0 ]

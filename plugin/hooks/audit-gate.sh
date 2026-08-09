@@ -195,6 +195,7 @@ fi
 [ -n "$(printf '%s' "$DEBT")" ] || exit 0
 touches_items=0; discharges=0
 for f in "$@"; do
+  # Note: case patterns are STRING matches where * also matches / (not filesystem globs)
   case "$f" in
     "${BACKLOG_DIR}audits/"*.md)
       m="$(basename "$f" .md)"
