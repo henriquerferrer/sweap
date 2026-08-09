@@ -43,9 +43,12 @@ frontmatter() { awk '{ sub(/\r$/,"") } NR==1{ if ($0!="---") exit; next } /^---$
 fm_get() { frontmatter "$1" | sed -n "s/^$2:[[:space:]]*//p" | head -1 | sed 's/[[:space:]]*$//'; }
 
 # --- config from CLAUDE.md's `## sweap config` block ----------------------------
-# Keys are unique single-line `key: value` entries; match anywhere in the file
-# (same relaxation sweap-board.lib.mjs#readConfig uses).
-cfg_get() { [ -f CLAUDE.md ] && sed -n "s/^$1:[[:space:]]*//p" CLAUDE.md | head -1 | sed 's/[[:space:]]*$//' || true; }
+# Keys are unique single-line `key: value` entries; match anywhere in the file.
+# NOT the same capture as sweap-board.lib.mjs#readConfig: that grabs only the
+# first `\S+` token (comments dropped by construction). This script instead
+# captures the rest of the line and then strips a trailing ` #...` comment
+# suffix, so inline-list values like `[F1, F7]` survive intact.
+cfg_get() { [ -f CLAUDE.md ] && sed -n "s/^$1:[[:space:]]*//p" CLAUDE.md | head -1 | sed 's/[[:space:]]*$//' | sed 's/[[:space:]]#.*$//' | sed 's/[[:space:]]*$//' || true; }
 
 BACKLOG_DIR="$(cfg_get 'backlog\.dir')"
 BACKLOG_DIR="${BACKLOG_DIR:-roadmap/}"

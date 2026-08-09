@@ -337,5 +337,34 @@ run_gate "$R" --check
 check "--check still denies invalid record" 1
 check_out "--check still prints the range_head diagnostic" "FAIL: record .*range_head"
 
+# T25: CLAUDE.md using the SHIPPED TEMPLATE's exact commented `backlog.dir:`
+# style (copied verbatim from plugin/templates/CLAUDE.md) with a complete
+# milestone and no record. Regression: cfg_get used to capture the whole rest
+# of the line, so BACKLOG_DIR became "roadmap/  ... Backlog format"/ (a
+# nonexistent dir) -> item_rows found zero items -> gate passed unconditionally
+# on every template-scaffolded repo. Must now deny, naming the milestone.
+R="$(new_repo t25)"
+mk_item "$R" F1.1 done
+commit_all "$R"
+{
+  printf '## sweap config\n'
+  printf 'backlog.dir:      roadmap/                  # one file per item — see playbook "Backlog format"\n'
+  printf 'audit.baseline:   []\n'
+} > "$R/CLAUDE.md"
+commit_all "$R" "template-style CLAUDE.md"
+run_gate "$R" --check
+check "template-commented backlog.dir still finds the debt" 1
+check_out "debt names milestone despite the inline comment" "FAIL: milestone F1 .*no audit record"
+
+# T26: inline list + trailing comment (`audit.baseline: [F1] # grandfathered`)
+# must strip the comment while keeping the list intact, so F1 stays exempt.
+R="$(new_repo t26)"
+mk_item "$R" F1.1 done
+commit_all "$R"
+printf '## sweap config\naudit.baseline: [F1] # grandfathered\n' > "$R/CLAUDE.md"
+commit_all "$R" "baseline with inline comment"
+run_gate "$R" --check
+check "inline-comment baseline still exempts F1" 0
+
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" = 0 ]
