@@ -154,5 +154,105 @@ mk_record "$R" F1 "$base" "$base" 0 0 0
 run_gate "$R" --check
 check "uncommitted done flip => fail closed" 1
 
+# mk_todo_followup <repo> <id> <milestone>: lint-clean todo follow-up item
+mk_todo_followup() {
+  local r="$1" id="$2" m="$3"
+  cat > "$r/roadmap/$id.md" <<EOF_ITEM
+---
+id: $id
+title: follow-up
+status: todo
+depends_on: []
+review-dimensions: []
+followup_of: $m
+---
+
+# $id — follow-up
+
+## Spec
+- **Surface:** src/fix.ts
+- **Interfaces:** none
+- **Out of scope:** everything else
+
+## Acceptance (e2e)
+- the finding is fixed
+EOF_ITEM
+}
+
+# T11: counts inconsistent (raw != refuted + confirmed) -> invalid
+R="$(new_repo t11)"
+base="$(head_sha "$R")"
+mk_item "$R" F1.1 done
+commit_all "$R"
+mk_record "$R" F1 "$base" "$(head_sha "$R")" 5 2 1
+commit_all "$R" record
+run_gate "$R" --check
+check "raw != refuted+confirmed => invalid" 1
+
+# T12: confirmed=1 but no finding block -> invalid
+R="$(new_repo t12)"
+base="$(head_sha "$R")"
+mk_item "$R" F1.1 done
+commit_all "$R"
+mk_record "$R" F1 "$base" "$(head_sha "$R")" 1 0 1
+commit_all "$R" record
+run_gate "$R" --check
+check "confirmed without finding block => invalid" 1
+
+# T13: finding block missing disposition -> invalid
+R="$(new_repo t13)"
+base="$(head_sha "$R")"
+mk_item "$R" F1.1 done
+commit_all "$R"
+mk_record "$R" F1 "$base" "$(head_sha "$R")" 1 0 1 '### 1. stale read
+severity: high
+lens: correctness
+'
+commit_all "$R" record
+run_gate "$R" --check
+check "finding without disposition => invalid" 1
+
+# T14: dangling followup reference -> invalid
+R="$(new_repo t14)"
+base="$(head_sha "$R")"
+mk_item "$R" F1.1 done
+commit_all "$R"
+mk_record "$R" F1 "$base" "$(head_sha "$R")" 1 0 1 '### 1. stale read
+severity: high
+lens: correctness
+disposition: followup F1.9
+'
+commit_all "$R" record
+run_gate "$R" --check
+check "dangling followup ref => invalid" 1
+check_out "names the dangling ref" "FAIL: record .*F1\.9"
+
+# T15: fully closed record (fix_pr + followup + blocked) -> valid
+R="$(new_repo t15)"
+base="$(head_sha "$R")"
+mk_item "$R" F1.1 done
+commit_all "$R"
+mk_todo_followup "$R" F1.9 F1
+mk_item "$R" F1.10 blocked 'followup_of: F1
+blocked: should exports include archived rows?'
+mk_record "$R" F1 "$base" "$(head_sha "$R")" 5 2 3 '### 1. stale read
+severity: high
+lens: correctness
+disposition: fix_pr #42
+
+### 2. missing index
+severity: medium
+lens: data-integrity
+disposition: followup F1.9
+
+### 3. export scope unclear
+severity: low
+lens: api-contract
+disposition: blocked F1.10
+'
+commit_all "$R" record
+run_gate "$R" --check
+check "fully closed record => valid" 0
+
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" = 0 ]

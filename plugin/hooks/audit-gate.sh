@@ -65,6 +65,10 @@ item_rows() { # "<milestone> <status>" per item file
     id="$(basename "$f" .md)"
     case "$id" in *.*) : ;; *) continue ;; esac   # no dot => not an item file
     status="$(fm_get "$f" status)"
+    # Follow-up/blocked items created by an audit's triage are DEBT OF the
+    # milestone, not members of it — they must not flip it back to incomplete
+    # (they drain in the next /milestone run per the playbook).
+    [ -n "$(fm_get "$f" followup_of)" ] && continue
     printf '%s %s\n' "${id%.*}" "${status:-unknown}"
   done
 }
@@ -112,6 +116,51 @@ validate_record() { # validate_record <milestone> <file> ; 0 = valid
       done
     fi
   fi
+
+  # --- triage closure: counts add up and every confirmed finding lands somewhere
+  local raw refuted confirmed body blocks dispo ref reftype reffile
+  raw="$(fm_get "$rec" raw)"; refuted="$(fm_get "$rec" refuted)"; confirmed="$(fm_get "$rec" confirmed)"
+  case "$raw$refuted$confirmed" in *[!0-9]*) fail "record $rec: raw/refuted/confirmed must be numeric"; ok=0 ;; esac
+  if [ "$ok" = 1 ] && [ "$raw" -ne $((refuted + confirmed)) ]; then
+    fail "record $rec: raw ($raw) != refuted ($refuted) + confirmed ($confirmed)"; ok=0
+  fi
+  body="$(awk '{ sub(/\r$/,"") } NR==1 && $0=="---" { infm=1; next } infm && /^---$/ { infm=0; next } !infm { print }' "$rec")"
+  blocks="$(printf '%s\n' "$body" | grep -c '^### ' || true)"
+  if [ "$ok" = 1 ] && [ "$blocks" -ne "$confirmed" ]; then
+    fail "record $rec: $blocks finding block(s) but confirmed: $confirmed"; ok=0
+  fi
+  # One disposition per block, each resolvable. Blocks are separated by ^###
+  # headers; a disposition line is `disposition: fix_pr #N | followup <id> |
+  # blocked <id>`. Count and validate per block via awk block-splitting.
+  if [ "$blocks" -gt 0 ]; then
+    local n=0
+    while [ "$n" -lt "$blocks" ]; do
+      n=$((n + 1))
+      dispo="$(printf '%s\n' "$body" | awk -v want="$n" '/^### /{b++} b==want && /^disposition:[[:space:]]/{ sub(/^disposition:[[:space:]]*/,""); print }')"
+      if [ "$(printf '%s\n' "$dispo" | grep -c '[^[:space:]]')" -ne 1 ]; then
+        fail "record $rec: finding block $n needs exactly one disposition: line"; ok=0; continue
+      fi
+      case "$dispo" in
+        "fix_pr #"[0-9]*) : ;;
+        "followup "*|"blocked "*)
+          reftype="${dispo%% *}"; ref="${dispo#* }"
+          reffile="${BACKLOG_DIR}${ref}.md"
+          if [ ! -f "$reffile" ]; then
+            fail "record $rec: disposition references $ref but ${reffile} does not exist"; ok=0
+          else
+            [ "$(fm_get "$reffile" followup_of)" = "$m" ] || { fail "record $rec: $ref must carry followup_of: $m"; ok=0; }
+            if [ "$reftype" = "blocked" ]; then
+              [ "$(fm_get "$reffile" status)" = "blocked" ] || { fail "record $rec: $ref disposition says blocked but its status is not"; ok=0; }
+            fi
+            bash "$(dirname "${BASH_SOURCE[0]}")/roadmap-lint.sh" "$reffile" >/dev/null 2>&1 \
+              || { fail "record $rec: $ref fails roadmap-lint"; ok=0; }
+          fi
+          ;;
+        *) fail "record $rec: finding block $n has malformed disposition '$dispo'"; ok=0 ;;
+      esac
+    done
+  fi
+
   [ "$ok" = 1 ]
 }
 
