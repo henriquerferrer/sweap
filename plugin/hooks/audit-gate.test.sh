@@ -268,8 +268,9 @@ commit_all "$R" record
 # but only completes later (in a post-audit commit).
 mk_todo_followup "$R" F1.9 F1
 commit_all "$R"
-# Flip F1.9 to done while preserving its followup_of: key (edit in place, don't recreate)
-sed -i 's/^status: todo$/status: done/' "$R/roadmap/F1.9.md"
+# Flip F1.9 to done while preserving its followup_of: key (portable awk+mv, not sed -i)
+awk '{ sub(/^status: todo$/, "status: done"); print }' "$R/roadmap/F1.9.md" > "$R/roadmap/F1.9.md.tmp" && mv "$R/roadmap/F1.9.md.tmp" "$R/roadmap/F1.9.md"
+grep -q '^status: done$' "$R/roadmap/F1.9.md" || { echo 'T15b fixture broken: flip did not apply'; exit 1; }
 commit_all "$R"
 run_gate "$R" --check
 check "follow-up completing after record doesn't invalidate it" 0
