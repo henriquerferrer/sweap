@@ -45,6 +45,10 @@ overrides only the keys that differ from the baked defaults. The keys:
   only those lenses for the run, replacing the defaults entirely. CAUTION: a fully
   explicit list drops the generic default coverage, so use it deliberately, only
   when you truly want a custom set.
+- **`audit.baseline`** — inline list of milestones grandfathered before audit
+  enforcement shipped (e.g. `[F1, F2]`). Milestones listed here are exempt
+  from the audit-gate's debt computation. Set once at adoption; never grow it
+  to dodge an audit — that is the bypass the gate exists to make visible.
 - **`review.dimensions`** — the conditional review dimensions a roadmap item may
   tag. Default: **`security`, `ui`, `migration`**.
 - **`notify`** — end-of-run notification channel: **`push`** or **`none`**.
@@ -538,6 +542,49 @@ clean). The workflow now throws instead of guessing whenever the args shape
 is ambiguous or the resolved milestone doesn't match what was requested — a
 thrown error is the correct outcome for a misconfigured run, not something to
 route around.
+
+**The audit record + gate (mechanical enforcement).** The audit's definition
+of done includes a committed record at `<backlog.dir>audits/<milestone>.md`
+(range SHAs, lens set, raw/refuted/confirmed counts, one block per confirmed
+finding with its disposition — see `/milestone-audit`). The record is what
+makes "the audit ran, on the right range, and its findings went somewhere"
+machine-checkable: `hooks/audit-gate.sh` recomputes the binding from git
+ancestry (a record for the wrong milestone or a stale range fails
+structurally) and verifies every disposition resolves. A completed milestone
+without a valid record is **audit debt**: the merge gate denies any
+backlog-advancing merge (roadmap item files) until the record PR lands;
+code-only PRs (hotfixes, chores) pass. What this cannot do — by design and
+per the attestation literature — is judge audit QUALITY: a real-but-shallow
+audit passes the gate. The adversarial refuter design and the human on the
+direction loop remain the answer for that.
+
+**Enforcing the audit gate in CI (consumer repos).** Add an always-run job to
+the repo's CI workflow and make it a required check:
+
+    audit-gate:
+      runs-on: ubuntu-latest
+      steps:
+        - uses: actions/checkout@v4
+          with: { fetch-depth: 0 }   # the gate's ancestry checks need history
+        - name: audit gate
+          run: |
+            bash <plugin-path>/hooks/audit-gate.sh --check
+            if [ -n "${{ github.base_ref }}" ]; then
+              git fetch -q origin "${{ github.base_ref }}"
+              CHANGED=$(git diff --name-only "origin/${{ github.base_ref }}...HEAD")
+              [ -z "$CHANGED" ] || bash <plugin-path>/hooks/audit-gate.sh --files $CHANGED
+            fi
+
+Hard-won rules for the required check (research memo, 2026-08-08):
+- **Never** put the job behind a `paths:` filter or a job-level `if:` — a
+  job skipped by an `if:` reports SUCCESS and *satisfies* the required check
+  (GitHub-documented). Always run; the gate is cheap.
+- Pin the required check to the **GitHub Actions app** in the ruleset, never
+  "any source": commit statuses can be posted green by any push-access token,
+  while check runs are App-only.
+- Protect `.github/workflows/**` (CODEOWNERS or a push ruleset) and keep the
+  default `GITHUB_TOKEN` read-only — otherwise the actor can edit the
+  validator out of its own way.
 
 **Findings triage (three buckets — the session running the audit sorts them).**
 1. **Bug** (code fails its own spec): the session opens a follow-on fix-PR

@@ -16,6 +16,7 @@ backlog.dir:      roadmap/                  # one file per item — see playbook
 backlog.prefix:   F                        # one or more comma-separated prefixes, e.g. `F` or `F, DS`
 # services.up:    just services-up          # uncomment only if you have local test services
 audit.lenses:     default
+audit.baseline:   []
 review.dimensions: security, ui, migration
 notify:           push
 turns.default:    160
