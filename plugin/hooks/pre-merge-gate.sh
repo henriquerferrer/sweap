@@ -222,7 +222,7 @@ verify_pr() {
   [ "$budget" -ge 1 ] 2>/dev/null || budget=1
   deadline=$(( $(date +%s) + budget ))
 
-  if ! bounded_run "$budget" gh pr view "$pr" --json statusCheckRollup,mergeStateStatus,baseRefName,headRefOid; then
+  if ! bounded_run "$budget" gh pr view "$pr" --json statusCheckRollup,mergeStateStatus,baseRefName,headRefOid,files; then
     emit_deny "merge-gate: could not allocate a temp file to verify checks. Denying (recoverable) — re-run the merge."
     return 1
   fi
@@ -299,6 +299,34 @@ verify_pr() {
     emit_deny "merge-gate: PR #$pr is BEHIND base '$base' by $behind commit(s) — its green checks ran against an old base, so the combined state that would land is unverified (branch protection does not report this on free-plan repos; the compare API is the ground truth). Rebase (git fetch origin && git rebase origin/$base && git push --force-with-lease), wait for CI to go green on the rebased head, then re-run the merge."
     return 1
   fi
+
+  # --- audit gate (roadmap-scoped denial; logic lives in audit-gate.sh) ---------
+  # Deterministic and local: uses the SAME view payload (files ride the query),
+  # so this adds no gh calls and no budget pressure.
+  local fcount fpaths_nl ag_out ag_rc
+  fcount="$(printf '%s' "$json" | jq -r '(.files // []) | length' 2>/dev/null)"
+  if ! printf '%s' "$fcount" | grep -qE '^[0-9]+$'; then
+    emit_deny "merge-gate: could not read PR #$pr's changed-file list for the audit gate. Denying (recoverable) — re-run the merge."
+    return 1
+  fi
+  if [ "$fcount" -ge 100 ]; then
+    emit_deny "merge-gate: PR #$pr reports $fcount changed files — gh may truncate the list at 100, so the audit gate cannot classify this PR. Failing CLOSED. Split the PR (or land the audit record first)."
+    return 1
+  fi
+  if [ "$fcount" -gt 0 ]; then
+    fpaths_nl="$(printf '%s' "$json" | jq -r '(.files // []) | .[].path' 2>/dev/null)"
+    local -a fpaths=()
+    while IFS= read -r fp; do [ -n "$fp" ] && fpaths+=("$fp"); done <<AUDIT_FILES_EOF
+$fpaths_nl
+AUDIT_FILES_EOF
+    ag_out="$(bash "$(dirname "${BASH_SOURCE[0]}")/audit-gate.sh" --files "${fpaths[@]}" 2>&1)"
+    ag_rc=$?
+    if [ "$ag_rc" != "0" ]; then
+      emit_deny "merge-gate: audit gate refused PR #$pr: ${ag_out} (see plugin/hooks/audit-gate.sh; run 'audit-gate.sh --check' for the full debt state)"
+      return 1
+    fi
+  fi
+
   return 0
 }
 

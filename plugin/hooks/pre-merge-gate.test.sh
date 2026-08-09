@@ -65,11 +65,11 @@ case "$mode" in
   slow)    sleep "${GH_STUB_SLEEP:-5}"; exit 0 ;;      # exceed the internal timeout
   empty)   echo '{"statusCheckRollup":[]}'; exit 0 ;;  # CI not registered yet
   green)
-    echo '{"statusCheckRollup":[
+    printf '{"statusCheckRollup":[
       {"__typename":"CheckRun","name":"lint","status":"COMPLETED","conclusion":"SUCCESS"},
       {"__typename":"CheckRun","name":"e2e","status":"COMPLETED","conclusion":"SUCCESS"},
       {"__typename":"CheckRun","name":"review","status":"COMPLETED","conclusion":"SUCCESS"}
-    ],"mergeStateStatus":"CLEAN","baseRefName":"main","headRefOid":"deadbeef","mergeCommit":{"oid":"deadbeef"}}' ;;
+    ],"mergeStateStatus":"CLEAN","baseRefName":"main","headRefOid":"deadbeef","mergeCommit":{"oid":"deadbeef"},"files":%s}\n' "${GH_FILES_JSON:-[]}" ;;
   skipped)
     echo '{"statusCheckRollup":[
       {"__typename":"CheckRun","name":"lint","status":"COMPLETED","conclusion":"SUCCESS"},
@@ -121,13 +121,13 @@ chmod +x "$STUB_BIN/gh"
 
 # Generous default gh timeout so normal-path cases never flake under load; the
 # explicit timeout test overrides MGT=1 with a stub that sleeps longer than that.
-run_gate() {  # $1=GH_STUB, $2=command ; feeds mock PreToolUse JSON, prints stdout
-  local stub="$1" cmd="$2"
+run_gate() {  # $1=GH_STUB, $2=command, [$3=cwd override] ; feeds mock PreToolUse JSON
+  local stub="$1" cmd="$2" cwd="${3:-$WORK}"
   local json
-  json="$(jq -cn --arg c "$cmd" --arg d "$WORK" \
+  json="$(jq -cn --arg c "$cmd" --arg d "$cwd" \
     '{tool_name:"Bash",hook_event_name:"PreToolUse",cwd:$d,tool_input:{command:$c}}')"
   PATH="$STUB_BIN:$PATH" GH_STUB="$stub" GH_COMPARE="${GH_COMPARE:-0}" \
-    MERGE_GATE_GH_TIMEOUT="${MGT:-5}" \
+    MERGE_GATE_GH_TIMEOUT="${MGT:-5}" GH_FILES_JSON="${GH_FILES_JSON:-[]}" \
     bash "$GATE" <<<"$json"
 }
 
@@ -578,6 +578,40 @@ unset GH_STUB_43
 if [ "$rc" = "2" ] && printf '%s' "$err" | grep -q '#43' && ls "$WORK"/.claude/main-red-*.flag >/dev/null 2>&1; then
   ok "l) chained green&&red -> backstop alarms + marks #43"
 else bad "l) chained backstop" "rc=$rc err=$err"; fi
+
+echo "== audit-gate integration =="
+
+# Fixture repo with audit debt (complete milestone F1, no record).
+AUD="$WORK/audrepo"
+mkdir -p "$AUD/roadmap/audits"
+git -C "$AUD" init -q
+git -C "$AUD" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+printf -- '---\nid: F1.1\ntitle: t\nstatus: done\ndepends_on: []\nreview-dimensions: []\n---\n' > "$AUD/roadmap/F1.1.md"
+git -C "$AUD" add -A && git -C "$AUD" -c user.email=t@t -c user.name=t commit -qm items
+
+# (g1) green PR whose files advance the backlog while debt exists -> DENY
+out="$(GH_FILES_JSON='[{"path":"roadmap/F2.1.md"}]' run_gate green 'gh pr merge 7 --squash' "$AUD")"
+if is_deny "$out" && printf '%s' "$(reason "$out")" | grep -q 'audit'; then
+  ok "g1) audit debt + item-file PR -> deny"
+else bad "g1) audit debt + item-file PR -> deny" "out: $out"; fi
+
+# (g2) green PR, code-only files, same debt -> ALLOW (silent)
+out="$(GH_FILES_JSON='[{"path":"src/a.ts"}]' run_gate green 'gh pr merge 7 --squash' "$AUD")"
+if [ -z "$out" ]; then ok "g2) audit debt + code-only PR -> allow"
+else bad "g2) audit debt + code-only PR -> allow" "unexpected stdout: $out"; fi
+
+# (g3) green PR discharging the debt -> ALLOW
+out="$(GH_FILES_JSON='[{"path":"roadmap/audits/F1.md"},{"path":"roadmap/F1.9.md"}]' run_gate green 'gh pr merge 7 --squash' "$AUD")"
+if [ -z "$out" ]; then ok "g3) discharge PR -> allow"
+else bad "g3) discharge PR -> allow" "unexpected stdout: $out"; fi
+
+# (g4) file list at the truncation threshold -> DENY (fail closed)
+BIGLIST='['; i=0; while [ $i -lt 100 ]; do BIGLIST="$BIGLIST{\"path\":\"src/f$i.ts\"},"; i=$((i+1)); done
+BIGLIST="${BIGLIST%,}]"
+out="$(GH_FILES_JSON="$BIGLIST" run_gate green 'gh pr merge 7 --squash' "$AUD")"
+if is_deny "$out" && printf '%s' "$(reason "$out")" | grep -q 'truncat'; then
+  ok "g4) 100-file PR fails closed"
+else bad "g4) 100-file PR fails closed" "out: $out"; fi
 
 echo
 printf 'RESULT: %d passed, %d failed\n' "$PASS" "$FAIL"
