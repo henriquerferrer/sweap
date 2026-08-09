@@ -14,6 +14,12 @@ Resolve the run:
 - Read `backlog.prefix` from the `## sweap config` block in `CLAUDE.md` (default
   `F`) as a comma-separated LIST of one or more milestone-tag prefixes (e.g. `F`
   or `F, DS`) — these are the prefixes used below.
+- Run `bash ${CLAUDE_PLUGIN_ROOT}/hooks/audit-gate.sh --check` from the repo
+  root. Any `FAIL:` output means **audit debt**: a completed milestone lacks a
+  valid audit record. The ONLY permitted work while debt exists is discharging
+  it (run `/milestone-audit` for the named milestone; land its record PR) —
+  do not resolve a new milestone past unaudited work. (Debt-only runs draining
+  `followup_of:` items are, as ever, fine — they are the discharge.)
 - **Milestone `M`** = the first argument if given (e.g. `F2` or `DS3`, using
   any configured prefix); otherwise the next runnable milestone —
   across ALL configured prefixes, in the index's milestone order — that has

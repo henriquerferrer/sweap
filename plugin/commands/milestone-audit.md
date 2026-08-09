@@ -51,8 +51,39 @@ yourself — the Workflow does not):
 The dividing line between bucket 1 and bucket 3 is the milestone's acceptance
 criteria: failed-the-spec is a bug; not-in-the-spec is a direction call.
 
+**Write the audit record (mechanical part of the audit's definition of done).**
+After triage, write `<backlog.dir>audits/<milestone>.md`:
+
+    ---
+    milestone: F3
+    range_base: <base sha of the audited range>
+    range_head: <head sha of the audited range>
+    lens_mode: default            # default | default-plus | explicit
+    lenses: [correctness, authz, data-integrity, concurrency, test-integrity, api-contract]
+    raw: 14                       # from the Workflow's stats
+    refuted: 9
+    confirmed: 5
+    workflow_run: wf_...          # the Workflow invocation's runId
+    journal_sha256: <sha256 of the run's journal.jsonl>
+    ---
+
+One `### <n>. <title>` block per confirmed finding with flat `severity:`,
+`lens:`, and exactly one `disposition:` line — `fix_pr #NN` | `followup <id>` |
+`blocked <id>`. Transcribe the Workflow's RETURN VALUE — do not restate
+findings from memory. Compute `journal_sha256` with
+`shasum -a 256 <transcriptDir>/journal.jsonl` from the run's transcript
+directory. Land the record, its `followup_of:`-tagged follow-up/blocked item
+files, and the index update in ONE PR through the normal gate (the audit gate
+recognizes that PR as debt discharge). Take `range_base` / `range_head` from
+the Workflow's returned `{milestone, range}` — the record is the committed
+form of that evidence, not a re-derivation.
+
+Then run `bash ${CLAUDE_PLUGIN_ROOT}/hooks/audit-gate.sh --check` from the
+repo root and QUOTE its passing output in your summary. A `FAIL:` line means
+the record is malformed or mis-bound — fix the record, never the gate.
+
 Post a summary of the run quoting the Workflow's returned `{milestone, range,
-stats}` verbatim (the evidence a triage session cites — a prose "audit clean"
-claim with no quoted workflow result is a malformed run), plus lenses used and
-where each confirmed finding landed (fix-PR link, roadmap item file, or
-`status: blocked` item).
+stats}` verbatim AND the `audit-gate.sh --check` pass (a prose "audit clean"
+claim with neither is a malformed run), plus lenses used and where each
+confirmed finding landed (fix-PR link, roadmap item file, or `status:
+blocked` item).
