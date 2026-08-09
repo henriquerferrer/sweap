@@ -106,6 +106,9 @@ validate_record() { # validate_record <milestone> <file> ; 0 = valid
         [ -f "$f" ] || continue
         id="$(basename "$f" .md)"
         case "$id" in *.*) [ "${id%.*}" = "$m" ] || continue ;; *) continue ;; esac
+        # Follow-up items created by an audit's triage are DEBT OF the milestone,
+        # not members of it — their later completion must not retroactively fail the record.
+        [ -n "$(fm_get "$f" followup_of)" ] && continue
         [ "$(fm_get "$f" status)" = "done" ] || continue
         flip="$(git log --format=%H -S'status: done' -- "$f" 2>/dev/null | tail -1)"
         if [ -z "$flip" ]; then

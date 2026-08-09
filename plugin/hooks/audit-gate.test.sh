@@ -254,5 +254,25 @@ commit_all "$R" record
 run_gate "$R" --check
 check "fully closed record => valid" 0
 
+# T15b: follow-up completion after record should not invalidate it
+# (done-flip loop must exclude items with followup_of:, just like item_rows does)
+R="$(new_repo t15b)"
+base="$(head_sha "$R")"
+mk_item "$R" F1.1 done
+commit_all "$R"
+range_head="$(head_sha "$R")"
+mk_record "$R" F1 "$base" "$range_head" 0 0 0
+commit_all "$R" record
+# Now (after the record is committed) create and complete a follow-up item.
+# This is the normal debt-drain flow: the follow-up was referenced in the record
+# but only completes later (in a post-audit commit).
+mk_todo_followup "$R" F1.9 F1
+commit_all "$R"
+# Flip F1.9 to done while preserving its followup_of: key (edit in place, don't recreate)
+sed -i 's/^status: todo$/status: done/' "$R/roadmap/F1.9.md"
+commit_all "$R"
+run_gate "$R" --check
+check "follow-up completing after record doesn't invalidate it" 0
+
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" = 0 ]
