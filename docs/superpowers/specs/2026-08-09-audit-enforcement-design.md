@@ -76,22 +76,28 @@ item merges."
 ## Record format
 
 Flat frontmatter per the existing format contract (single-line keys, inline
-lists, greppable):
+lists, no inline comments, greppable):
 
 ```yaml
 ---
 milestone: F3
-range_base: <sha>            # audit scoped from
-range_head: <sha>            # audit ran against
-lens_mode: default-plus      # default | default-plus | explicit
+range_base: <sha>
+range_head: <sha>
+lens_mode: default-plus
 lenses: [correctness, authz, data-integrity, concurrency, test-integrity, api-contract]
 raw: 14
 refuted: 9
 confirmed: 5
-workflow_run: wf_abc123      # R3 stamping
-journal_sha256: <digest>     # R3 stamping: sha256 of the run's journal.jsonl
+workflow_run: wf_abc123
+journal_sha256: <digest>
 ---
 ```
+
+`range_base` is the sha the audit scoped from, `range_head` the sha it ran
+against. `lens_mode` is one of `default` | `default-plus` | `explicit`.
+`workflow_run` and `journal_sha256` are the R3 provenance-lite stamping
+fields — the Workflow invocation's runId and the sha256 of the run's
+`journal.jsonl`.
 
 Body: one `### <n>. <title>` block per confirmed finding with flat fields
 `severity:`, `lens:`, and exactly one `disposition:` —

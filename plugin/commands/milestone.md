@@ -18,8 +18,12 @@ Resolve the run:
   root. Any `FAIL:` output means **audit debt**: a completed milestone lacks a
   valid audit record. The ONLY permitted work while debt exists is discharging
   it (run `/milestone-audit` for the named milestone; land its record PR) —
-  do not resolve a new milestone past unaudited work. (Debt-only runs draining
-  `followup_of:` items are, as ever, fine — they are the discharge.)
+  do not resolve a new milestone past unaudited work. This **record-debt** is
+  distinct from the outstanding `followup_of:` items ("Audit debt `D`"
+  below): draining `D` never clears the gate — only landing the audit record
+  PR does — and while record-debt exists that record PR is the only
+  backlog-advancing merge the gate allows, so resolve it before picking any
+  run shape.
 - **Milestone `M`** = the first argument if given (e.g. `F2` or `DS3`, using
   any configured prefix); otherwise the next runnable milestone —
   across ALL configured prefixes, in the index's milestone order — that has

@@ -56,16 +56,21 @@ After triage, write `<backlog.dir>audits/<milestone>.md`:
 
     ---
     milestone: F3
-    range_base: <base sha of the audited range>
-    range_head: <head sha of the audited range>
-    lens_mode: default            # default | default-plus | explicit
+    range_base: <base sha>
+    range_head: <head sha>
+    lens_mode: default
     lenses: [correctness, authz, data-integrity, concurrency, test-integrity, api-contract]
-    raw: 14                       # from the Workflow's stats
+    raw: 14
     refuted: 9
     confirmed: 5
-    workflow_run: wf_...          # the Workflow invocation's runId
+    workflow_run: wf_...
     journal_sha256: <sha256 of the run's journal.jsonl>
     ---
+
+`lens_mode` is one of `default` | `default-plus` | `explicit`;
+`raw`/`refuted`/`confirmed` come from the Workflow's returned stats. Values
+are bare — the flat-frontmatter contract has no inline comments and the gate
+parses values literally.
 
 One `### <n>. <title>` block per confirmed finding with flat `severity:`,
 `lens:`, and exactly one `disposition:` line — `fix_pr #NN` | `followup <id>` |
@@ -74,9 +79,12 @@ findings from memory. Compute `journal_sha256` with
 `shasum -a 256 <transcriptDir>/journal.jsonl` from the run's transcript
 directory. Land the record, its `followup_of:`-tagged follow-up/blocked item
 files, and the index update in ONE PR through the normal gate (the audit gate
-recognizes that PR as debt discharge). Take `range_base` / `range_head` from
-the Workflow's returned `{milestone, range}` — the record is the committed
-form of that evidence, not a re-derivation.
+recognizes that PR as debt discharge). Take the range from the Workflow's
+returned `{milestone, range}` — the record is the committed form of that
+evidence, not a re-derivation. `range` is one string `<base>..<head>`: split
+it on `..` — the left half becomes `range_base`, the right half `range_head`.
+Each must be a commit the gate can resolve (`git rev-parse` it first if the
+Workflow returned a ref rather than a full SHA).
 
 Then run `bash ${CLAUDE_PLUGIN_ROOT}/hooks/audit-gate.sh --check` from the
 repo root and QUOTE its passing output in your summary. A `FAIL:` line means
