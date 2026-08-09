@@ -844,7 +844,7 @@ git commit -m "feat(hooks): pre-merge-gate consults audit-gate — audit debt de
 
 - [ ] **Step 1: Extend `plugin/commands/milestone-audit.md`**
 
-Append after the triage-buckets section (after the "The dividing line…" paragraph) and REPLACE the final "Post a summary…" paragraph with:
+**Note:** upstream PR #2 (commit 6113236) rewrote the file's final paragraph — it now reads "Post a summary of the run quoting the Workflow's returned `{milestone, range, stats}` verbatim …". Append after the triage-buckets section (after the "The dividing line…" paragraph) and REPLACE that final "Post a summary of the run quoting…" paragraph with:
 
 ```markdown
 **Write the audit record (mechanical part of the audit's definition of done).**
@@ -870,15 +870,19 @@ findings from memory. Compute `journal_sha256` with
 `shasum -a 256 <transcriptDir>/journal.jsonl` from the run's transcript
 directory. Land the record, its `followup_of:`-tagged follow-up/blocked item
 files, and the index update in ONE PR through the normal gate (the audit gate
-recognizes that PR as debt discharge).
+recognizes that PR as debt discharge). Take `range_base` / `range_head` from
+the Workflow's returned `{milestone, range}` — the record is the committed
+form of that evidence, not a re-derivation.
 
 Then run `bash ${CLAUDE_PLUGIN_ROOT}/hooks/audit-gate.sh --check` from the
 repo root and QUOTE its passing output in your summary. A `FAIL:` line means
 the record is malformed or mis-bound — fix the record, never the gate.
 
-Post a summary of the run: range audited, lenses used, raw/refuted/confirmed
-counts, where each confirmed finding landed (fix-PR link, follow-up item file,
-or `status: blocked` item), and the quoted `audit-gate.sh --check` pass.
+Post a summary of the run quoting the Workflow's returned `{milestone, range,
+stats}` verbatim AND the `audit-gate.sh --check` pass (a prose "audit clean"
+claim with neither is a malformed run), plus lenses used and where each
+confirmed finding landed (fix-PR link, roadmap item file, or `status:
+blocked` item).
 ```
 
 - [ ] **Step 2: Add the pre-flight line to `plugin/commands/milestone.md`**
@@ -943,7 +947,7 @@ In `plugin/playbook/agentic-loop-playbook.md`, after the `audit.lenses` bullet (
 
 - [ ] **Step 2: Extend the "Milestone audit" section**
 
-In the same file, at the end of the "Milestone audit (after a milestone completes)" section (after the UI-audit paragraph, before the token-spend paragraph at line ~552), add:
+In the same file, in the "Milestone audit (after a milestone completes)" section, immediately AFTER the "**Audit evidence (mandatory).**" paragraph that PR #2 added (grep for it; the record is that clause's committed, machine-checked form — the new text must read as its continuation), add:
 
 ```markdown
 **The audit record + gate (mechanical enforcement).** The audit's definition
