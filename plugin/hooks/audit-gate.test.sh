@@ -107,5 +107,52 @@ commit_all "$R" record
 run_gate "$R" --check
 check "valid record clears debt" 0
 
+# T7: record head not an ancestor of HEAD (bogus sha) -> debt stays
+R="$(new_repo t7)"
+base="$(head_sha "$R")"
+mk_item "$R" F1.1 done
+commit_all "$R"
+mk_record "$R" F1 "$base" "0000000000000000000000000000000000000000" 0 0 0
+commit_all "$R" record
+run_gate "$R" --check
+check "unresolvable range_head => invalid record" 1
+check_out "binding failure named" "FAIL: record .*range_head"
+
+# T8: done-flip commit outside the audited range -> invalid
+# (item flips to done AFTER range_head: audit predates the milestone's last merge)
+R="$(new_repo t8)"
+base="$(head_sha "$R")"
+mk_item "$R" F1.1 done
+commit_all "$R"
+early="$(head_sha "$R")"
+mk_item "$R" F1.2 todo
+commit_all "$R"
+mk_item "$R" F1.2 done
+commit_all "$R" "flip F1.2 after the audited range"
+mk_record "$R" F1 "$base" "$early" 0 0 0
+commit_all "$R" record
+run_gate "$R" --check
+check "done-flip outside range => invalid record" 1
+check_out "names the unreached item" "FAIL: record .*F1\.2"
+
+# T9: record for the WRONG milestone id in the filename slot -> invalid
+R="$(new_repo t9)"
+base="$(head_sha "$R")"
+mk_item "$R" F1.1 done
+commit_all "$R"
+mk_record "$R" F2 "$base" "$(head_sha "$R")" 0 0 0   # file is audits/F2.md, F1 unaudited
+commit_all "$R" record
+run_gate "$R" --check
+check "record for other milestone leaves F1 in debt" 1
+check_out "F1 still in debt" "FAIL: milestone F1 "
+
+# T10: uncommitted done flip (working tree only) -> fail closed
+R="$(new_repo t10)"
+base="$(head_sha "$R")"
+mk_item "$R" F1.1 done          # never committed
+mk_record "$R" F1 "$base" "$base" 0 0 0
+run_gate "$R" --check
+check "uncommitted done flip => fail closed" 1
+
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" = 0 ]

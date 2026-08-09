@@ -76,8 +76,42 @@ COMPLETE="$(item_rows | awk '{tot[$1]++; if($2=="done") d[$1]++} END{for(m in to
 # reason is reported.
 validate_record() { # validate_record <milestone> <file> ; 0 = valid
   local m="$1" rec="$2"
-  local ok=1
+  local ok=1 k v base head f id flip
+  # Required keys — a record missing provenance/scope fields is not a record.
+  for k in milestone range_base range_head lens_mode lenses raw refuted confirmed workflow_run journal_sha256; do
+    v="$(fm_get "$rec" "$k")"
+    [ -n "$v" ] || { fail "record $rec: missing $k:"; ok=0; }
+  done
   [ "$(fm_get "$rec" milestone)" = "$m" ] || { fail "record $rec: milestone key != $m"; ok=0; }
+  base="$(fm_get "$rec" range_base)"; head="$(fm_get "$rec" range_head)"
+  # Binding (the mistarget rule): recompute, never trust. Any git uncertainty
+  # is a validation failure — fail closed, the milestone stays in debt.
+  if [ -n "$base" ] && [ -n "$head" ]; then
+    git cat-file -e "$base^{commit}" 2>/dev/null || { fail "record $rec: range_base is not a commit here"; ok=0; }
+    git cat-file -e "$head^{commit}" 2>/dev/null || { fail "record $rec: range_head is not a commit here"; ok=0; }
+    if [ "$ok" = 1 ]; then
+      git merge-base --is-ancestor "$base" "$head" 2>/dev/null || { fail "record $rec: range_base is not an ancestor of range_head"; ok=0; }
+      git merge-base --is-ancestor "$head" HEAD 2>/dev/null || { fail "record $rec: range_head is not an ancestor of HEAD"; ok=0; }
+    fi
+    if [ "$ok" = 1 ]; then
+      # Every done item of M must have completed WITHIN the audited range:
+      # the commit that introduced its `status: done` (oldest -S hit) must be
+      # reachable from range_head. This is what makes "audited F1's real
+      # merges" checkable — an audit of a stale range fails structurally.
+      for f in "${BACKLOG_DIR}"*.md; do
+        [ -f "$f" ] || continue
+        id="$(basename "$f" .md)"
+        case "$id" in *.*) [ "${id%.*}" = "$m" ] || continue ;; *) continue ;; esac
+        [ "$(fm_get "$f" status)" = "done" ] || continue
+        flip="$(git log --format=%H -S'status: done' -- "$f" 2>/dev/null | tail -1)"
+        if [ -z "$flip" ]; then
+          fail "record $rec: cannot locate the commit that completed $id (uncommitted flip?) — fail closed"; ok=0
+        elif ! git merge-base --is-ancestor "$flip" "$head" 2>/dev/null; then
+          fail "record $rec: $id completed outside the audited range (flip $flip not reachable from range_head)"; ok=0
+        fi
+      done
+    fi
+  fi
   [ "$ok" = 1 ]
 }
 
