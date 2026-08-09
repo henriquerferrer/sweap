@@ -302,8 +302,13 @@ verify_pr() {
 
   # --- audit gate (roadmap-scoped denial; logic lives in audit-gate.sh) ---------
   # Deterministic and local: uses the SAME view payload (files ride the query),
-  # so this adds no gh calls and no budget pressure.
-  local fcount fpaths_nl ag_out ag_rc
+  # so this adds no gh calls. It is NOT free, though — audit-gate's per-done-item
+  # `git log -S` pickaxe scales with roadmap size × history, so it is routed
+  # through the SAME bounded watchdog as the view/compare calls above, charged
+  # against this PR's remaining per-PR deadline: a slow/hung audit-gate must
+  # never be able to run past the harness hook timeout and get killed (the
+  # harness treats a killed hook as non-blocking, i.e. fail OPEN).
+  local fcount
   fcount="$(printf '%s' "$json" | jq -r '(.files // []) | length' 2>/dev/null)"
   if ! printf '%s' "$fcount" | grep -qE '^[0-9]+$'; then
     emit_deny "merge-gate: could not read PR #$pr's changed-file list for the audit gate. Denying (recoverable) — re-run the merge."
@@ -314,15 +319,23 @@ verify_pr() {
     return 1
   fi
   if [ "$fcount" -gt 0 ]; then
-    fpaths_nl="$(printf '%s' "$json" | jq -r '(.files // []) | .[].path' 2>/dev/null)"
+    # NUL-delimited extraction: a newline-delimited read would let a crafted
+    # filename containing a literal newline (e.g. "notes\nroadmap/audits/F1.md")
+    # split into two array entries and fabricate a discharge path. Paths cannot
+    # contain NUL, so NUL-delimiting is unambiguous.
     local -a fpaths=()
-    while IFS= read -r fp; do [ -n "$fp" ] && fpaths+=("$fp"); done <<AUDIT_FILES_EOF
-$fpaths_nl
-AUDIT_FILES_EOF
-    ag_out="$(bash "$(dirname "${BASH_SOURCE[0]}")/audit-gate.sh" --files "${fpaths[@]}" 2>&1)"
-    ag_rc=$?
-    if [ "$ag_rc" != "0" ]; then
-      emit_deny "merge-gate: audit gate refused PR #$pr: ${ag_out} (see plugin/hooks/audit-gate.sh; run 'audit-gate.sh --check' for the full debt state)"
+    while IFS= read -r -d '' fp; do [ -n "$fp" ] && fpaths+=("$fp"); done \
+      < <(printf '%s' "$json" | jq -j '(.files // [])[] | .path + "\u0000"' 2>/dev/null)
+    if [ "${#fpaths[@]}" -eq 0 ]; then
+      emit_deny "merge-gate: could not extract PR #$pr's changed-file paths for the audit gate. Denying (recoverable) — re-run the merge."
+      return 1
+    fi
+
+    remaining=$(( deadline - $(date +%s) ))
+    [ "$remaining" -lt 1 ] && remaining=1
+    bounded_run "$remaining" bash "$(dirname "${BASH_SOURCE[0]}")/audit-gate.sh" --files "${fpaths[@]}"
+    if [ "$BR_RC" != "0" ]; then
+      emit_deny "merge-gate: audit gate refused PR #$pr: ${BR_OUT:-audit-gate timed out or errored — fails CLOSED; re-run the merge} (see plugin/hooks/audit-gate.sh; run 'audit-gate.sh --check' for the full debt state)"
       return 1
     fi
   fi
