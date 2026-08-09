@@ -306,5 +306,36 @@ check "wrong-milestone record does not discharge" 1
 run_gate "$R" --files roadmap/ideas/some-idea.md
 check "ideas/ files do not trigger the gate" 0
 
+# T22-T24: invalid record (unresolvable range_head, T7 fixture shape) must join
+# the debt set SILENTLY in merge mode, not deny outright. Regression: every
+# internal fail() inside validate_record set the shared `fails` global, and
+# only the record-MISSING branch was --check-gated, so an INVALID record used
+# to deny even code-only PRs in --files mode.
+R="$(new_repo t22)"
+base="$(head_sha "$R")"
+mk_item "$R" F1.1 done
+commit_all "$R"
+mk_record "$R" F1 "$base" "0000000000000000000000000000000000000000" 0 0 0
+commit_all "$R" record
+
+# T22: invalid record + code-only PR -> pass
+run_gate "$R" --files src/a.ts docs/x.md
+check "invalid record + code-only PR => pass" 0
+
+# T23: invalid record + item-file PR -> deny (invalid record still counts as debt)
+run_gate "$R" --files roadmap/F2.1.md
+check "invalid record + item-file PR => deny" 1
+check_out "deny names the debt for invalid record" "FAIL: audit debt .*F1"
+
+# T24: invalid record + discharge PR (record path present) -> pass
+run_gate "$R" --files roadmap/audits/F1.md roadmap/F2.1.md
+check "discharge PR may fix an invalid record" 0
+
+# --check on the same repo still fails AND still prints the range_head
+# diagnostic (guards the re-emit path — no loss of --check diagnostics)
+run_gate "$R" --check
+check "--check still denies invalid record" 1
+check_out "--check still prints the range_head diagnostic" "FAIL: record .*range_head"
+
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" = 0 ]

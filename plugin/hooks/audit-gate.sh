@@ -176,8 +176,12 @@ while IFS= read -r m; do
   if [ ! -f "$rec" ]; then
     DEBT="$DEBT$m"$'\n'
     [ "$MODE" = "--check" ] && fail "milestone $m is complete but has no audit record ($rec) — run /milestone-audit for it"
-  elif ! validate_record "$m" "$rec"; then
+  elif ! rec_out="$(validate_record "$m" "$rec")"; then
     DEBT="$DEBT$m"$'\n'
+    if [ "$MODE" = "--check" ]; then
+      [ -n "$rec_out" ] && printf '%s\n' "$rec_out"
+      fails=1
+    fi
   fi
 done <<COMPLETE_EOF
 $COMPLETE

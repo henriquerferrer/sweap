@@ -571,8 +571,8 @@ the repo's CI workflow and make it a required check:
             bash <plugin-path>/hooks/audit-gate.sh --check
             if [ -n "${{ github.base_ref }}" ]; then
               git fetch -q origin "${{ github.base_ref }}"
-              CHANGED=$(git diff --name-only "origin/${{ github.base_ref }}...HEAD")
-              [ -z "$CHANGED" ] || bash <plugin-path>/hooks/audit-gate.sh --files $CHANGED
+              mapfile -d '' CHANGED < <(git diff --name-only -z "origin/${{ github.base_ref }}...HEAD")
+              [ "${#CHANGED[@]}" -eq 0 ] || bash <plugin-path>/hooks/audit-gate.sh --files "${CHANGED[@]}"
             fi
 
 Hard-won rules for the required check (research memo, 2026-08-08):
