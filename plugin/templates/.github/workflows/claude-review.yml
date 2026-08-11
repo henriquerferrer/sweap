@@ -57,8 +57,11 @@ jobs:
             violations. Post inline comments only for findings you are
             confident in. Then — REQUIRED — post ONE summary comment whose
             LAST line is exactly "Verdict: approve" or "Verdict: needs-work"
-            (a downstream gate greps the posted comment for that line; if you
-            post nothing the merge is blocked). To post reliably: use the
+            (a downstream gate reads that line; if you post nothing the merge
+            is blocked). Inline comments do NOT satisfy the gate, no matter
+            how many you posted — the summary comment is a separate, always
+            required step. Post it even when you found nothing at all
+            (that is the "Verdict: approve" case). To post reliably: use the
             Write tool to write the full summary to /tmp/verdict.md, then run
             `gh pr comment ${{ github.event.pull_request.number }} --body-file /tmp/verdict.md`.
             Do NOT build the comment with shell command substitution, heredocs,
@@ -78,6 +81,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           # A PR that edits the reviewer workflow makes the action self-skip (it
           # refuses to run a workflow diff not yet on the default branch), so it
@@ -87,14 +91,56 @@ jobs:
             echo "::notice::PR modifies the review workflow; reviewer self-skips — verdict gate not enforced on this PR."
             exit 0
           fi
-          body=$(gh api "repos/$REPO/issues/$PR/comments" \
-            --jq '[.[] | select(.user.login | test("claude"))] | last | .body // ""')
-          if printf '%s' "$body" | grep -qiE "Verdict:[[:space:]]*approve"; then
-            echo "✅ Reviewer approved."
-          elif printf '%s' "$body" | grep -qiE "Verdict:[[:space:]]*needs-work"; then
+          # The verdict is read from THREE surfaces, because the reviewer does
+          # not always use the one the prompt asks for: issue comments (the
+          # `gh pr comment` form the prompt prescribes), PR review bodies (what
+          # the inline-comment tool submits), and inline review comments. A
+          # verdict posted on any of them counts; a run that posts none still
+          # fails closed. Observed 2026-08-11: a review submitted with an EMPTY
+          # body plus one inline comment and no issue comment — the old
+          # issue-comments-only read reported "no verdict" and blocked a PR the
+          # reviewer had in fact reviewed.
+          #
+          # Two hardening rules ride along, because widening the search widens
+          # what a stale or quoted string could do:
+          #   1. Only the LAST non-empty line of a comment can carry the verdict
+          #      (exactly what the prompt demands). A substring match anywhere in
+          #      the body let a quoted "Verdict: approve" — e.g. a PR that edits
+          #      this very file — outrank the real "Verdict: needs-work" below it,
+          #      since approve was tested first.
+          #   2. Only comments newer than the head commit count. Otherwise an
+          #      approve from a previous push satisfies the gate for a run whose
+          #      reviewer errored out and posted nothing.
+          head_ts=$(gh api "repos/$REPO/commits/$HEAD_SHA" --jq '.commit.committer.date')
+          if [ -z "$head_ts" ]; then
+            echo "::error::Could not read the head commit timestamp — failing closed."
+            exit 1
+          fi
+          verdict=$(
+            {
+              gh api "repos/$REPO/issues/$PR/comments" --paginate \
+                --jq '.[] | {t: .created_at, u: .user.login, b: .body}'
+              gh api "repos/$REPO/pulls/$PR/reviews" --paginate \
+                --jq '.[] | {t: .submitted_at, u: .user.login, b: .body}'
+              gh api "repos/$REPO/pulls/$PR/comments" --paginate \
+                --jq '.[] | {t: .created_at, u: .user.login, b: .body}'
+            } | jq -rs --arg since "$head_ts" '
+                  [ .[]
+                    | select(.u != null and (.u | test("claude"; "i")))
+                    | select(.t != null and .t > $since)
+                    | select(.b != null and .b != "")
+                    | .last = ( .b | split("\n") | map(sub("\r$"; ""))
+                                | map(select(test("[^[:space:]]"))) | last // "" )
+                    | select(.last | test("^[[:space:]]*\\**[[:space:]]*verdict[[:space:]]*:[[:space:]]*(approve|needs-work)[[:space:]]*\\**[[:space:]]*\\.?[[:space:]]*$"; "i"))
+                  ]
+                  | sort_by(.t) | last | if . == null then "" else .last end'
+          )
+          if [ -z "$verdict" ]; then
+            echo "::error::No reviewer verdict found — failing closed. Re-run the review or investigate why it did not post."
+            exit 1
+          elif printf '%s' "$verdict" | grep -qiE "needs-work"; then
             echo "::error::Reviewer verdict is needs-work — address the blocking findings and push before merge."
             exit 1
           else
-            echo "::error::No reviewer verdict found — failing closed. Re-run the review or investigate why it did not post."
-            exit 1
+            echo "✅ Reviewer approved."
           fi

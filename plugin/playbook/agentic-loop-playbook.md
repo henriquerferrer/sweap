@@ -310,13 +310,24 @@ may ADD dimensions it judges necessary; it may not remove tagged ones.
 - **Merge gate (substitute for branch protection, unavailable on the free
   GitHub plan):** never `gh pr merge` until `gh pr checks <n>` shows every
   check green — including the `review` check. The `review` check now **enforces
-  the verdict**: its final job greps the reviewer's summary comment and fails
+  the verdict**: its final job resolves the reviewer's verdict line and fails
   closed on "Verdict: needs-work" or on no verdict at all, so a green `review`
   check structurally means the reviewer approved. Read the reviewer's inline
   comments and address every one before pushing the fix; a "needs-work" verdict
   is the GitLab-style "resolve the threads before you can merge" — you clear it
   by fixing and re-pushing, which re-runs the review. (The gate is skipped only
   on PRs that edit the reviewer workflow itself, which self-skip the action.)
+  - **Where the verdict is read from, and what counts.** Three surfaces are
+    scanned — issue comments (the `gh pr comment` form the prompt prescribes),
+    PR review bodies (what the inline-comment tool submits), and inline review
+    comments — because the reviewer does not reliably use the prescribed one.
+    Two rules keep that width from weakening the gate: the verdict must be the
+    **last non-empty line** of a comment (a substring match anywhere let a
+    *quoted* "Verdict: approve" outrank a real trailing needs-work), and the
+    comment must be **newer than the head commit** (otherwise an approve from a
+    previous push satisfies a run whose reviewer errored out and posted
+    nothing). A run that posts no verdict anywhere still fails closed — that is
+    the reviewer failing to do its job, not the gate misreading it.
   - **The greenness check is HOOK-ENFORCED.** A `PreToolUse` hook
     (`pre-merge-gate`, shipped by the plugin and wired via `plugin.json`) fires on
     every `gh pr merge`, independently queries the PR's `statusCheckRollup`, and
