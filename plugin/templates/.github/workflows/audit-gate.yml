@@ -38,7 +38,15 @@ concurrency:
 
 jobs:
   audit-gate:
-    runs-on: ${{ vars.RUNNER_LABEL || 'ubuntu-24.04' }}
+    # Deliberately pinned to a HOSTED runner, unlike ci.yml's jobs which follow
+    # vars.RUNNER_LABEL. This gate needs nothing but bash + git — no toolchain,
+    # no services, no database — so it costs nothing hosted, while a REQUIRED
+    # check that runs on self-hosted capacity cannot start when that runner is
+    # down and then blocks every PR in the repo. (consumer A's self-hosted runner is
+    # a container that crash-loops on runner-token expiry; its claude-review job
+    # is pinned hosted for exactly this reason.) A gate whose availability
+    # depends on infrastructure it is meant to police is not a gate.
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
