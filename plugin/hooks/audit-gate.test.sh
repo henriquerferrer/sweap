@@ -50,7 +50,7 @@ head_sha() { git -C "$1" rev-parse HEAD; }
 # mk_record <repo> <milestone> <base> <head> <raw> <refuted> <confirmed> [body]
 mk_record() {
   local r="$1" m="$2" base="$3" head="$4" raw="$5" ref="$6" conf="$7" body="${8:-}"
-  { printf -- '---\nmilestone: %s\nrange_base: %s\nrange_head: %s\nlens_mode: default\n' "$m" "$base" "$head"
+  { printf -- '---\nsweap_format: 1\nmilestone: %s\nrange_base: %s\nrange_head: %s\nlens_mode: default\n' "$m" "$base" "$head"
     printf 'lenses: [correctness, authz]\nraw: %s\nrefuted: %s\nconfirmed: %s\n' "$raw" "$ref" "$conf"
     printf -- 'workflow_run: wf_test\njournal_sha256: 0123abcd\n---\n\n# %s audit\n%s\n' "$m" "$body"
   } > "$r/roadmap/audits/$m.md"
@@ -365,6 +365,193 @@ printf '## sweap config\naudit.baseline: [F1] # grandfathered\n' > "$R/CLAUDE.md
 commit_all "$R" "baseline with inline comment"
 run_gate "$R" --check
 check "inline-comment baseline still exempts F1" 0
+
+# --- record format versioning + legacy (pre-format) records ---------------------
+# Regression suite for the 2026-08-11 consumer A miss: F9's record landed as pure
+# prose (written by a sweap that had no record format yet) and a later plugin
+# refresh retroactively turned it into merge-blocking debt. A tightening must
+# report inherited records, never wedge the loop on them — and must still refuse
+# to let NEW pre-format records in.
+anchor_main() { git -C "$1" update-ref refs/remotes/origin/main HEAD; }
+# mk_prose_record <repo> <milestone>: a pre-format record — pure prose, no frontmatter.
+mk_prose_record() { printf '# %s milestone audit\n\nWe audited it. Trust me.\n' "$2" > "$1/roadmap/audits/$2.md"; }
+
+# T27: a record that DECLARES a format this gate does not speak is hard debt —
+# it carries sweap_format, so it is not inherited, it is wrong.
+R="$(new_repo t27)"
+base="$(head_sha "$R")"
+mk_item "$R" F1.1 done
+commit_all "$R"
+mk_record "$R" F1 "$base" "$(head_sha "$R")" 0 0 0
+sed -i.bak 's/^sweap_format: 1$/sweap_format: 2/' "$R/roadmap/audits/F1.md" && rm -f "$R/roadmap/audits/F1.md.bak"
+commit_all "$R" rec
+anchor_main "$R"
+run_gate "$R" --check
+check "unknown sweap_format => hard debt" 1
+check_out "names the format mismatch" "sweap_format: 2 but this gate speaks format 1"
+
+# T28: an ALREADY-MERGED pre-format record is reported as STALE, not FAIL —
+# --check passes so the repo's loop is not wedged by a format introduction.
+R="$(new_repo t28)"
+mk_item "$R" F1.1 done
+mk_prose_record "$R" F1
+commit_all "$R"
+anchor_main "$R"
+run_gate "$R" --check
+check "merged pre-format record => STALE, not debt" 0
+check_out "STALE line names the record and the migration path" "STALE: record roadmap/audits/F1.md predates"
+
+# T29: and it does not block a backlog-advancing merge (the F10-on-top case).
+run_gate "$R" --files roadmap/F2.1.md
+check "stale-only debt does not block an item-file PR" 0
+
+# T30: THE DOOR CLOSES. A pre-format record introduced by the work under review
+# (its adding commit is not reachable from origin/main) is judged strictly — so
+# "legacy" can be inherited but never authored.
+R="$(new_repo t30)"
+mk_item "$R" F1.1 done
+commit_all "$R"
+anchor_main "$R"
+mk_prose_record "$R" F1
+commit_all "$R" "sneak in a prose record"
+run_gate "$R" --check
+check "newly-added pre-format record => hard debt" 1
+check_out "judged strictly, not grandfathered" "FAIL: record roadmap/audits/F1.md: missing sweap_format:"
+run_gate "$R" --files roadmap/F2.1.md
+check "newly-added pre-format record still blocks merges" 1
+
+# T31: no mainline anchor (no remote) => nothing can be proven inherited, so the
+# gate judges strictly. Uncertainty is never a free pass.
+R="$(new_repo t31)"
+mk_item "$R" F1.1 done
+mk_prose_record "$R" F1
+commit_all "$R"
+run_gate "$R" --check
+check "no origin/main => pre-format record judged strictly" 1
+
+# --- defects: collapsing converged findings -------------------------------------
+# A multi-lens ensemble converging on ONE defect is the normal case, not an edge
+# case (consumer A F9: six lenses hit the same claim-lease bug). Blocks are
+# dispositions, not findings.
+
+# T32a: without `defects:`, blocks must still equal confirmed (unchanged contract).
+R="$(new_repo t32a)"
+base="$(head_sha "$R")"
+mk_item "$R" F1.1 done
+commit_all "$R"
+mk_record "$R" F1 "$base" "$(head_sha "$R")" 6 0 6 '### 1. a
+disposition: fix_pr #1
+### 2. b
+disposition: fix_pr #2'
+commit_all "$R" rec
+run_gate "$R" --check
+check "no defects: key => blocks must equal confirmed" 1
+
+# T32b: `defects: 2` lets 6 converged findings collapse to 2 disposition blocks.
+sed -i.bak 's/^confirmed: 6$/confirmed: 6\ndefects: 2/' "$R/roadmap/audits/F1.md" && rm -f "$R/roadmap/audits/F1.md.bak"
+commit_all "$R" collapse
+run_gate "$R" --check
+check "defects: collapses converged findings" 0
+
+# T32c: a collapse may merge, never invent — defects > confirmed is rejected.
+sed -i.bak 's/^defects: 2$/defects: 9/' "$R/roadmap/audits/F1.md" && rm -f "$R/roadmap/audits/F1.md.bak"
+commit_all "$R" overclaim
+run_gate "$R" --check
+check "defects > confirmed => invalid" 1
+check_out "names the collapse rule" "defects (9) must be >0 and <= total confirmed across all axes (6)"
+
+# T32d: nor may it drop everything — confirmed findings must land somewhere.
+sed -i.bak 's/^defects: 9$/defects: 0/' "$R/roadmap/audits/F1.md" && rm -f "$R/roadmap/audits/F1.md.bak"
+commit_all "$R" dropall
+run_gate "$R" --check
+check "defects: 0 with confirmed findings => invalid" 1
+
+# T33: the anchor is overridable (CI on a PR points it at origin/<base_ref>).
+R="$(new_repo t32)"
+mk_item "$R" F1.1 done
+mk_prose_record "$R" F1
+commit_all "$R"
+git -C "$R" update-ref refs/remotes/origin/release HEAD
+OUT="$( (cd "$R" && SWEAP_MAIN_REF=origin/release bash "$GATE" --check) 2>&1)"; RC=$?
+check "SWEAP_MAIN_REF selects the anchor" 0
+
+# --- multi-axis audits (code + Tier-2 UI) ---------------------------------------
+# A UI-heavy milestone is audited on two axes, each a separate run with its own
+# lens set, stats and journal. Consumer A F9: 54/34/20 on code, 11/9/2 on UI, and the
+# two UI survivors (FK.4, FK.5) needed disposition blocks that no single
+# `confirmed` count could account for.
+add_axis() { # add_axis <repo> <milestone> <axis> <raw> <refuted> <confirmed>
+  local r="$1" m="$2" ax="$3"
+  python3 - "$r/roadmap/audits/$m.md" "$ax" "$4" "$5" "$6" <<'PYEOF'
+import sys
+p,ax,raw,ref,conf=sys.argv[1:6]
+s=open(p).read().split('---')
+fm=s[1].rstrip('\n')
+fm+=f"\naxes: [{ax}]\n{ax}.raw: {raw}\n{ax}.refuted: {ref}\n{ax}.confirmed: {conf}\n"
+fm+=f"{ax}.lens_mode: explicit\n{ax}.lenses: [hierarchy, a11y]\n{ax}.workflow_run: wf_ui\n{ax}.journal_sha256: beef\n"
+open(p,'w').write('---'+fm+'\n---'+'---'.join(s[2:]))
+PYEOF
+}
+
+# T34: a UI-axis survivor may carry its own disposition block. Primary confirmed
+# is 1, UI confirmed is 2 => 3 blocks are legitimate.
+R="$(new_repo t34)"
+base="$(head_sha "$R")"
+mk_item "$R" F1.1 done
+commit_all "$R"
+mk_record "$R" F1 "$base" "$(head_sha "$R")" 1 0 1 '### 1. code defect
+disposition: fix_pr #1
+### 2. ui a11y defect
+disposition: fix_pr #2
+### 3. ui focus defect
+disposition: fix_pr #3'
+add_axis "$R" F1 ui 11 9 2
+commit_all "$R" rec
+run_gate "$R" --check
+check "UI-axis survivors get their own disposition blocks" 0
+
+# T35: a declared axis must carry its full key set.
+R="$(new_repo t35)"
+base="$(head_sha "$R")"
+mk_item "$R" F1.1 done
+commit_all "$R"
+mk_record "$R" F1 "$base" "$(head_sha "$R")" 1 0 1 '### 1. x
+disposition: fix_pr #1'
+sed -i.bak 's/^confirmed: 1$/confirmed: 1\naxes: [ui]/' "$R/roadmap/audits/F1.md" && rm -f "$R/roadmap/audits/F1.md.bak"
+commit_all "$R" rec
+run_gate "$R" --check
+check "declared axis missing its keys => invalid" 1
+check_out "names the missing axis key" "axis 'ui' is declared but ui.raw: is missing"
+
+# T36: axis stats must themselves add up.
+R="$(new_repo t36)"
+base="$(head_sha "$R")"
+mk_item "$R" F1.1 done
+commit_all "$R"
+mk_record "$R" F1 "$base" "$(head_sha "$R")" 1 0 1 '### 1. x
+disposition: fix_pr #1'
+add_axis "$R" F1 ui 11 9 5
+commit_all "$R" rec
+run_gate "$R" --check
+check "axis raw != refuted + confirmed => invalid" 1
+
+# T37: blocks are still bounded — an axis does not license unlimited blocks.
+R="$(new_repo t37)"
+base="$(head_sha "$R")"
+mk_item "$R" F1.1 done
+commit_all "$R"
+mk_record "$R" F1 "$base" "$(head_sha "$R")" 1 0 1 '### 1. a
+disposition: fix_pr #1
+### 2. b
+disposition: fix_pr #2
+### 3. c
+disposition: fix_pr #3
+### 4. d
+disposition: fix_pr #4'
+add_axis "$R" F1 ui 11 9 2
+commit_all "$R" rec
+run_gate "$R" --check
+check "blocks beyond total confirmed across axes => invalid" 1
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" = 0 ]

@@ -21,10 +21,15 @@
 #   2. Only scaffold a real project (has a `.git`) — never a random dir.
 #   3. Gitignore self-heal — runs on EVERY session start, BEFORE the
 #      fast-guard: ensure `.gitignore` excludes sweap's runtime files
-#      (`.claude/main-red-*.flag`, `.claude/sweap-board.md`), appending only the
+#      (`.claude/main-red-*.flag`, `.claude/sweap-board.md`, `.claude/audit-debt-*.flag`), appending only the
 #      lines that are missing (never duplicating, never overwriting), creating
 #      `.gitignore` if absent. Because this precedes the fast-guard, projects
 #      scaffolded before a rule existed still gain it on their next session.
+#   3b. Required-workflow self-heal — also runs BEFORE the fast-guard, for the
+#      same reason: install `.github/workflows/audit-gate.yml` into a repo that
+#      already has `.github/workflows/` but predates that control. Never
+#      overwrites, never creates the directory. Announces itself (a new required
+#      check nobody knows about is not a control).
 #   4. Fast-guard: if CLAUDE.md exists and already has a `## sweap config`
 #      block, this project is already scaffolded — exit 0 immediately, no
 #      output, nothing else touched (the gitignore self-heal in step 3 has
@@ -77,7 +82,7 @@ fi
 # the full-scaffold path; on the fast-guard path this heals quietly and exits 0).
 gitignore_action="unchanged"
 gi="$proj/.gitignore"
-for gitignore_line in '.claude/main-red-*.flag' '.claude/sweap-board.md'; do
+for gitignore_line in '.claude/main-red-*.flag' '.claude/sweap-board.md' '.claude/audit-debt-*.flag'; do
   if [ -f "$gi" ]; then
     if ! grep -qF "$gitignore_line" "$gi" 2>/dev/null; then
       printf '%s\n' "$gitignore_line" >> "$gi" 2>/dev/null && gitignore_action="appended"
@@ -87,16 +92,47 @@ for gitignore_line in '.claude/main-red-*.flag' '.claude/sweap-board.md'; do
   fi
 done
 
+plugin_root="${CLAUDE_PLUGIN_ROOT:-}"
+tmpl="${plugin_root%/}/templates"
+
+# --- 3b. Required-workflow self-heal (also BEFORE the fast-guard) ------------
+# Same reasoning as the gitignore self-heal: a repo that adopted sweap before a
+# control existed would otherwise never receive it, because the fast-guard below
+# short-circuits every session after the first. That is exactly how a consumer
+# repo ran for days with no audit-gate CI job while the playbook documented one
+# (2026-08-11) — doctrine that ships as prose and not as scaffold is doctrine
+# that does not run.
+# Conservative: only heals a repo that ALREADY has .github/workflows/ (i.e. it
+# uses GitHub Actions), never creates the directory, never overwrites.
+healed_workflows=()
+if [ -d "$proj/.github/workflows" ] && [ -n "$plugin_root" ] && [ -d "$tmpl" ]; then
+  for wf in audit-gate.yml; do
+    if [ ! -e "$proj/.github/workflows/$wf" ] && [ -f "$tmpl/.github/workflows/$wf" ]; then
+      cp "$tmpl/.github/workflows/$wf" "$proj/.github/workflows/$wf" 2>/dev/null \
+        && healed_workflows+=(".github/workflows/$wf")
+    fi
+  done
+fi
+
 # --- 4. Idempotency fast-guard ----------------------------------------------
 
 if [ -f "$proj/CLAUDE.md" ] && grep -qF '## sweap config' "$proj/CLAUDE.md" 2>/dev/null; then
+  # Already scaffolded. Stay silent UNLESS a self-heal above added something —
+  # a new required check appearing unannounced is worse than no check at all,
+  # because nobody knows to make it required in the ruleset.
+  if [ "${#healed_workflows[@]}" -gt 0 ]; then
+    heal_msg="sweap: added $(printf '%s, ' "${healed_workflows[@]}" | sed 's/, $//') — a required control that did not exist when this repo was scaffolded. ACTION NEEDED: commit it, then make the 'audit-gate' check REQUIRED in this repo's ruleset, pinned to the GitHub Actions app (never 'any source'). Until it is required, it reports but does not block. See the playbook's 'Enforcing the audit gate in CI' section."
+    if [ "$have_jq" = "1" ]; then
+      jq -n --arg ctx "$heal_msg" '{hookSpecificOutput:{hookEventName:"SessionStart",additionalContext:$ctx}}' 2>/dev/null || printf '%s\n' "$heal_msg"
+    else
+      printf '%s\n' "$heal_msg"
+    fi
+  fi
   exit 0
 fi
 
 # --- 5. Scaffold -------------------------------------------------------------
 
-plugin_root="${CLAUDE_PLUGIN_ROOT:-}"
-tmpl="${plugin_root%/}/templates"
 [ -n "$plugin_root" ] && [ -d "$tmpl" ] || exit 0
 
 existing_claude_md=0
@@ -138,7 +174,11 @@ if [ "$gitignore_action" != "unchanged" ]; then
   msg="$msg .gitignore: $gitignore_action sweap runtime ignore rules (.claude/main-red-*.flag, .claude/sweap-board.md)."
 fi
 
-msg="$msg TODO before this is a working pipeline: (1) fill in verify.typecheck / verify.lint / verify.e2e in CLAUDE.md's '## sweap config' block (verify.e2e must run the full suite — unit+integration+e2e); (2) fill in the '# <fill in for your stack>' recipe bodies in justfile (lint, typecheck, test, e2e, optionally services-up/services-down); (3) fill in the '<fill in for your stack>' steps in .github/workflows/ci.yml (toolchain setup, e2e prerequisites, e2e artifact path); (4) write the first milestone with /roadmap (one file per item under roadmap/ — see the playbook's 'Backlog format' section). Run /agentic-loop-init any time to re-run or repair the scaffold."
+if [ "${#healed_workflows[@]}" -gt 0 ]; then
+  msg="$msg Added missing required workflow(s): $(printf '%s, ' "${healed_workflows[@]}" | sed 's/, $//')."
+fi
+
+msg="$msg TODO before this is a working pipeline: (0) make the 'audit-gate' check REQUIRED in the repo ruleset, pinned to the GitHub Actions app (never 'any source'), and protect .github/workflows/** — an unrequired gate is a report, not a control; (1) fill in verify.typecheck / verify.lint / verify.e2e in CLAUDE.md's '## sweap config' block (verify.e2e must run the full suite — unit+integration+e2e); (2) fill in the '# <fill in for your stack>' recipe bodies in justfile (lint, typecheck, test, e2e, optionally services-up/services-down); (3) fill in the '<fill in for your stack>' steps in .github/workflows/ci.yml (toolchain setup, e2e prerequisites, e2e artifact path); (4) write the first milestone with /roadmap (one file per item under roadmap/ — see the playbook's 'Backlog format' section). Run /agentic-loop-init any time to re-run or repair the scaffold."
 
 if [ "$have_jq" = "1" ]; then
   jq -n --arg ctx "$msg" '{hookSpecificOutput:{hookEventName:"SessionStart",additionalContext:$ctx}}' 2>/dev/null || printf '%s\n' "$msg"

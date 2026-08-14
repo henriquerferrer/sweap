@@ -569,22 +569,30 @@ per the attestation literature — is judge audit QUALITY: a real-but-shallow
 audit passes the gate. The adversarial refuter design and the human on the
 direction loop remain the answer for that.
 
-**Enforcing the audit gate in CI (consumer repos).** Add an always-run job to
-the repo's CI workflow and make it a required check:
+**Enforcing the audit gate in CI (consumer repos).** This is SCAFFOLDED, not
+copy-pasted: `.github/workflows/audit-gate.yml` ships in `templates/` and
+`scaffold.sh` installs it — including into repos that adopted sweap before the
+control existed (the self-heal runs ahead of the already-scaffolded fast-guard,
+same as the gitignore rules). Run `/agentic-loop-init` to force it. Your one
+manual step is making the `audit-gate` check REQUIRED in the repo's ruleset.
 
-    audit-gate:
-      runs-on: ubuntu-latest
-      steps:
-        - uses: actions/checkout@v4
-          with: { fetch-depth: 0 }   # the gate's ancestry checks need history
-        - name: audit gate
-          run: |
-            bash <plugin-path>/hooks/audit-gate.sh --check
-            if [ -n "${{ github.base_ref }}" ]; then
-              git fetch -q origin "${{ github.base_ref }}"
-              mapfile -d '' CHANGED < <(git diff --name-only -z "origin/${{ github.base_ref }}...HEAD")
-              [ "${#CHANGED[@]}" -eq 0 ] || bash <plugin-path>/hooks/audit-gate.sh --files "${CHANGED[@]}"
-            fi
+This job is not a convenience. It is the ONLY surface that validates a record
+against the state it will actually land in — the local pre-merge hook detects
+debt discharge at PATH level and structurally cannot check validity, because the
+record being discharged is not merged yet. Everything else is a backstop.
+
+Note the job checks out sweap itself to get the gate script: the plugin is
+installed in a developer's Claude Code, not on a CI runner. Pin `vars.SWEAP_REF`
+to a SHA for a hardened setup.
+
+*Why it must live in the repo, not just in the plugin:* on 2026-08-11 a consumer
+repo merged a malformed audit record and then authored a whole new milestone on
+top of the undischarged debt. Every local control was correct and every local
+control was skew-broken — the machine's plugin cache was pinned to a build from
+three days earlier that contained no audit gate at all, and the cache did not
+refresh until sixteen hours after the bad merge. A check pinned in the repo
+cannot be stale-cached. **Any control that lives only in the plugin is a control
+whose version you do not know.**
 
 Hard-won rules for the required check (research memo, 2026-08-08):
 - **Never** put the job behind a `paths:` filter or a job-level `if:` — a
@@ -596,6 +604,42 @@ Hard-won rules for the required check (research memo, 2026-08-08):
 - Protect `.github/workflows/**` (CODEOWNERS or a push ruleset) and keep the
   default `GITHUB_TOKEN` read-only — otherwise the actor can edit the
   validator out of its own way.
+
+**The audit record format is versioned (`sweap_format`).** The record schema
+lives in one place — `playbook/audit-record.template.md` — and every record
+carries the format version it was written under. This exists because a gate that
+retroactively invalidates already-merged records strands every consumer repo on
+every tightening: the loop wedges, and the only ways out are hand-editing config
+or re-running an expensive audit. So the gate classifies rather than fails:
+
+- A record **already merged** (its adding commit is reachable from the mainline
+  anchor) that carries **no** `sweap_format` was written before the format
+  existed. `--check` reports it as `STALE:` and it never blocks a merge.
+- A record **introduced by the work under review** is judged strictly, always.
+  `git log <anchor> -- <path>` only walks commits reachable from the anchor, so
+  a record added by the PR is invisible there and gets no grandfathering.
+
+That asymmetry is the whole design: legacy can be **inherited but never
+authored**. Provenance comes from git, not from file content, so nobody
+discharges debt by committing an empty file. Uncertainty (no remote, unresolvable
+anchor) means nothing is legacy and everything is judged strictly.
+
+When you bump the format, bump `RECORD_FORMAT` in `hooks/audit-gate.sh`, the
+`SWEAP_FORMAT` constant in `workflows/milestone-audit.js`, and the template
+together.
+
+**Consumer repos then drain `STALE:` records by TRANSCRIPTION, not by
+re-auditing.** A stale record means the audit already ran — its findings were
+already triaged and its fix-PRs and follow-up items already exist. Re-running
+`/milestone-audit` spends a full adversarial audit to produce a *different*
+result set, and the record it lands then documents a run that nothing in the
+backlog traces to. The migration is: recover the frontmatter from the old
+record's own stated range and stats plus the run's surviving `wf_*` transcript
+(`workflow_run`, `journal_sha256`), and give each distinct defect a
+`disposition:` line pointing at the fix-PR or follow-up item it already
+produced. `audit.baseline` is the fallback only when that evidence is genuinely
+unrecoverable — and re-audit only when no audit ever actually ran. Full recipe
+in `playbook/audit-record.template.md`.
 
 **Findings triage (three buckets — the session running the audit sorts them).**
 1. **Bug** (code fails its own spec): the session opens a follow-on fix-PR
@@ -629,6 +673,15 @@ against the committed internal exemplar first and Mobbin references second
 findings triage into the same three buckets and auto-fold into the next
 `/milestone` run — aesthetic findings as ratchet/roadmap items, a11y findings with
 gate weight.
+
+A UI audit is a SECOND AXIS on the same milestone record, not a second record.
+It is its own run with its own lens set, stats and journal, so it lands in the
+record's frontmatter as `axes: [ui]` plus `ui.*` keys, and its survivors get
+their own disposition blocks (see `playbook/audit-record.template.md`); the gate
+bounds `defects` by the survivors of all axes combined. Do NOT fold a UI audit's
+stats into the code audit's counts — they measure different runs, and a record
+claiming one set of numbers for both is unauditable. Its critics are anonymized,
+so record the lens SET that ran and never a per-finding lens attribution.
 
 Running the audit is a deliberate token spend; it is pre-authorized per-run via
 the goal clause above, or triggered manually.

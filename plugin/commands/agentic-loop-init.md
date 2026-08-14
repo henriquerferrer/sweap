@@ -24,7 +24,14 @@ This mechanically, idempotently:
    `<!-- sweap:end -->` region (playbook pointer + config block + standing-prefs,
    together, so the playbook pointer can never be dropped by the merge). If a
    `## sweap config` block already exists, leaves it — idempotent.
-3. **Runtime gitignore rules:** ensures the project's `.gitignore` excludes both
+3. **Required-workflow self-heal:** installs
+   `.github/workflows/audit-gate.yml` if the project has a
+   `.github/workflows/` directory and lacks that file. Like the gitignore rules
+   below, this runs BEFORE the already-scaffolded fast-guard, so a repo that
+   adopted sweap before the audit gate existed gains it on its next session
+   rather than never — that gap is exactly how a consumer repo ran for days
+   with a malformed audit record and no check to catch it. Never overwrites.
+4. **Runtime gitignore rules:** ensures the project's `.gitignore` excludes both
    sweap runtime files — `post-merge-redcheck.sh`'s marker file
    (`.claude/main-red-*.flag`) and the coordinator's parallel-runs board
    (`.claude/sweap-board.md`) — appending each line only if missing, creating
@@ -36,6 +43,11 @@ This mechanically, idempotently:
 Report back to the human exactly what the script's summary said it created,
 kept, or merged. Then walk through this checklist regardless of what the
 script reported (these are the fill-ins the script cannot do for you):
+   - **Make the `audit-gate` check REQUIRED** in the repo's ruleset, pinned to
+     the GitHub Actions app (never "any source"), and protect
+     `.github/workflows/**` (CODEOWNERS or a push ruleset) with a read-only
+     default `GITHUB_TOKEN`. Optionally pin `vars.SWEAP_REF` to a sweap commit
+     SHA. An installed-but-not-required gate reports; it does not control.
    - Fill in the `verify.typecheck` / `verify.lint` / `verify.e2e` commands in
      the `## sweap config` block (`verify.e2e` must run the full automated test
      suite — unit + integration + e2e — it is the authoritative merge gate).

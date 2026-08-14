@@ -201,9 +201,56 @@ log(`${all.length} raw findings, ${killed} refuted, ${confirmed.length} confirme
 
 const order = { critical: 0, high: 1, medium: 2, low: 3 }
 confirmed.sort((a, b) => order[a.severity] - order[b.severity])
+
+// --- the audit record, pre-assembled -------------------------------------------
+// The record is a MECHANICAL transcription of everything above: milestone,
+// range, lens set, stats, one block per confirmed finding. Asking the calling
+// session to compose it from a format spec buried in prose is how F9's record
+// landed as pure prose in a consumer repo (2026-08-11) — a drift-prone step at
+// the very end of a long, expensive run. So emit it here, already conformant to
+// audit-gate.sh's format contract, and leave exactly the holes a machine cannot
+// fill: the two <FILL:...> markers (journal digest, disposition per finding).
+// The session's job becomes transcribe-and-fill, which audit-gate.sh --check can
+// then verify. Keep `sweap_format` in lockstep with RECORD_FORMAT in
+// hooks/audit-gate.sh — bumping one without the other is the skew this whole
+// change exists to prevent.
+const SWEAP_FORMAT = 1
+const [rangeBase = '<FILL:range_base>', rangeHead = '<FILL:range_head>'] = String(scope?.range ?? '').split('..')
+const lensMode = lensConfig?.mode === 'default-plus' ? 'default-plus' : lensConfig?.mode === 'explicit' ? 'explicit' : 'default'
+const record = [
+  '---',
+  `sweap_format: ${SWEAP_FORMAT}`,
+  `milestone: ${scope?.milestone ?? '<FILL:milestone>'}`,
+  `range_base: ${rangeBase}`,
+  `range_head: ${rangeHead}`,
+  `lens_mode: ${lensMode}`,
+  `lenses: [${LENSES.map((l) => l.key).join(', ')}]`,
+  `raw: ${all.length}`,
+  `refuted: ${killed}`,
+  `confirmed: ${confirmed.length}`,
+  `workflow_run: <FILL:this run's workflow id>`,
+  `journal_sha256: <FILL:shasum -a 256 <transcriptDir>/journal.jsonl>`,
+  '---',
+  '',
+  `# ${scope?.milestone ?? 'milestone'} audit`,
+  '',
+  ...confirmed.flatMap((f, i) => [
+    `### ${i + 1}. ${f.title}`,
+    `severity: ${f.severity}`,
+    `lens: ${f.lens}`,
+    `disposition: <FILL: fix_pr #NN | followup <id> | blocked <id>>`,
+    '',
+    `file: ${f.file}`,
+    '',
+    f.claim,
+    '',
+  ]),
+].join('\n')
+
 return {
   milestone: scope?.milestone,
   range: scope?.range,
   confirmed,
   stats: { raw: all.length, refuted: killed, confirmed: confirmed.length },
+  record,
 }

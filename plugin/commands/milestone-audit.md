@@ -7,6 +7,26 @@ Read `CLAUDE.md`, `${CLAUDE_PLUGIN_ROOT}/playbook/agentic-loop-playbook.md`
 ("Milestone audit" section), and the backlog (index + item files under
 `backlog.dir`) first.
 
+**This command is not done when the Workflow returns.** Its deliverable is a
+merged, VALID audit record — the run's findings are worthless to the pipeline if
+the record they land in does not parse. In order:
+
+1. Run the Workflow (below).
+2. Triage every confirmed finding into one of the three buckets.
+3. Write `<backlog.dir>audits/<milestone>.md` **from the Workflow's returned
+   `record` field** — it is the format template already filled in from the run's
+   own data. Fill its `<FILL:...>` markers; do not compose the record yourself.
+4. Run `bash "${CLAUDE_PLUGIN_ROOT}"/hooks/audit-gate.sh --check` and fix any
+   `FAIL:` line before opening the PR.
+5. Land record + follow-up items + index update in ONE PR through the gate.
+
+Step 3 is the one that has actually failed in the field: a consumer repo's F9
+record landed as pure prose with no frontmatter at all, and the miss went
+unnoticed for days. If the Workflow's return value has no `record` field you are
+running an old plugin build — stop and say so rather than improvising the
+format, because a record written to a stale format is exactly the failure this
+step exists to prevent.
+
 Run the saved **`milestone-audit`** Workflow with `args: {milestone: "<id>", range: "<base>..<head>"}` —
 resolve `<id>` from the argument (the milestone this invocation is auditing,
 e.g. `F6`) and, if a range was also given as an argument, pass it too; if the
@@ -51,47 +71,59 @@ yourself — the Workflow does not):
 The dividing line between bucket 1 and bucket 3 is the milestone's acceptance
 criteria: failed-the-spec is a bug; not-in-the-spec is a direction call.
 
-**Write the audit record (mechanical part of the audit's definition of done).**
-After triage, write `<backlog.dir>audits/<milestone>.md`:
+**Write the audit record (step 3 — mechanical part of the audit's definition of
+done).** The Workflow returns a `record` field: the full record, already
+conformant, populated from the run's own milestone / range / lens set / stats /
+confirmed findings. **Write that string to `<backlog.dir>audits/<milestone>.md`
+and fill its `<FILL:...>` markers.** Do not retype it from memory and do not
+re-derive any value it already contains — the record is the committed form of
+the run's evidence, not a fresh composition.
 
-    ---
-    milestone: F3
-    range_base: <base sha>
-    range_head: <head sha>
-    lens_mode: default
-    lenses: [correctness, authz, data-integrity, concurrency, test-integrity, api-contract]
-    raw: 14
-    refuted: 9
-    confirmed: 5
-    workflow_run: wf_...
-    journal_sha256: <sha256 of the run's journal.jsonl>
-    ---
+The markers a machine could not fill:
 
-`lens_mode` is one of `default` | `default-plus` | `explicit`;
-`raw`/`refuted`/`confirmed` come from the Workflow's returned stats. Values
-are bare — the flat-frontmatter contract has no inline comments and the gate
-parses values literally.
+- `workflow_run` — this run's Workflow id.
+- `journal_sha256` — `shasum -a 256 <transcriptDir>/journal.jsonl` from the
+  run's transcript directory.
+- one `disposition:` per finding block — `fix_pr #NN` | `followup <id>` |
+  `blocked <id>`, matching the bucket you triaged it into above.
 
-One `### <n>. <title>` block per confirmed finding with flat `severity:`,
-`lens:`, and exactly one `disposition:` line — `fix_pr #NN` | `followup <id>` |
-`blocked <id>`. Transcribe the Workflow's RETURN VALUE — do not restate
-findings from memory. Compute `journal_sha256` with
-`shasum -a 256 <transcriptDir>/journal.jsonl` from the run's transcript
-directory. Land the record, its `followup_of:`-tagged follow-up/blocked item
-files, and the index update in ONE PR through the normal gate (the audit gate
-recognizes that PR as debt discharge). Take the range from the Workflow's
-returned `{milestone, range}` — the record is the committed form of that
-evidence, not a re-derivation. `range` is one string `<base>..<head>`: split
-it on `..` — the left half becomes `range_base`, the right half `range_head`.
-Each must be a commit the gate can resolve (`git rev-parse` it first if the
-Workflow returned a ref rather than a full SHA).
+If this milestone also had a **Tier-2 UI audit**, that is a second axis on this
+same record, not a second record: add `axes: [ui]` plus the seven `ui.*` keys
+(its own raw/refuted/confirmed, lens set, workflow_run, journal_sha256) and give
+its survivors their own disposition blocks. Never fold its stats into the code
+audit's counts. Its critics are anonymized, so record the lens set that ran and
+do not attribute a lens to an individual UI finding.
 
-Then run `bash ${CLAUDE_PLUGIN_ROOT}/hooks/audit-gate.sh --check` from the
-repo root and QUOTE its passing output in your summary. A `FAIL:` line means
-the record is malformed or mis-bound — fix the record, never the gate.
+The Workflow emits one block per confirmed finding because it cannot tell
+convergence from independence. If several lenses turned out to be reporting the
+SAME underlying defect, collapse those blocks into one and add `defects: <n>`
+to the frontmatter — the gate matches blocks against `defects` when present.
+Convergence is signal worth stating in the block ("six lenses hit this
+independently"), not duplication to be padded out.
 
-Post a summary of the run quoting the Workflow's returned `{milestone, range,
-stats}` verbatim AND the `audit-gate.sh --check` pass (a prose "audit clean"
-claim with neither is a malformed run), plus lenses used and where each
-confirmed finding landed (fix-PR link, roadmap item file, or `status:
-blocked` item).
+The format contract itself lives in ONE place:
+`${CLAUDE_PLUGIN_ROOT}/playbook/audit-record.template.md`. Read it if you are
+writing a record by hand, if a `--check` FAIL is unclear, or if the Workflow
+returned no `record` field. Never restate the format from memory.
+
+Land the record, its `followup_of:`-tagged follow-up/blocked item files, and the
+index update in ONE PR through the normal gate (the audit gate recognizes that
+PR as debt discharge).
+
+**Then run the gate (step 4):**
+
+    bash "${CLAUDE_PLUGIN_ROOT}"/hooks/audit-gate.sh --check
+
+A `FAIL:` line means the record is malformed or mis-bound — fix the record,
+never the gate. A `STALE:` line is an inherited pre-format record from an older
+sweap; it does not block, and it is not yours to fix in this run unless it names
+the milestone you just audited.
+
+Post a summary quoting the Workflow's returned `{milestone, range, stats}`
+verbatim plus lenses used and where each confirmed finding landed (fix-PR link,
+roadmap item file, or `status: blocked` item). Report the `--check` result too —
+but do not present it as proof: it is a pre-flight you ran on yourself, and the
+binding verification is the `audit-gate` required check on the record PR, which
+re-runs the same script where no session can vouch for it. If this repo has no
+such CI job, say so in the summary as an open gap rather than claiming the
+record is verified.
