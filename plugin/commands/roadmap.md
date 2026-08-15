@@ -16,8 +16,13 @@ Resolve the milestone:
   or `F, DS`) — the milestone arg (below) names which one this milestone uses;
   when authoring a brand-new milestone with no arg, default to the first
   listed prefix.
-- Run `bash ${CLAUDE_PLUGIN_ROOT}/hooks/audit-gate.sh --check` from the repo
-  root. `FAIL:` lines mean audit debt — do NOT draft the next milestone's
+- Run `bash "$([ -f .github/scripts/audit-gate.sh ] && echo .github/scripts/audit-gate.sh || echo "${CLAUDE_PLUGIN_ROOT}/hooks/audit-gate.sh")" --check`
+  from the repo root — the repo's VENDORED gate when present, falling back to
+  the plugin's. Always prefer the vendored copy: it is the exact script CI runs,
+  while `${CLAUDE_PLUGIN_ROOT}` points at whatever plugin build this session
+  resolved and can lag a record-format change. A pre-flight that disagrees with
+  CI is worse than none — it trains you to wave off `FAIL:` lines.
+ `FAIL:` lines mean audit debt — do NOT draft the next milestone's
   items on top of an unaudited one; surface the debt and stop at that
   boundary (the merge gate would refuse the milestone PR anyway).
 - The first argument if given (e.g. `F3` or `DS4`, naming its prefix

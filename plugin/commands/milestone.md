@@ -14,8 +14,11 @@ Resolve the run:
 - Read `backlog.prefix` from the `## sweap config` block in `CLAUDE.md` (default
   `F`) as a comma-separated LIST of one or more milestone-tag prefixes (e.g. `F`
   or `F, DS`) — these are the prefixes used below.
-- Run `bash ${CLAUDE_PLUGIN_ROOT}/hooks/audit-gate.sh --check` from the repo
-  root. Any `FAIL:` output means **audit debt**: a completed milestone lacks a
+- Run `bash "$([ -f .github/scripts/audit-gate.sh ] && echo .github/scripts/audit-gate.sh || echo "${CLAUDE_PLUGIN_ROOT}/hooks/audit-gate.sh")" --check`
+  from the repo root — the repo's VENDORED gate when present, falling back to
+  the plugin's (same reason as `/roadmap`: the vendored copy is what CI runs;
+  the plugin path can be a stale cache build).
+ Any `FAIL:` output means **audit debt**: a completed milestone lacks a
   valid audit record. The ONLY permitted work while debt exists is discharging
   it (run `/milestone-audit` for the named milestone; land its record PR) —
   do not resolve a new milestone past unaudited work. This **record-debt** is

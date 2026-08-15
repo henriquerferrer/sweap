@@ -16,7 +16,7 @@ the record they land in does not parse. In order:
 3. Write `<backlog.dir>audits/<milestone>.md` **from the Workflow's returned
    `record` field** — it is the format template already filled in from the run's
    own data. Fill its `<FILL:...>` markers; do not compose the record yourself.
-4. Run `bash "${CLAUDE_PLUGIN_ROOT}"/hooks/audit-gate.sh --check` and fix any
+4. Run `bash "$([ -f .github/scripts/audit-gate.sh ] && echo .github/scripts/audit-gate.sh || echo "${CLAUDE_PLUGIN_ROOT}/hooks/audit-gate.sh")" --check` and fix any
    `FAIL:` line before opening the PR.
 5. Land record + follow-up items + index update in ONE PR through the gate.
 
@@ -112,7 +112,12 @@ PR as debt discharge).
 
 **Then run the gate (step 4):**
 
-    bash "${CLAUDE_PLUGIN_ROOT}"/hooks/audit-gate.sh --check
+    # The repo's VENDORED gate is what CI runs — prefer it over the plugin's
+    # copy, which is whatever build this session resolved and can lag the
+    # record format. A pre-flight that can disagree with CI is worse than none.
+    GATE=.github/scripts/audit-gate.sh
+    [ -f "$GATE" ] || GATE="${CLAUDE_PLUGIN_ROOT}/hooks/audit-gate.sh"
+    bash "$GATE" --check
 
 A `FAIL:` line means the record is malformed or mis-bound — fix the record,
 never the gate. A `STALE:` line is an inherited pre-format record from an older
