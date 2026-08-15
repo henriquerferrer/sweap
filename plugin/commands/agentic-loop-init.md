@@ -24,13 +24,20 @@ This mechanically, idempotently:
    `<!-- sweap:end -->` region (playbook pointer + config block + standing-prefs,
    together, so the playbook pointer can never be dropped by the merge). If a
    `## sweap config` block already exists, leaves it — idempotent.
-3. **Required-workflow self-heal:** installs
-   `.github/workflows/audit-gate.yml` if the project has a
-   `.github/workflows/` directory and lacks that file. Like the gitignore rules
-   below, this runs BEFORE the already-scaffolded fast-guard, so a repo that
-   adopted sweap before the audit gate existed gains it on its next session
-   rather than never — that gap is exactly how a consumer repo ran for days
-   with a malformed audit record and no check to catch it. Never overwrites.
+3. **Audit-gate control (sweap-managed):** installs
+   `.github/workflows/audit-gate.yml` plus the VENDORED gate scripts
+   `.github/scripts/audit-gate.sh` and `.github/scripts/roadmap-lint.sh`, if the
+   project has a `.github/workflows/` directory. Like the gitignore rules below,
+   this runs BEFORE the already-scaffolded fast-guard, so a repo that adopted
+   sweap before the audit gate existed gains it on its next session rather than
+   never — that gap is exactly how a consumer repo ran for days with a malformed
+   audit record and no check to catch it.
+   Unlike every other scaffolded file these three are **kept current**, not just
+   created: if the plugin's copy differs, the project's is rewritten. A consumer
+   silently running an old gate is the bug this subsystem exists to fix. The
+   gate is vendored (not checked out from sweap in CI) so the check needs no PAT
+   and no cross-repo access — both repos being private would otherwise require a
+   secret whose expiry would block every PR.
 4. **Runtime gitignore rules:** ensures the project's `.gitignore` excludes both
    sweap runtime files — `post-merge-redcheck.sh`'s marker file
    (`.claude/main-red-*.flag`) and the coordinator's parallel-runs board

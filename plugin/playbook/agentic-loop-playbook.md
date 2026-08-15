@@ -581,9 +581,20 @@ against the state it will actually land in — the local pre-merge hook detects
 debt discharge at PATH level and structurally cannot check validity, because the
 record being discharged is not merged yet. Everything else is a backstop.
 
-Note the job checks out sweap itself to get the gate script: the plugin is
-installed in a developer's Claude Code, not on a CI runner. Pin `vars.SWEAP_REF`
-to a SHA for a hardened setup.
+The gate script is **vendored** into the repo at `.github/scripts/` (both
+`audit-gate.sh` and the `roadmap-lint.sh` it shells out to) and kept
+byte-identical to the plugin's copy on every session start. It is vendored
+rather than checked out from sweap in CI because a cross-repo checkout of a
+private repo needs a PAT in every consumer repo, and a required check that dies
+when that token expires blocks every PR — the same "gate depends on
+infrastructure it polices" failure as pinning it to a self-hosted runner.
+Vendored, the check needs no auth, no network and no cross-repo access.
+
+Those files are sweap-managed, not project-owned: the scaffold REWRITES them
+when they drift, because a consumer repo silently running an old gate is the bug
+this subsystem exists to fix. Every rewrite is an ordinary diffable working-tree
+change. Customize via repo variables, never by editing them — and protect
+`.github/scripts/**` exactly like `.github/workflows/**`.
 
 *Why it must live in the repo, not just in the plugin:* on 2026-08-11 a consumer
 repo merged a malformed audit record and then authored a whole new milestone on
@@ -601,7 +612,8 @@ Hard-won rules for the required check (research memo, 2026-08-08):
 - Pin the required check to the **GitHub Actions app** in the ruleset, never
   "any source": commit statuses can be posted green by any push-access token,
   while check runs are App-only.
-- Protect `.github/workflows/**` (CODEOWNERS or a push ruleset) and keep the
+- Protect `.github/workflows/**` AND `.github/scripts/**` (CODEOWNERS or a
+  push ruleset) and keep the
   default `GITHUB_TOKEN` read-only — otherwise the actor can edit the
   validator out of its own way.
 

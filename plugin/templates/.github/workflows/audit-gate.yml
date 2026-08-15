@@ -53,22 +53,28 @@ jobs:
         with:
           fetch-depth: 0 # the gate recomputes ancestry — it needs real history
 
-      # The gate ships with the sweap plugin, which is NOT installed on a CI
-      # runner, so fetch it. `vars.SWEAP_REF` should be pinned to a commit SHA
-      # for a hardened setup; it defaults to the branch for ease of adoption.
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          repository: henriquerferrer/sweap
-          ref: ${{ vars.SWEAP_REF || 'main' }}
-          path: .sweap
-          persist-credentials: false
-
+      # The gate is VENDORED into this repo at .github/scripts/ by sweap's
+      # scaffold (audit-gate.sh + the roadmap-lint.sh it shells out to), and
+      # kept byte-identical to the plugin's copy on every session start.
+      #
+      # It is vendored rather than checked out from sweap because a cross-repo
+      # checkout of a private repo needs a PAT in every consumer repo, and a
+      # required check that dies when a token expires blocks every PR — the same
+      # "gate depends on infrastructure it polices" failure as pinning it to a
+      # self-hosted runner. Vendored, the check has no auth, no network and no
+      # cross-repo dependency: it cannot be stale-cached, mis-authed, or taken
+      # down by someone else's outage. Protect .github/scripts/** exactly like
+      # .github/workflows/**.
       - name: audit gate
         env:
           BASE_REF: ${{ github.base_ref }}
         run: |
           set -euo pipefail
-          GATE=.sweap/plugin/hooks/audit-gate.sh
+          GATE=.github/scripts/audit-gate.sh
+          if [ ! -f "$GATE" ]; then
+            echo "::error::$GATE is missing — the audit gate cannot run. Start a Claude Code session in this repo (sweap's scaffold vendors it) or run /agentic-loop-init."
+            exit 1
+          fi
 
           # Anchor for "already merged" (pre-format records are inherited, not
           # authored — see record_is_legacy). On a PR that is the target branch;

@@ -104,14 +104,48 @@ tmpl="${plugin_root%/}/templates"
 # that does not run.
 # Conservative: only heals a repo that ALREADY has .github/workflows/ (i.e. it
 # uses GitHub Actions), never creates the directory, never overwrites.
+#
+# These files are SWEAP-MANAGED, not project-owned, so unlike everything else
+# the scaffold touches they are kept CURRENT rather than merely created: if the
+# plugin's copy differs, the project's copy is rewritten. That is the whole
+# point — a control the consumer repo silently keeps an old copy of is the bug
+# this whole subsystem exists to fix. Every rewrite is an ordinary working-tree
+# change: visible in `git status`, diffable, and reviewed in the next PR.
+# Customize via repo variables, never by editing these files.
+#
+# The gate is VENDORED (rather than checked out from sweap in CI) because both
+# repos are private: a cross-repo checkout would need a PAT in every consumer
+# repo, and a required check that dies on token expiry blocks every PR.
+# roadmap-lint.sh travels with it — audit-gate.sh shells out to it when
+# validating a disposition's follow-up item.
 healed_workflows=()
+sync_managed() { # sync_managed <src> <dest-rel> ; keeps dest byte-identical to src
+  local src="$1" rel="$2" dest="$proj/$2" tmp
+  [ -f "$src" ] || return 0
+  tmp="$(mktemp 2>/dev/null)" || return 0
+  # Banner goes AFTER the shebang so the script stays directly executable.
+  if IFS= read -r first < "$src" && case "$first" in '#!'*) true ;; *) false ;; esac; then
+    { printf '%s\n' "$first"
+      printf '# VENDORED BY SWEAP — do not edit. Kept byte-identical to the plugin\n'
+      printf '# copy on every session start; local edits are overwritten.\n'
+      tail -n +2 "$src"
+    } > "$tmp" 2>/dev/null
+  else
+    cat "$src" > "$tmp" 2>/dev/null
+  fi
+  if [ -f "$dest" ] && cmp -s "$tmp" "$dest"; then rm -f "$tmp"; return 0; fi
+  mkdir -p "$(dirname "$dest")" 2>/dev/null || { rm -f "$tmp"; return 0; }
+  if cp "$tmp" "$dest" 2>/dev/null; then
+    chmod +x "$dest" 2>/dev/null
+    healed_workflows+=("$rel")
+  fi
+  rm -f "$tmp"
+}
+# Only for a repo that already uses GitHub Actions — never create .github itself.
 if [ -d "$proj/.github/workflows" ] && [ -n "$plugin_root" ] && [ -d "$tmpl" ]; then
-  for wf in audit-gate.yml; do
-    if [ ! -e "$proj/.github/workflows/$wf" ] && [ -f "$tmpl/.github/workflows/$wf" ]; then
-      cp "$tmpl/.github/workflows/$wf" "$proj/.github/workflows/$wf" 2>/dev/null \
-        && healed_workflows+=(".github/workflows/$wf")
-    fi
-  done
+  sync_managed "$tmpl/.github/workflows/audit-gate.yml" ".github/workflows/audit-gate.yml"
+  sync_managed "${plugin_root%/}/hooks/audit-gate.sh"   ".github/scripts/audit-gate.sh"
+  sync_managed "${plugin_root%/}/hooks/roadmap-lint.sh" ".github/scripts/roadmap-lint.sh"
 fi
 
 # --- 4. Idempotency fast-guard ----------------------------------------------
@@ -121,7 +155,7 @@ if [ -f "$proj/CLAUDE.md" ] && grep -qF '## sweap config' "$proj/CLAUDE.md" 2>/d
   # a new required check appearing unannounced is worse than no check at all,
   # because nobody knows to make it required in the ruleset.
   if [ "${#healed_workflows[@]}" -gt 0 ]; then
-    heal_msg="sweap: added $(printf '%s, ' "${healed_workflows[@]}" | sed 's/, $//') — a required control that did not exist when this repo was scaffolded. ACTION NEEDED: commit it, then make the 'audit-gate' check REQUIRED in this repo's ruleset, pinned to the GitHub Actions app (never 'any source'). Until it is required, it reports but does not block. See the playbook's 'Enforcing the audit gate in CI' section."
+    heal_msg="sweap: installed/updated the audit-gate control in this repo — $(printf '%s, ' "${healed_workflows[@]}" | sed 's/, $//'). These are sweap-managed (vendored so CI needs no cross-repo access) and are kept byte-identical to the plugin's copies, so this fires both on first install and whenever the plugin's version changes. ACTION NEEDED: review the diff and commit it. If this is the first install, also make the 'audit-gate' check REQUIRED in this repo's ruleset, pinned to the GitHub Actions app (never 'any source'), and protect .github/workflows/** and .github/scripts/**. Until it is required, it reports but does not block. See the playbook's 'Enforcing the audit gate in CI' section."
     if [ "$have_jq" = "1" ]; then
       jq -n --arg ctx "$heal_msg" '{hookSpecificOutput:{hookEventName:"SessionStart",additionalContext:$ctx}}' 2>/dev/null || printf '%s\n' "$heal_msg"
     else
