@@ -6,17 +6,24 @@ name: audit-gate
 # discharged is by definition not merged yet (see hooks/audit-gate.sh, "WHY
 # PATH LEVEL IS ALL THIS MODE CAN DO").
 #
-# Make this a REQUIRED check. Hard-won rules (research memo, 2026-08-08 — do not
-# "optimize" any of them away):
+# Make this a REQUIRED check IF YOUR PLAN ALLOWS ONE. Branch protection and
+# rulesets are paid for private repos: on Free both APIs 403 with "Upgrade to
+# GitHub Pro or make this repository public". There, this job is still the
+# enforcement point — pre-merge-gate.sh refuses any `gh pr merge` whose check
+# rollup is not fully green, and this job is in that rollup. A merge from the
+# GitHub web UI bypasses that local hook and is caught after the fact by
+# post-merge-auditcheck.sh. See the playbook, "Enforcing the audit gate in CI".
+#
+# Hard-won rules (research memo, 2026-08-08 — do not "optimize" any of them away):
 #   - NEVER put this job behind a `paths:` filter or a job-level `if:`. A job
 #     skipped by an `if:` reports SUCCESS and SATISFIES the required check
 #     (GitHub-documented). It always runs; the gate is seconds.
 #   - Pin the required check to the GitHub Actions app in the ruleset, never
 #     "any source": a commit status can be posted green by any push-access
 #     token, while check runs are App-only.
-#   - Protect `.github/workflows/**` (CODEOWNERS or a push ruleset) and keep the
-#     default GITHUB_TOKEN read-only — otherwise the actor can edit the
-#     validator out of its own way.
+#   - Keep the default GITHUB_TOKEN read-only — otherwise the actor can edit the
+#     validator out of its own way. (Path-protecting this file needs an
+#     org-scoped push ruleset, unavailable to a personal repo on any plan.)
 #
 # WHY IT EXISTS: on 2026-08-11 a consumer repo merged a malformed audit record
 # and then authored a whole new milestone on top of the undischarged debt. Every

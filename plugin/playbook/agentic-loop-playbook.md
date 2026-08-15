@@ -573,8 +573,9 @@ direction loop remain the answer for that.
 copy-pasted: `.github/workflows/audit-gate.yml` ships in `templates/` and
 `scaffold.sh` installs it — including into repos that adopted sweap before the
 control existed (the self-heal runs ahead of the already-scaffolded fast-guard,
-same as the gitignore rules). Run `/agentic-loop-init` to force it. Your one
-manual step is making the `audit-gate` check REQUIRED in the repo's ruleset.
+same as the gitignore rules). Run `/agentic-loop-init` to force it. What you do with it
+then depends on your GitHub plan — read the next paragraph before assuming you
+can make it a required check.
 
 This job is not a convenience. It is the ONLY surface that validates a record
 against the state it will actually land in — the local pre-merge hook detects
@@ -605,17 +606,65 @@ refresh until sixteen hours after the bad merge. A check pinned in the repo
 cannot be stale-cached. **Any control that lives only in the plugin is a control
 whose version you do not know.**
 
-Hard-won rules for the required check (research memo, 2026-08-08):
+**Required checks may not be available to you — plan the enforcement, not just
+the check.** Branch protection and rulesets are a PAID feature for private
+repos: on a Free plan both APIs 403 with *"Upgrade to GitHub Pro or make this
+repository public"*. sweap's reference consumer is exactly that — a private
+Free-plan repo — so "make it a required check" is doctrine that cannot be
+followed on the primary target. Know which case you are in:
+
+**Private repo on Free (the default assumption).** There is no server-side
+required check, so enforcement is `pre-merge-gate.sh`: it denies `gh pr merge`
+unless EVERY entry in the PR's `statusCheckRollup` is green, and once the job is
+installed `audit-gate` is one of those entries. That is real enforcement for
+agent-driven merges — the way these repos are actually developed — and it is why
+the CI job earns its place even with no ruleset behind it. Two residual gaps,
+both worth naming out loud rather than pretending away:
+  - A **merge from the GitHub web UI** consults no local hook and cannot be
+    blocked. On a Free-plan repo `post-merge-auditcheck.sh` is therefore not
+    belt-and-suspenders; it is the ONLY thing covering that path, which is why
+    it alarms loudly and leaves a durable marker instead of just logging.
+  - The hook is plugin-delivered, so it carries plugin-version skew — the
+    original failure. The CI job does not, which is the point of having both.
+
+**Public repo, an org, or GitHub Pro.** Rulesets are available; make the check
+required and observe the rules below. The GitHub Actions app id is `15368`:
+
+    gh api -X POST repos/OWNER/REPO/rulesets --input - <<'JSON'
+    { "name": "main", "target": "branch", "enforcement": "active",
+      "conditions": { "ref_name": { "include": ["~DEFAULT_BRANCH"], "exclude": [] } },
+      "rules": [ { "type": "deletion" }, { "type": "non_fast_forward" },
+        { "type": "required_status_checks", "parameters": {
+            "strict_required_status_checks_policy": false,
+            "required_status_checks": [
+              { "context": "audit-gate", "integration_id": 15368 },
+              { "context": "ci-status",  "integration_id": 15368 } ] } } ] }
+    JSON
+
+Do NOT add a required-approving-review rule on a solo repo: GitHub forbids
+approving your own PR, so it wedges every merge. Setting
+`strict_required_status_checks_policy: true` additionally makes GitHub report
+`mergeStateStatus: BEHIND` — the state `pre-merge-gate.sh` works around with the
+compare API precisely because a free-plan repo never reports it.
+
+Hard-won rules for the required check, WHERE ONE IS AVAILABLE (research memo,
+2026-08-08):
 - **Never** put the job behind a `paths:` filter or a job-level `if:` — a
   job skipped by an `if:` reports SUCCESS and *satisfies* the required check
   (GitHub-documented). Always run; the gate is cheap.
 - Pin the required check to the **GitHub Actions app** in the ruleset, never
   "any source": commit statuses can be posted green by any push-access token,
   while check runs are App-only.
-- Protect `.github/workflows/**` AND `.github/scripts/**` (CODEOWNERS or a
-  push ruleset) and keep the
-  default `GITHUB_TOKEN` read-only — otherwise the actor can edit the
+- Keep the default `GITHUB_TOKEN` read-only — otherwise the actor can edit the
   validator out of its own way.
+- Protecting `.github/workflows/**` and `.github/scripts/**` by path needs a
+  PUSH ruleset, which is org/Enterprise-scoped and unavailable to a personal
+  repo on any plan. Do not put it on the setup checklist as though it were a
+  step. What a personal repo actually has instead: every edit to those files
+  appears in the PR diff, and the scaffold rewrites the vendored gate from the
+  plugin on the next session, so drift is reverted automatically. That is a
+  drift control, not a security control against a determined actor — say so
+  rather than implying protection nobody can configure.
 
 **The audit record format is versioned (`sweap_format`).** The record schema
 lives in one place — `playbook/audit-record.template.md` — and every record

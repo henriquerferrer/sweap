@@ -50,11 +50,24 @@ This mechanically, idempotently:
 Report back to the human exactly what the script's summary said it created,
 kept, or merged. Then walk through this checklist regardless of what the
 script reported (these are the fill-ins the script cannot do for you):
-   - **Make the `audit-gate` check REQUIRED** in the repo's ruleset, pinned to
-     the GitHub Actions app (never "any source"), and protect
-     `.github/workflows/**` (CODEOWNERS or a push ruleset) with a read-only
-     default `GITHUB_TOKEN`. Optionally pin `vars.SWEAP_REF` to a sweap commit
-     SHA. An installed-but-not-required gate reports; it does not control.
+   - **Decide how the audit gate is enforced — check the plan first.** Run
+     `gh api repos/{owner}/{repo}/rulesets` to see which case you are in.
+     - *403 "Upgrade to GitHub Pro"* (a private repo on Free — sweap's default
+       assumption): rulesets and branch protection do not exist for you, and
+       there is NOTHING to configure. Enforcement is `pre-merge-gate.sh`, which
+       already denies any `gh pr merge` whose check rollup is not fully green,
+       and `audit-gate` is now in that rollup. Tell the human plainly that a
+       merge from the GitHub web UI bypasses the hook and is caught only after
+       the fact by `post-merge-auditcheck.sh` — do not claim protection the
+       plan cannot provide.
+     - *Otherwise* (public, org, or Pro): make `audit-gate` a REQUIRED check
+       pinned to the GitHub Actions app (id `15368`), never "any source". Do not
+       add a required-review rule on a solo repo — you cannot approve your own
+       PR and it wedges every merge.
+     Either way keep the default `GITHUB_TOKEN` read-only. Path-protecting
+     `.github/scripts/**` needs an org-scoped push ruleset and is not available
+     to a personal repo — the scaffold's rewrite-on-drift is what covers those
+     files instead.
    - Fill in the `verify.typecheck` / `verify.lint` / `verify.e2e` commands in
      the `## sweap config` block (`verify.e2e` must run the full automated test
      suite — unit + integration + e2e — it is the authoritative merge gate).
