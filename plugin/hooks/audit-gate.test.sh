@@ -724,6 +724,8 @@ check_out "AGING line points at /unblock" "/unblock F1\.1"
 
 # T51: absent carried: reads as 0, not as an error or a blank.
 check_out "absent carried: reads as 0" "carried 0 milestone boundary"
+# A blocked: value is normally written already-quoted; the line must not double up.
+check_out "an already-quoted question is not double-quoted" ': "Should the row'
 
 # T52: at carried >= 2 the message changes from offered to ASKED — this is the
 # bounded-deferral deadline, and the wording is the only thing that carries it.

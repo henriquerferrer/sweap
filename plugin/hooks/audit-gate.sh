@@ -453,7 +453,10 @@ if [ "$MODE" = "--check" ]; then
     [ "$(fm_get "$f" status)" = "blocked" ] || continue
     carried="$(fm_get "$f" carried)"
     case "$carried" in ""|*[!0-9]*) carried=0 ;; esac
-    q="$(fm_get "$f" blocked | cut -c1-100)"
+    # `blocked:` is usually written already-quoted (the question contains colons
+    # and commas), so strip one surrounding pair before truncating — otherwise
+    # the line reads ""Should the row…" with a doubled quote.
+    q="$(fm_get "$f" blocked | sed 's/^"//; s/"$//' | cut -c1-100)"
     if [ "$carried" -ge 2 ]; then
       printf 'AGING: blocked %s — carried %s milestone boundaries: "%s…". At carried 2 this is ASKED, not offered: /roadmap will not start the next brainstorm until it is answered, defaulted on your explicit say-so, or dropped with a dropped_reason:. Answer it now with /unblock %s.\n' "$id" "$carried" "$q" "$id"
     else
