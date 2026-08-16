@@ -636,5 +636,69 @@ with_anchor "$BASE" "$R" --check
 check "a record present on the completing diff is still validated" 1
 check_out "malformed record on the completing diff is named" "FAIL: record .*raw (5)"
 
+# --- hand-off provenance (attended is authored, never transitioned into) --------
+# mk_attended <repo> <id>: a valid hand-off item (handoff: + ## Hand-off).
+mk_attended() {
+  local r="$1" id="$2"
+  { printf -- '---\nid: %s\ntitle: %s\nstatus: attended\ndepends_on: []\nreview-dimensions: []\n' "$id" "$id"
+    printf 'handoff: Create the live account and paste its key into .env.local\n---\n\n'
+    printf '# %s\n\n## Hand-off\n- **Steps:** create the account, copy the key\n' "$id"
+  } > "$r/roadmap/$id.md"
+}
+
+# T44: a hand-off AUTHORED as attended (born that way) passes.
+R="$(new_repo t44)"
+mk_attended "$R" F1.1
+commit_all "$R" author-handoff
+run_gate "$R" --check
+check "attended item authored as attended passes provenance" 0
+
+# T45: a todo item LATER flipped to attended fails — the laundering move.
+R="$(new_repo t45)"
+mk_item "$R" F1.1 todo
+commit_all "$R" author-todo
+mk_attended "$R" F1.1
+commit_all "$R" relabel
+run_gate "$R" --check
+check "todo later flipped to attended fails provenance" 1
+check_out "the violation names the item" "FAIL: hand-off F1.1: status: attended was introduced by"
+
+# T46: blocked -> attended fails too (relabelling stuck work is the exact hazard).
+R="$(new_repo t46)"
+mk_item "$R" F1.1 blocked 'blocked: which provider should we use?'
+commit_all "$R" author-blocked
+mk_attended "$R" F1.1
+commit_all "$R" relabel
+run_gate "$R" --check
+check "blocked later flipped to attended fails provenance" 1
+
+# T47: an UNCOMMITTED hand-off is skipped, not failed — /roadmap lints items in
+# the working tree before they are ever committed.
+R="$(new_repo t47)"
+mk_attended "$R" F1.1
+run_gate "$R" --check
+check "uncommitted attended item is not judged on provenance" 0
+
+# T48: attended -> done is legal (only items CURRENTLY attended are judged).
+# F1.2 stays todo so completing F1.1 does not also complete the milestone — this
+# case is about provenance, not about audit debt.
+R="$(new_repo t48)"
+mk_attended "$R" F1.1
+mk_item "$R" F1.2 todo
+commit_all "$R" author-handoff
+mk_item "$R" F1.1 done
+commit_all "$R" human-finished-it
+run_gate "$R" --check
+check "a completed hand-off (attended -> done) is not a provenance violation" 0
+
+# T49: an attended item keeps its milestone INCOMPLETE, so no audit is due and no
+# debt accrues. This is the property that makes the whole feature free at the gate.
+R="$(new_repo t49)"
+mk_item "$R" F1.1 done
+mk_attended "$R" F1.2
+commit_all "$R" mixed
+run_gate "$R" --check
+check "an open hand-off keeps its milestone incomplete (no audit debt)" 0
+
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" = 0 ]

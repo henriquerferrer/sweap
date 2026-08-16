@@ -61,6 +61,16 @@ check against —
 8. **Success signal (light).** One line per milestone: how would we know this
    shipped *well* — the behavioural signal, not a vanity metric. Not a full
    metrics suite; just a sanity check that the milestone has a point.
+9. **Human dependencies & hand-offs.** Does any item assume something no agent
+   can produce — a credential, an account or paid subscription, a live domain,
+   hardware, a legal identity, a third-party approval, a taste call? For each:
+   is it its own `status: attended` item file with a `handoff:` task, or did it
+   evaporate into an `- **Out of scope:**` bullet? An exclusion written *because
+   it needs a human* is a deletion, not a hand-off — invisible to lint, the
+   frontier, the board and milestone completeness, so the milestone will report
+   itself complete with that work never done. Also flag a hand-off authored with
+   dependencies that were avoidable: those serialize the whole run behind one
+   person instead of being startable on day one.
 
 ## Output
 

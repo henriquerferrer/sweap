@@ -87,7 +87,7 @@ export function loadItems(projectDir, backlogDir) {
   try { files = readdirSync(dir).filter((f) => f.endsWith(".md")); } catch { return []; }
   return files.map((f) => {
     const id = f.replace(/\.md$/, "");
-    const bad = { id, title: id, status: "unknown", dependsOn: [], reviewDimensions: [], lane: null, followupOf: null, blocked: null, malformed: true, file: f };
+    const bad = { id, title: id, status: "unknown", dependsOn: [], reviewDimensions: [], lane: null, followupOf: null, blocked: null, handoff: null, malformed: true, file: f };
     let fm;
     try { fm = parseFrontmatter(readFileSync(join(dir, f), "utf8")).fm; } catch { return bad; }
     if (!fm || !fm.status) return bad;
@@ -100,6 +100,7 @@ export function loadItems(projectDir, backlogDir) {
       lane: fm.lane || null,
       followupOf: fm.followup_of || null,
       blocked: fm.blocked || null,
+      handoff: fm.handoff || null,
       malformed: Boolean(fm.id && fm.id !== id),
       file: f,
     };
@@ -132,6 +133,33 @@ export function compareItems(a, b) {
   return String(a.id).localeCompare(String(b.id));
 }
 
+// Reverse dependency map: dep id -> [ids that depend on it]. A dep naming a
+// MILESTONE expands to every item in it, so "what does this hand-off gate?"
+// answers correctly for bare-milestone deps too (same classify-by-membership
+// rule as isUnblocked).
+export function reverseDeps(items, byId, byMilestone) {
+  const rev = new Map();
+  for (const i of items) {
+    for (const dep of i.dependsOn) {
+      const targets = byId.has(dep) ? [dep] : (byMilestone.get(dep) || []).map((x) => x.id);
+      for (const t of targets) { if (!rev.has(t)) rev.set(t, []); rev.get(t).push(i.id); }
+    }
+  }
+  return rev;
+}
+
+// Every not-yet-done item transitively waiting on `id`. This is the number that
+// makes the /milestone kickoff fork a real choice ("this hand-off gates 3 of 7
+// items") instead of a nag.
+export function gatedItems(id, rev, byId) {
+  const seen = new Set();
+  const stack = [id];
+  while (stack.length) {
+    for (const d of rev.get(stack.pop()) || []) if (!seen.has(d)) { seen.add(d); stack.push(d); }
+  }
+  return [...seen].filter((d) => byId.has(d) && byId.get(d).status !== "done").sort();
+}
+
 export function deriveBacklog(items) {
   const byId = new Map(items.map((i) => [i.id, i]));
   const byMilestone = new Map();
@@ -143,6 +171,21 @@ export function deriveBacklog(items) {
 
   const blocked = items.filter((i) => i.status === "blocked").map((i) => ({ id: i.id, title: i.title, question: i.blocked || "(no question recorded)" }));
 
+  // Hand-offs are a SEPARATE queue from blocked on purpose: blocked means an
+  // agent failed and needs an answer, attended means this was always the
+  // human's to do. Mixing them is what makes a needs-me-now list stop being read.
+  const rev = reverseDeps(items, byId, byMilestone);
+  const attended = items
+    .filter((i) => i.status === "attended")
+    .sort(compareItems)
+    .map((i) => ({
+      id: i.id,
+      title: i.title,
+      task: i.handoff || "(no hand-off recorded)",
+      ready: isUnblocked(i, byId, byMilestone),
+      gates: gatedItems(i.id, rev, byId),
+    }));
+
   const backlog = [...byMilestone.entries()]
     .sort((a, b) => compareItems({ id: a[0] + ".0", followupOf: null }, { id: b[0] + ".0", followupOf: null }))
     .map(([milestone, its]) => ({ milestone, items: [...its].sort(compareItems) }));
@@ -150,7 +193,7 @@ export function deriveBacklog(items) {
   const edges = [];
   for (const i of items) for (const dep of i.dependsOn) if (byId.has(dep)) edges.push({ from: dep, to: i.id });
 
-  return { frontier, blocked, backlog, edges };
+  return { frontier, attended, blocked, backlog, edges };
 }
 
 export function parseWorktrees(stdout) {
@@ -211,7 +254,7 @@ export async function buildState(projectDir, { git, gh, now }) {
   const ideas = loadIdeas(projectDir, backlogDir);
   if (items.some((i) => i.malformed)) notes.push("one or more item files are malformed (shown flagged)");
   if (items.length === 0) notes.push(`no backlog items found under ${backlogDir}`);
-  const { frontier, blocked, backlog, edges } = deriveBacklog(items);
+  const { frontier, attended, blocked, backlog, edges } = deriveBacklog(items);
   const byId = new Map(items.map((i) => [i.id, i]));
 
   let worktrees = [];
@@ -237,7 +280,7 @@ export async function buildState(projectDir, { git, gh, now }) {
   const linkWt = (item) => ann.wtByItem[item.id] || worktrees.find((w) => refMatchesId(w.branch, item.id)) || null;
 
   const inFlight = items
-    .filter((i) => i.status !== "done" && i.status !== "blocked" && (ann.wtByItem[i.id] || ann.prByItem[i.id] != null || linkWt(i) || linkPr(i)))
+    .filter((i) => i.status !== "done" && i.status !== "blocked" && i.status !== "attended" && (ann.wtByItem[i.id] || ann.prByItem[i.id] != null || linkWt(i) || linkPr(i)))
     .map((i) => {
       const wt = linkWt(i); const pr = linkPr(i);
       return { id: i.id, title: i.title, step: ann.steps[i.id] || null, worktree: wt ? (wt.worktree || basename(wt.path || "")) : null, branch: wt ? wt.branch : null, pr: pr ? pr.number : null, ci: pr && pr.statusCheckRollup ? ciSummary(pr.statusCheckRollup) : "unknown" };
@@ -250,5 +293,5 @@ export async function buildState(projectDir, { git, gh, now }) {
   const active = boardText.trim().length > 0 || inFlight.length > 0;
   if (!active) notes.push("no run in flight");
 
-  return { generatedAt: now, project: basename(projectDir), run: { active, prsAvailable }, frontier: frontier.filter((i) => !inFlightIds.has(i.id)).map((i) => ({ id: i.id, title: i.title, lane: i.lane, reviewDimensions: i.reviewDimensions })), inFlight, mergeQueue, blocked, ideas, backlog: backlog.map((g) => ({ milestone: g.milestone, items: g.items.map((i) => ({ id: i.id, title: i.title, status: i.status, dependsOn: i.dependsOn, malformed: i.malformed })) })), edges, notes };
+  return { generatedAt: now, project: basename(projectDir), run: { active, prsAvailable }, frontier: frontier.filter((i) => !inFlightIds.has(i.id)).map((i) => ({ id: i.id, title: i.title, lane: i.lane, reviewDimensions: i.reviewDimensions })), inFlight, mergeQueue, attended, blocked, ideas, backlog: backlog.map((g) => ({ milestone: g.milestone, items: g.items.map((i) => ({ id: i.id, title: i.title, status: i.status, dependsOn: i.dependsOn, malformed: i.malformed })) })), edges, notes };
 }

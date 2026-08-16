@@ -98,13 +98,14 @@ trivial (this flatness is a format contract, not a style preference):
     ---
     id: F1.2                 # must equal the filename (F1.2.md)
     title: <short feature name>
-    status: todo             # todo | blocked | deferred | done (dropped: archive only)
+    status: todo             # todo | attended | blocked | deferred | done (dropped: archive only)
     depends_on: []           # item IDs (F1.1) and/or bare milestone tags (F2)
     review-dimensions: []    # from the review.dimensions config set
     lane:                    # optional; same-lane items NEVER co-dispatch
     followup_of:             # optional milestone tag — marks an audit-debt item
     premise:                 # REQUIRED when deferred — machine-checkable predicate
     blocked:                 # REQUIRED when blocked — the question awaiting "> ANSWER:"
+    handoff:                 # REQUIRED when attended — the task the HUMAN performs
     ---
 
     # F1.2 — <title>
@@ -120,11 +121,32 @@ trivial (this flatness is a format contract, not a style preference):
     ## Notes
     <optional: "> ANSWER:" threads, UNBLOCKED annotations, links>
 
+**The four states, and who owns each.** Status is the ownership axis, which is
+why these are mutually exclusive values rather than flags: `todo` means
+*agent-dispatchable*, by construction, and everything downstream (the frontier,
+dependency resolution, the board's queues, milestone completeness) keys off
+exactly that.
+
+| status | whose it is | waiting on | required key | on the frontier? | needs-me-now? |
+|---|---|---|---|---|---|
+| `todo` | agent | nothing | — | yes, when unblocked | no |
+| `attended` | **human** | the human doing it | `handoff:` | never | yes — *a planned hand-off* |
+| `blocked` | agent, **stuck** | a human's answer | `blocked:` | never | yes — *a failure signal* |
+| `deferred` | nobody | work that doesn't exist yet | `premise:` | never | no |
+
+The line between the two that page the human: **`blocked:` holds a QUESTION,
+`handoff:` holds a TASK.** If the human's next move is to answer, the item is
+blocked. If their next move is to *do something*, it is attended. See
+**Attended items** below.
+
 **Spec gate (mechanical, one gate, two call sites).** An item is runnable
 only if `roadmap-lint.sh` passes on its file. For a `todo` item that is the
 full spec: valid frontmatter, every `depends_on` entry resolves (to an item
 file, or to a milestone that has item files), `## Spec` (all three bullets) +
-`## Acceptance` present, and no unfilled `<…>` placeholders. `blocked`,
+`## Acceptance` present, and no unfilled `<…>` placeholders. An `attended`
+item is picked up by a *human* rather than dispatched, so it needs its own
+self-contained instructions instead — `handoff:` plus a `## Hand-off` section,
+both lint-enforced (same principle, different reader). `blocked`,
 `deferred`, and `done` items are **records** — they need only valid
 frontmatter (plus `blocked:`/`premise:` where the status requires it), NOT a
 `## Spec`/`## Acceptance`; a deferred or blocked item earns its full spec when
@@ -217,7 +239,13 @@ requirement, and it holds in both environments.
   `/goal` for an autonomous run. Defaults to the next runnable milestone and
   `turns.default` turns. You never run `services.up` by hand; the paste step
   exists only because a human must invoke `/goal`. Ritual:
-  `claude --permission-mode auto` → `/milestone` → paste.
+  `claude --permission-mode auto` → `/milestone` → paste. When the run's scope
+  contains unblocked hand-offs, the pre-flight asks whether to do them first and
+  prints `/handoff` commands instead — see **Attended items**.
+- **`/handoff [id]`** — walk one `status: attended` item with the human: do
+  every part an agent legitimately can, check its *Done when* condition, and on
+  their explicit confirmation flip it to `done` through a gated PR. Interactive
+  only; never invoked by an unattended run.
 
 ## Review dimensions (tagged per backlog item)
 
@@ -304,7 +332,9 @@ may ADD dimensions it judges necessary; it may not remove tagged ones.
   worker error, fixed through the next gated PR (e.g. folded into the next
   queued item's branch), never by committing to `main`.
 - At goal end (met or stopped): if `notify` is `push`, send a push notification
-  summarizing merged PRs and blocked items; list any leftover worktrees/branches
+  summarizing merged PRs, blocked items, and **open hand-offs** (`status:
+  attended`, with what each one gates — the human's own queue is part of "what
+  now?", not a detail); list any leftover worktrees/branches
   in the final message; the primary checkout is already current (see above), so
   `git pull --ff-only` is a no-op for the human.
 - **Merge gate (substitute for branch protection, unavailable on the free
@@ -373,6 +403,84 @@ may ADD dimensions it judges necessary; it may not remove tagged ones.
   additionally uses `git rebase` and `git push --force-with-lease` on item
   branches as routine loop verbs.
 
+## Attended items (planned human hand-offs)
+
+An `[attended]` item is work that **was always the human's to do** — a step
+needing credentials, an account, hardware, a legal identity, a third-party
+approval, or a taste decision. Nothing failed; the work simply is not an
+agent's. It is not `[todo]` (that means agent-dispatchable), and it is not
+`[blocked]` (nothing is stuck and there is no question to answer).
+
+**Why it must be an item at all.** The alternative is what happens without this
+status: authoring scopes the human part out of an item — usually into an
+`- **Out of scope:**` bullet — and it lands nowhere. That is a *deletion, not a
+hand-off*: invisible to the index, to lint, to the frontier, to the board, and
+to milestone completeness, so the milestone reports itself complete with the
+human's part never done. The prior art is unanimous here: every workflow engine
+that ever coordinated people and machines gave human work its own node type
+(BPMN's *user task* vs *service task*), and the current agent frameworks are
+re-deriving the same primitive as first-class human-in-the-loop state. See
+`docs/research/2026-08-16-planned-human-handoffs.md`.
+
+**Everything else already does the right thing.** Because `attended` is a
+status value and not a flag, the frontier (`status: todo` only), dependency
+resolution (satisfied only by `done`), the blocked queue, and the audit gate's
+milestone-completeness computation all behave correctly with no special cases.
+
+**Authoring (the only way one is created).** Hand-offs are declared during
+`/roadmap`'s decide phase, with the human present — the brainstorm asks
+outright what in the milestone is not an agent's to do, and
+`milestone-cross-check`'s human-dependency lens catches what it missed. Two
+authoring rules carry weight:
+
+- **Write the `## Hand-off` section for a reader who is not you** — why it's
+  theirs, the concrete steps, and a *Done when* condition that can be checked.
+  `/handoff` walks exactly this.
+- **Give a hand-off as few dependencies as possible.** A hand-off buried
+  mid-chain serializes the whole run on one person, and wait time — not
+  execution time — is the dominant cost. Authored dependency-free, it is
+  startable on day one and runs *concurrently* with the agents' drain.
+
+**Surfacing (day one, not day nine).** `/milestone`'s pre-flight lists every
+unblocked hand-off in the run's scope **before** printing the goal, with what
+each one gates, and offers to walk them then and there. Skipping is a legitimate
+choice with a stated cost, and it changes the run shape (see `/milestone`'s
+hand-offs-outstanding goal template). The end-of-run summary lists open
+hand-offs alongside blocked items; the board gives them their own column,
+`🙋 Yours`, deliberately separate from `⛔ Blocked` — a needs-me-now list that
+mixes *an agent failed* with *this was always yours* is one the human stops
+reading.
+
+**Completion.** `/handoff <id>` walks the item, does every part it legitimately
+can, checks the *Done when* condition, and — only on the human's explicit
+confirmation — flips `status: done` through a normal gated PR. An unattended run
+never flips it. A hand-off that is started but cannot finish yet (waiting on a
+third party) stays `attended` with a `> **STARTED (YYYY-MM-DD):** <what's
+pending>` note under `## Notes`, the same convention deferred items use for
+`> **UNBLOCKED:**`. One that stops mattering is archived with a
+`dropped_reason:` like any other item.
+
+**An open hand-off keeps its milestone incomplete**, so the milestone-audit is
+not due until it is closed. No merges are blocked and no audit debt accrues —
+the audit is simply not owed yet. That is the leverage that makes a hand-off
+impossible to ignore, and the accepted cost is that audit timing depends on a
+person.
+
+**Never an escape hatch (mechanically, not just by rule).** An agent must never
+relabel its own stuck work as human work — escalate-don't-guess is unchanged:
+stuck work goes to `[blocked]` with the question, full stop. Because `attended`
+is a legitimate stop condition for a run, that relabel would be a genuine
+shortcut, so it is enforced rather than requested: `audit-gate.sh --check` fails
+if any item's `status: attended` was introduced by a commit other than the one
+that *added* the file. **A hand-off is authored, never transitioned into.** For
+a deliberate re-assignment ("actually, F2.3 is mine"), archive the item with a
+`dropped_reason:` and author the hand-off as a new one — both halves visible in
+the diff. Why a check and not a rule: instructions are advisory and, per the
+reward-hacking literature, telling a model not to take a shortcut can even
+increase the behaviour; every other tempting shortcut in this pipeline
+(`--admin`, merging red, skipping the audit) is denied by a mechanism, and this
+one is no different.
+
 ## Deferred items (parked behind a future dependency)
 
 A `[deferred]` item is a *good idea that cannot be built yet* because it depends
@@ -380,10 +488,14 @@ on work that doesn't exist. It is distinct from `[blocked]`:
 
 - `[blocked]` = active work is **stuck** and needs a human answer to continue
   *now*. It sits on the "needs-me-now" queue and pings the human.
+- `[attended]` = a **planned hand-off**: the human's own work, waiting on them
+  to do it. Also on the needs-me-now queue, but as a task rather than a failure
+  (see **Attended items**).
 - `[deferred]` = **parked**, nobody is working on it, nothing is stuck. The agent
   never auto-picks a `[deferred]` item (it is invisible to the top-of-backlog
   picker exactly like a `Later milestone`). It keeps the "needs-me-now" list
-  honest — only genuine `[blocked]` items pull the human's attention.
+  honest — only genuine `[blocked]` items and hand-offs pull the human's
+  attention.
 
 **Why deferred instead of leaving it `[todo]`.** A `[todo]` item that can't be
 built (its deps aren't `[done]`) is clutter: the picker either trips on it every
@@ -516,7 +628,12 @@ no cron, no standing agent. Standard template:
 > of done; and when the last item merges, run `/milestone-audit` with
 > `{milestone: "<milestone>", range: "<base>..<head>"}` for that range,
 > triage the confirmed findings (below), and post a summary before stopping.
-> Stop when only [blocked] items remain, or after N turns.*
+> Stop when only [blocked] or [attended] items remain, or after N turns.*
+
+(A milestone with an **open hand-off** cannot complete, so its audit is not yet
+due and this template does not apply — `/milestone` prints its
+hand-offs-outstanding variant instead, which drops the audit clause and says so.
+See **Attended items**.)
 
 This applies to **every** milestone regardless of prefix — a second prefix
 (e.g. `DS*`) gets audited exactly like the primary one (`/milestone` resolves
@@ -739,7 +856,10 @@ in `playbook/audit-record.template.md`.
    this is a **direction-loop** change, not correctness — do NOT spec or build
    it. Write it as a `status: blocked` item file with the question verbatim in
    `blocked:`, push-notify the human, and move on. It waits for their
-   `> ANSWER:` line exactly like any escalation. This is how a change-of-direction gets back to a human:
+   `> ANSWER:` line exactly like any escalation. (If the finding needs a human
+   *action* rather than a decision — rotate a key, register a domain — that is a
+   hand-off: an `attended` item with a `handoff:` task. Same triage bucket, the
+   status follows question-vs-task as always.) This is how a change-of-direction gets back to a human:
    a notification plus a waiting roadmap entry, never an autonomous scope
    expansion. The dividing line between bucket 1 and 3 is the acceptance
    criteria — failed-the-spec is a bug; not-in-the-spec is a direction call.
@@ -886,9 +1006,13 @@ flag per existing doctrine; never retry-until-green.
    the human, move to the next item. Never bluff through ambiguity.
 3. **Direction loop — stays human.** The human writes/re-aims the roadmap and
    acceptance criteria (~1 hr/week), answers blocked questions async
-   (~15 min/day), and personally approves anything irreversible: production
-   deploys, data migrations against real data, anything touching sensitive
-   production data.
+   (~15 min/day), **does the work only they can do** (the `[attended]`
+   hand-offs — credentials, accounts, third-party approvals, taste calls), and
+   personally approves anything irreversible: production deploys, data
+   migrations against real data, anything touching sensitive production data.
+   The hand-offs are the half that used to be invisible: unlike the other three
+   they produce no artifact unless something tracks them, which is what
+   `[attended]` is for.
 
 ## Claude Code mechanisms available
 
@@ -902,7 +1026,8 @@ flag per existing doctrine; never retry-until-green.
 | Headless `claude -p` + auto permission mode | Scripted/CI-triggered sessions; classifier gates commands | Scripts/CI/events |
 | Agentic CI (GitHub Actions) | Claude reviews every PR; merge gated on green e2e + clean review | Git events |
 | `claude --continue` / `--resume` | Pick a session back up after a crash/reboot; long sessions survive via context summarization | User |
-| `/board` (read-only viewer) | Local loopback page showing the live run (frontier/in-flight/merge-queue/blocked) + backlog + dep graph; derives state from item files + git + PRs, never writes | User runs; safe during autonomous runs |
+| `/board` (read-only viewer) | Local loopback page showing the live run (frontier/in-flight/merge-queue/hand-offs/blocked) + backlog + dep graph; derives state from item files + git + PRs, never writes | User runs; safe during autonomous runs |
+| `/handoff <id>` | Walks one `[attended]` hand-off with the human, then flips it to done through a gated PR on their explicit confirmation | User runs; interactive only |
 
 ## Model policy
 
@@ -923,6 +1048,11 @@ flag per existing doctrine; never retry-until-green.
   addressed.
 - When blocked: write the question down, notify, move on. A stalled item must
   never stall the loop; a guess must never resolve ambiguity.
+- **Never create an `[attended]` item, and never transition one into it.** Work
+  an agent cannot finish is `[blocked]` with the question — never re-labelled as
+  the human's own work. Hand-offs are authored with the human present, in
+  `/roadmap`. (Mechanically enforced by `audit-gate.sh --check`; the rule is
+  here so the mechanism never has to fire.)
 - Report honestly: failing output verbatim, skipped steps named.
 
 ## Standing preferences (pre-answered skill checkpoints)

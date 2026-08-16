@@ -36,9 +36,13 @@ parallel:         2                        # concurrent roadmap items: default 2
   adapter"). Every task gets its fresh-context review.
 - When blocked or ambiguous in an unattended run: escalate, don't guess —
   record the question in the item file's `blocked:` key (status: blocked),
-  notify, move to the next item.
+  notify, move to the next item. NEVER create a `status: attended` item or
+  transition one into it — hand-offs are the human's own planned work, authored
+  only in `/roadmap`. Relabelling stuck work as human work is forbidden (and
+  mechanically checked by the audit gate).
 - Honor each backlog item's `review-dimensions` tags.
-- At the end of an autonomous run: notify with merged-PRs + blocked-items summary.
+- At the end of an autonomous run: notify with merged-PRs + blocked-items +
+  open-hand-offs (`status: attended`) summary.
 <!-- sweap:end -->
 
 <!-- agentic-ci: ci-section -->

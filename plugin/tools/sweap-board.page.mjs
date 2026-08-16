@@ -19,9 +19,12 @@ export function renderPage() {
   .item { padding:6px 8px; border:1px solid var(--line); border-radius:6px; margin-bottom:6px; background:var(--bg); }
   .item b { font-weight:600; } .meta { color:var(--muted); font-size:12px; }
   .blocked .item { border-color:var(--bad); } .blocked .q { color:var(--bad); }
+  /* Hand-offs are the human's OWN queue — warn-toned, never the red that means
+     "an agent failed". Two different asks deserve two different colours. */
+  .mine .item { border-color:var(--warn); } .mine .task { color:var(--warn); }
   .badge { display:inline-block; font-size:11px; padding:1px 6px; border-radius:10px; border:1px solid var(--line); }
   .ci-passing { color:var(--ok); border-color:var(--ok); } .ci-failing { color:var(--bad); border-color:var(--bad); } .ci-pending,.ci-unknown { color:var(--warn); border-color:var(--warn); }
-  .st-done { color:var(--ok); } .st-todo { color:var(--fg); } .st-blocked { color:var(--bad); } .st-deferred { color:var(--muted); } .malformed { color:var(--bad); font-style:italic; }
+  .st-done { color:var(--ok); } .st-todo { color:var(--fg); } .st-attended { color:var(--warn); } .st-blocked { color:var(--bad); } .st-deferred { color:var(--muted); } .malformed { color:var(--bad); font-style:italic; }
   #notes { color:var(--warn); font-size:12px; } #notes span { margin-right:12px; }
   .ms { margin-bottom:10px; } .ms h3 { font-size:13px; margin:0 0 4px; }
   svg { max-width:100%; height:auto; } .empty { color:var(--muted); font-size:12px; }
@@ -39,6 +42,7 @@ export function renderPage() {
       <div><h2>Frontier (ready)</h2><div class="col" id="frontier"></div></div>
       <div><h2>In-flight</h2><div class="col" id="inflight"></div></div>
       <div><h2>Merge queue</h2><div class="col" id="mergequeue"></div></div>
+      <div class="mine"><h2>🙋 Yours — hand-offs</h2><div class="col" id="attended"></div></div>
       <div class="blocked"><h2>⛔ Blocked — needs you</h2><div class="col" id="blocked"></div></div>
     </div>
   </section>
@@ -65,6 +69,7 @@ function draw(s) {
   renderList(document.getElementById("frontier"), s.frontier, i => '<div class="item"><b>'+esc(i.id)+'</b> '+esc(i.title)+(i.lane?' <span class="meta">lane:'+esc(i.lane)+'</span>':'')+'</div>', "nothing ready");
   renderList(document.getElementById("inflight"), s.inFlight, i => '<div class="item"><b>'+esc(i.id)+'</b> '+esc(i.title)+'<div class="meta">'+esc(i.step||"working")+(i.branch?' · '+esc(i.branch):'')+(i.pr?' · PR #'+i.pr:'')+' <span class="badge ci-'+esc(i.ci)+'">'+esc(i.ci)+'</span></div></div>', "nothing in flight");
   renderList(document.getElementById("mergequeue"), s.mergeQueue, q => '<div class="item">PR #'+q.pr+' '+esc(q.title)+' <span class="badge ci-'+esc(q.ci)+'">'+esc(q.ci)+'</span></div>', "queue empty");
+  renderList(document.getElementById("attended"), s.attended, a => '<div class="item"><b>'+esc(a.id)+'</b> '+esc(a.title)+'<div class="task">'+esc(a.task)+'</div><div class="meta">'+(a.ready?'/handoff '+esc(a.id):'waiting on a dependency')+(a.gates&&a.gates.length?' · gates '+a.gates.length+' item'+(a.gates.length>1?'s':'')+': '+a.gates.map(esc).join(", "):'')+'</div></div>', "no hand-offs 🎉");
   renderList(document.getElementById("blocked"), s.blocked, b => '<div class="item"><b>'+esc(b.id)+'</b> '+esc(b.title)+'<div class="q">'+esc(b.question)+'</div></div>', "none blocked 🎉");
   document.getElementById("backlog").innerHTML = (s.backlog||[]).map(g => '<div class="ms"><h3>'+esc(g.milestone)+'</h3>'+g.items.map(i => '<div class="item'+(i.malformed?' malformed':'')+'"><span class="st-'+esc(i.status)+'">●</span> <b>'+esc(i.id)+'</b> '+esc(i.title)+' <span class="meta">'+esc(i.status)+(i.dependsOn&&i.dependsOn.length?' · deps: '+i.dependsOn.map(esc).join(", "):'')+'</span></div>').join("")+'</div>').join("") || '<div class="empty">no items</div>';
   renderList(document.getElementById("ideas"), s.ideas, i => '<div class="item"><b>'+esc(i.title)+'</b> <span class="meta">'+esc(i.file)+(i.created?' · '+esc(i.created.slice(0,10)):'')+'</span></div>', "inbox empty");

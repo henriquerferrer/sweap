@@ -42,15 +42,29 @@ values above):
 > evidence), dispatch a fresh-context review, open a PR, and merge only when
 > the gate is green (the pre-merge-gate hook enforces this). Escalate any
 > blocker to a `status: blocked` item file plus a notification instead of
-> guessing. When the last <MILESTONE> item merges, run `/milestone-audit` for
-> that range and triage the confirmed findings. Stop when only `[blocked]`
-> items remain, or after <TURNS> turns. Notify with a merged-PRs and
-> blocked-items summary.
+> guessing. Never create a `status: attended` item and never transition one into
+> it — work you cannot finish is `[blocked]`. When the last <MILESTONE> item
+> merges, run `/milestone-audit` for that range and triage the confirmed
+> findings. Stop when only `[blocked]` or `[attended]` items remain, or after
+> <TURNS> turns. Notify with a merged-PRs, blocked-items and open-hand-offs
+> summary.
 
 This kickoff prompt inherits every autonomy rule from the playbook (TDD, the
 review dimensions, end-of-run hygiene, escalate-don't-guess, the merge gate) —
 it states only the end condition, exactly as a pasted `/goal` line would; it
 invents no new rules.
+
+**Hand-offs in a scheduled run.** This driver is headless by definition, so it
+never asks the human anything — it does NOT run `/milestone`'s kickoff fork.
+Scan `M`'s scope for unblocked `status: attended` items first (the playbook's
+"Attended items"). If any exist, name them when confirming the schedule, and
+use the hand-offs-outstanding form of the prompt: drop the `/milestone-audit`
+clause and replace it with *"hand-offs `<IDS>` are the human's and remain open,
+so `<MILESTONE>` cannot complete and its milestone-audit is NOT due this run —
+do not attempt it."* An open hand-off keeps the milestone incomplete, so a
+prompt demanding the audit would send the run chasing an unreachable condition.
+The run's notification is then how the human learns their queue exists without
+any session having been able to ask them.
 
 Once the schedule is created, confirm it back to the user: the cadence (cron
 expression, human-readable), the resolved milestone `<MILESTONE>`, and the

@@ -50,15 +50,23 @@ if [ -n "$id" ] && [ "$id" != "$base" ]; then
 fi
 
 case "$status" in
-  todo|blocked|deferred|done|dropped) : ;;
+  todo|attended|blocked|deferred|done|dropped) : ;;
   "") fail "missing status:" ;;
-  *)  fail "invalid status: $status (todo|blocked|deferred|done|dropped)" ;;
+  *)  fail "invalid status: $status (todo|attended|blocked|deferred|done|dropped)" ;;
 esac
 if [ "$status" = "deferred" ] && [ -z "$(get premise)" ]; then
   fail "deferred item missing premise: (the machine-checkable predicate it waits on)"
 fi
 if [ "$status" = "blocked" ] && [ -z "$(get blocked)" ]; then
   fail "blocked item missing blocked: (the question awaiting an ANSWER)"
+fi
+# `blocked:` holds a QUESTION the agent needs answered; `handoff:` holds a TASK
+# the human performs. Requiring a differently-shaped sentence per status is what
+# keeps the two apart at authoring time, and it is deliberately the ONLY thing
+# here that does — provenance (attended is authored, never transitioned into) is
+# a git question and lives in audit-gate.sh. See the playbook's "Attended items".
+if [ "$status" = "attended" ] && [ -z "$(get handoff)" ]; then
+  fail "attended item missing handoff: (the task the human performs — if it is a QUESTION for the human to answer, the item is blocked, not attended)"
 fi
 
 # --- depends_on: the flat inline [a, b] form the whole greppable substrate
@@ -91,15 +99,37 @@ done <<DEPS
 $deps
 DEPS
 
-# --- body sections: gated to `todo` items (the runnable ones) ---------------
+# --- body sections: required per status, for the two kinds someone PICKS UP --
 # A complete spec is a DISPATCH prerequisite, so `## Spec` (three bullets) +
 # `## Acceptance` are required only for `todo` items. blocked/deferred/done are
 # records — they need valid frontmatter, not a full spec (a deferred/blocked
 # item earns its spec when it is promoted to todo). This is also what lets a
 # legacy migration carry historical done items across as plain records.
+#
+# `attended` is the third case: nothing dispatches it to an agent, but a HUMAN
+# picks it up (via /handoff), so it needs its own self-contained instructions —
+# `## Hand-off`. Same principle as the spec gate, different reader. No existing
+# item file can carry `status: attended`, so this requirement cannot retroactively
+# fail anything already merged.
+body="$(awk '{ sub(/\r$/,"") } NR==1 && $0=="---" { infm=1; next } infm && /^---$/ { infm=0; next } !infm { print }' "$file")"
+section() { printf '%s\n' "$body" | awk -v h="^## $1" 'BEGIN{on=0} $0~h{on=1;next} /^## /{on=0} on{print}'; }
+# Unfilled template placeholders: an ellipsis (`<...>` / `<…>`) or an
+# angle-bracketed lowercase phrase (internal space; only [a-z], space, `/`,
+# `-`). Deliberately NOT matching generic types (`Array<string>`,
+# `Map<string, number>`), JSX, or signatures that legitimately appear in an
+# Interfaces bullet.
+has_placeholder() { printf '%s\n' "$1" | grep -Eq '<\.\.\.>|<…>|<[a-z][a-z /-]*[[:space:]][a-z /-]*>'; }
+
+if [ "$status" = "attended" ]; then
+  hoff="$(section "Hand-off")"
+  if printf '%s' "$hoff" | grep -q '[^[:space:]]'; then
+    has_placeholder "$hoff" && fail "unfilled placeholder (<...> or <lowercase phrase>) in the '## Hand-off' section"
+  else
+    fail "attended item missing/empty '## Hand-off' section (the steps /handoff walks the human through)"
+  fi
+fi
+
 if [ "$status" = "todo" ]; then
-  body="$(awk '{ sub(/\r$/,"") } NR==1 && $0=="---" { infm=1; next } infm && /^---$/ { infm=0; next } !infm { print }' "$file")"
-  section() { printf '%s\n' "$body" | awk -v h="^## $1" 'BEGIN{on=0} $0~h{on=1;next} /^## /{on=0} on{print}'; }
   spec="$(section "Spec")"
   acc="$(section "Acceptance")"
   printf '%s' "$spec" | grep -q '[^[:space:]]' || fail "missing/empty '## Spec' section"
@@ -109,12 +139,7 @@ if [ "$status" = "todo" ]; then
       printf '%s\n' "$spec" | grep -q "^- \*\*$bullet" || fail "Spec missing '- **$bullet:**' bullet"
     done
   fi
-  # Unfilled template placeholders: an ellipsis (`<...>` / `<…>`) or an
-  # angle-bracketed lowercase phrase (internal space; only [a-z], space, `/`,
-  # `-`). Deliberately NOT matching generic types (`Array<string>`,
-  # `Map<string, number>`), JSX, or signatures that legitimately appear in an
-  # Interfaces bullet.
-  if printf '%s\n%s\n' "$spec" "$acc" | grep -Eq '<\.\.\.>|<…>|<[a-z][a-z /-]*[[:space:]][a-z /-]*>'; then
+  if has_placeholder "$(printf '%s\n%s\n' "$spec" "$acc")"; then
     fail "unfilled placeholder (<...> or <lowercase phrase>) in Spec/Acceptance of a todo item"
   fi
 fi

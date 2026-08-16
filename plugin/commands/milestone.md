@@ -23,7 +23,13 @@ Resolve the run:
   the merged default branch). Land that merge, then run `/milestone-audit` for
   the named milestone before resolving anything new — the gate will deny the
   next backlog-advancing PR until its record is in.
- Any `FAIL:` output means **audit debt**: a completed milestone lacks a
+ A `FAIL: hand-off <id> ...` line is NOT debt either: it is a backlog-integrity
+  violation — an item was transitioned into `status: attended` instead of being
+  authored as one, which is the move the playbook's "Never an escape hatch"
+  forbids. No audit discharges it. Fix the item (archive-and-re-author, per the
+  failure message) before running anything.
+ Any OTHER `FAIL:` output (`FAIL: milestone ...` / `FAIL: record ...`) means
+  **audit debt**: a completed milestone lacks a
   valid audit record. The ONLY permitted work while debt exists is discharging
   it (run `/milestone-audit` for the named milestone; land its record PR) —
   do not resolve a new milestone past unaudited work. This **record-debt** is
@@ -40,14 +46,21 @@ Resolve the run:
   `DS3` run gets the same audit-inclusive goal as an `F2` run.
 - **Audit debt `D`** = the outstanding audit follow-ups from the audit-debt scan
   below.
+- **Hand-offs `H`** = the outstanding human hand-offs from the hand-off scan
+  below.
 - **Turns** = the second argument if given; otherwise `turns.default` from the
   `## sweap config` block (default `160`).
 
 Then pick the run shape:
 - **`M` exists** → scope = `D` then `M` (debt-first): drain every item in `D`,
-  then run `M`'s items.
+  then run `M`'s items. If any hand-off in `H` is still open after the fork
+  below, this becomes the **hand-offs-outstanding** shape — same scope minus
+  what those hand-offs gate, and no audit this run.
 - **No runnable `M` but `D` is non-empty** → **debt-only run**: scope = `D`. Do
   NOT run a milestone-audit for a debt-only run — you don't audit a debt-drain.
+- **Nothing runnable but `H` is non-empty** → there is no goal to print: the
+  milestone cannot start until a hand-off is closed. Print the `/handoff`
+  command and stop.
 - **Neither** → nothing to run; say so and stop.
 
 Deferred-item backstop (see the playbook's "Deferred items" section). Before
@@ -78,6 +91,44 @@ running it here every time is safe and idempotent. (An item in `D` that turns
 out to need a direction call on pickup escalates to `[blocked]` and is left for
 the human, exactly like any other item — the "Stop when only [blocked] items
 remain" clause below still lets the run finish.)
+
+Hand-off scan, then **the kickoff fork** (see the playbook's "Attended items"
+section). Collect `H`: every `status: attended` item file in the run's scope
+(`M`'s milestone, plus any `D` item's) that is **unblocked** by the same rule as
+above. A frontmatter scan; stateless and idempotent like the other two.
+
+For each one compute what it **gates**: the items that transitively depend on it
+(directly, or via a bare-milestone dep on its milestone) and are not yet `done`.
+That number is what makes this a decision rather than a nag.
+
+If `H` is non-empty, **ask before printing any goal** — a human is standing here
+to paste it, which is the whole reason this fork lives in `/milestone` and
+nowhere else. Show, compactly:
+
+```
+<M> — <N> items · <count> hand-off(s) are yours
+
+  <id>  <handoff: task>            gates <n> items (<ids>)
+  ...
+
+  Do them now   → frontier of <x>, <M> can finish end to end this run (audit included).
+  Do them later → frontier of <y>. <the gated items> stay unreachable, the milestone
+                  can't complete, so <M>'s audit isn't due and won't run this run.
+                  You'd close the hand-offs afterwards and re-run /milestone.
+```
+
+Then ask which to do now (all / a subset / none). Order them **most-gating
+first** — that is the one that unlocks the most work.
+
+- **Now** → print `/handoff <id>` for the first one and **hold the goal line**.
+  Do not print a goal in the same breath; the run shape depends on the outcome.
+  `/handoff` closes the loop and this command is re-run afterwards.
+- **Later (or a subset deferred)** → print the **hand-offs-outstanding** goal
+  template below, with the cost restated in one line.
+
+Never ask this in a non-interactive context — `/loop-schedule` and any headless
+driver skip the fork entirely and use the hand-offs-outstanding template
+directly, naming the skipped hand-offs in their notification.
 
 Environment pre-flight (parity — see the playbook's "Environment parity"
 section). Do this **yourself** — the user should never bring up services by
@@ -131,24 +182,47 @@ one), the audit-and-triage clause is part of the definition of done, not
 optional. For a UI-heavy milestone (its `review.dimensions` tags include `ui`)
 the audit clause covers **both** the `/milestone-audit` code pass **and** the
 Tier-2 UI audit (see the playbook's "Milestone audit" section and the
-`ui-design` skill §7). The only run shape without an audit is the **debt-only**
-run below (you don't audit a debt-drain).
+`ui-design` skill §7). Two run shapes carry no audit clause, and both are
+principled rather than a loophole: the **debt-only** run (you don't audit a
+debt-drain), and the **hand-offs-outstanding** run (the milestone provably
+cannot complete while a hand-off is open, so its audit is not yet owed — that
+template says so explicitly instead of staying silent, and the audit clause
+travels with the completing run instead).
 
-**Milestone + debt** (an `M` was resolved):
+**Milestone + debt** (an `M` was resolved; no hand-offs outstanding):
 
 ```
 /goal First, every outstanding audit follow-up item in the backlog is [done];
 then every unblocked <MILESTONE> item is [done] per its definition of done, and
 the <MILESTONE> milestone-audit (plus the Tier-2 UI audit for a UI-heavy
-milestone) has run and been triaged. Stop when only [blocked] items remain, or
-after <TURNS> turns.
+milestone) has run and been triaged. Stop when only [blocked] or [attended]
+items remain, or after <TURNS> turns.
+```
+
+**Hand-offs outstanding** (an `M` was resolved, but the human deferred one or
+more of its hand-offs). The audit clause is deliberately absent and replaced by
+an explicit statement that it is NOT due: an open hand-off keeps the milestone
+incomplete, so the ordinary template's definition of done is unreachable and a
+run given it would burn turns chasing it. This is not the malformed
+"milestone goal without an audit clause" the playbook warns about — the audit
+clause travels with the *completing* run, the one kicked off after the hand-offs
+close:
+
+```
+/goal Every outstanding audit follow-up item in the backlog is [done]; then
+every unblocked <MILESTONE> item NOT gated by an outstanding hand-off is [done]
+per its definition of done. Hand-offs <IDS> are the human's and remain open, so
+<MILESTONE> cannot complete and its milestone-audit is NOT due this run — do not
+attempt it. Stop when only [blocked] or [attended] items remain, or after
+<TURNS> turns.
 ```
 
 **Debt-only** (no runnable `M`, but `D` is non-empty):
 
 ```
 /goal Every outstanding audit follow-up item in the backlog is [done] per its
-definition of done. Stop when only [blocked] items remain, or after <TURNS> turns.
+definition of done. Stop when only [blocked] or [attended] items remain, or
+after <TURNS> turns.
 ```
 
 Everything else (TDD, the review dimensions, end-of-run hygiene, escalation, and
@@ -157,4 +231,6 @@ the run reads at start — the goal only states the end condition.
 
 The whole ritual for the user is just: `claude --permission-mode auto` →
 `/milestone` → paste the printed goal. If `services.up` is declared, services
-come up automatically above — the user never runs it themselves.
+come up automatically above — the user never runs it themselves. When the
+milestone has hand-offs, one question comes first (do them now or later), and
+answering "now" replaces the paste step with a `/handoff` walk-through.

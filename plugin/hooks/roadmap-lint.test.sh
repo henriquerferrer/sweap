@@ -403,6 +403,89 @@ prose
 '
 check "dotted dep that is neither an item nor a milestone-with-items fails" 1 "$WORK/MD.2.md"
 
+# --- attended items (planned human hand-offs) -------------------------------
+# A record like blocked/deferred (no ## Spec / ## Acceptance), but it carries
+# its own reader-facing instructions: handoff: + a ## Hand-off section.
+mk H1.1.md '---
+id: H1.1
+title: live Stripe account
+status: attended
+depends_on: []
+handoff: Create the live Stripe account and put its key in .env.local
+---
+
+# H1.1 — live Stripe account
+
+## Hand-off
+- **Why it is yours:** needs a legal identity no agent can hold
+- **Steps:** create the account, activate live mode, copy the restricted key
+- **Done when:** .env.local has STRIPE_SECRET_KEY and `just verify-stripe` exits 0
+'
+check "valid attended item passes with no Spec/Acceptance (it is a record)" 0 "$WORK/H1.1.md"
+
+mk H1.2.md '---
+id: H1.2
+title: no handoff key
+status: attended
+depends_on: []
+---
+
+# H1.2 — no handoff key
+
+## Hand-off
+- **Steps:** do the thing
+'
+check "attended without handoff: fails" 1 "$WORK/H1.2.md"
+
+mk H1.3.md '---
+id: H1.3
+title: no hand-off section
+status: attended
+depends_on: []
+handoff: Do the thing
+---
+
+# H1.3 — no hand-off section
+
+## Notes
+nothing actionable here
+'
+check "attended without a ## Hand-off section fails" 1 "$WORK/H1.3.md"
+
+mk H1.4.md '---
+id: H1.4
+title: unfilled hand-off
+status: attended
+depends_on: []
+handoff: Do the thing
+---
+
+# H1.4 — unfilled hand-off
+
+## Hand-off
+- **Steps:** <what the human does>
+'
+check "attended with an unfilled placeholder in ## Hand-off fails" 1 "$WORK/H1.4.md"
+
+mk H1.5.md '---
+id: H1.5
+title: attended blocking a todo
+status: todo
+depends_on: [H1.1]
+---
+
+# H1.5 — depends on a hand-off
+
+## Spec
+- **Surface:** src/pay.ts
+- **Interfaces:** charge(cents) -> Receipt
+- **Out of scope:** refunds
+
+## Acceptance (e2e)
+- a test card completes checkout
+'
+check "a todo item may depend on an attended item" 0 "$WORK/H1.5.md"
+
 check "missing file fails" 1 "$WORK/does-not-exist.md"
 
 out="$(bash "$LINT" 2>&1)"; rc=$?

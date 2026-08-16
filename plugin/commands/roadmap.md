@@ -25,7 +25,10 @@ Resolve the milestone:
  A `DEFERRED:` line is not debt — the state you are in is what completed that
   milestone, so its audit is due but could not yet have run. Land it, then
   `/milestone-audit` that milestone before drafting the next one.
- `FAIL:` lines mean audit debt — do NOT draft the next milestone's
+ A `FAIL: hand-off <id> ...` line is not debt either — it means an item was
+  transitioned into `status: attended` rather than authored as one. Fix that
+  item (archive-and-re-author) before drafting; no audit discharges it.
+ Other `FAIL:` lines mean audit debt — do NOT draft the next milestone's
   items on top of an unaudited one; surface the debt and stop at that
   boundary (the merge gate would refuse the milestone PR anyway).
 - The first argument if given (e.g. `F3` or `DS4`, naming its prefix
@@ -55,6 +58,18 @@ review is asked for:
    Likewise surface the **idea inbox** (`<backlog.dir>ideas/*.md`, if any) as
    read-only context — ideas captured from the board awaiting triage. Fold the
    relevant ones into the brainstorm; do not copy them into items verbatim.
+   **Ask, explicitly, what in this milestone is NOT an agent's to do** —
+   credentials, an account, hardware, a legal identity, a third-party approval,
+   a taste call. Every answer becomes its own `status: attended` item file with
+   a `handoff:` task and a `## Hand-off` section (the playbook's "Attended
+   items"), authored HERE and nowhere else: hand-offs may be authored, never
+   transitioned into, and `audit-gate.sh --check` enforces that. This question
+   is load-bearing, because the default failure is silent — the human part gets
+   scoped OUT of an item into an `- **Out of scope:**` bullet and lands nowhere,
+   which is a deletion rather than a hand-off. An Out-of-scope bullet that
+   excludes work *because it needs a human* must name the attended item it moved
+   to. Give hand-offs as few dependencies as possible so they are startable on
+   day one instead of serializing the run behind one person.
 2. **Cross-check** — dispatch a fresh-context critic via the
    `milestone-cross-check` skill. Report ONLY the net-new forks the brainstorm
    missed, each with a recommended default. Flag; never rewrite or expand scope.

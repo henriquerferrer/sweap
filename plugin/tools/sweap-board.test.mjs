@@ -153,6 +153,43 @@ test("deriveBacklog produces frontier, blocked, grouped backlog, edges", () => {
   assert.ok(d.edges.some((e) => e.from === "F1.1" && e.to === "F1.2"));
 });
 
+test("deriveBacklog: attended items are their own queue, never the frontier or blocked", () => {
+  const items = [
+    mk("F1.1", "attended", [], { handoff: "create the live Stripe account" }),
+    mk("F1.2", "todo", ["F1.1"]),
+    mk("F1.3", "blocked", [], { blocked: "which scope?" }),
+    mk("F1.4", "todo"),
+  ];
+  const d = deriveBacklog(items);
+  assert.deepEqual(d.frontier.map((i) => i.id), ["F1.4"]);            // F1.1 is not agent work; F1.2 waits on it
+  assert.deepEqual(d.blocked.map((b) => b.id), ["F1.3"]);             // a hand-off never pollutes needs-me-now
+  assert.deepEqual(d.attended.map((a) => [a.id, a.task, a.ready]), [["F1.1", "create the live Stripe account", true]]);
+});
+
+test("deriveBacklog: a hand-off reports what it gates, transitively and through milestone deps", () => {
+  const items = [
+    mk("F1.1", "attended", [], { handoff: "register the webhook domain" }),
+    mk("F1.2", "todo", ["F1.1"]),        // direct
+    mk("F1.3", "todo", ["F1.2"]),        // transitive
+    mk("F1.4", "done", ["F1.1"]),        // already done -> not gated
+    mk("F2.1", "todo", ["F1"]),          // bare-milestone dep expands to F1's items
+    mk("F9.1", "todo"),                  // unrelated
+  ];
+  const d = deriveBacklog(items);
+  assert.deepEqual(d.attended[0].gates, ["F1.2", "F1.3", "F2.1"]);
+});
+
+test("deriveBacklog: an attended item waiting on a dependency is not ready to pick up", () => {
+  const items = [mk("F1.1", "todo"), mk("F1.2", "attended", ["F1.1"], { handoff: "sign the contract" })];
+  const d = deriveBacklog(items);
+  assert.equal(d.attended[0].ready, false);
+});
+
+test("deriveBacklog: an attended item with no handoff: still lists, with a placeholder task", () => {
+  const d = deriveBacklog([mk("F1.1", "attended")]);
+  assert.equal(d.attended[0].task, "(no hand-off recorded)");
+});
+
 import { parseWorktrees, ciSummary, buildState } from "./sweap-board.lib.mjs";
 
 test("parseWorktrees reads porcelain output", () => {
@@ -249,12 +286,29 @@ test("buildState exposes ideas; ideas never appear in backlog/frontier", async (
   rmSync(dir, { recursive: true });
 });
 
+test("buildState: a hand-off surfaces in attended with its gated items, not in-flight", async () => {
+  const dir = fixture({
+    "CLAUDE.md": "## sweap config\n",
+    "roadmap/F1.1.md": "---\nid: F1.1\ntitle: Stripe account\nstatus: attended\ndepends_on: []\nhandoff: create the live account\n---\n\n## Hand-off\n- steps\n",
+    "roadmap/F1.2.md": "---\nid: F1.2\ntitle: checkout\nstatus: todo\ndepends_on: [F1.1]\n---\n",
+  });
+  // A worktree/branch naming the hand-off must NOT drag it into the in-flight
+  // column: /handoff's status-flip PR is human work, not a dispatched worker.
+  const git = async () => ({ stdout: "worktree /x/F1.1\nbranch refs/heads/handoff-F1.1\n\n", code: 0 });
+  const s = await buildState(dir, { git, gh: async () => ({ stdout: "[]", code: 0 }), now: 4 });
+  assert.deepEqual(s.attended.map((a) => [a.id, a.gates]), [["F1.1", ["F1.2"]]]);
+  assert.deepEqual(s.inFlight.map((i) => i.id), []);
+  assert.deepEqual(s.frontier.map((i) => i.id), [], "F1.2 waits on the hand-off");
+  assert.deepEqual(s.blocked, []);
+  rmSync(dir, { recursive: true });
+});
+
 import { renderPage } from "./sweap-board.page.mjs";
 
 test("renderPage returns a self-contained HTML doc with the poll targets", () => {
   const html = renderPage();
   assert.match(html, /<!doctype html>/i);
-  for (const id of ["frontier", "inflight", "mergequeue", "blocked", "backlog", "graph", "updated", "notes", "project"]) {
+  for (const id of ["frontier", "inflight", "mergequeue", "attended", "blocked", "backlog", "graph", "updated", "notes", "project"]) {
     assert.ok(html.includes(`id="${id}"`), `missing #${id}`);
   }
   assert.match(html, /\/state\.json/);           // client polls the endpoint

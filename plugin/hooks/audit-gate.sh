@@ -18,8 +18,18 @@
 # Modes:
 #   audit-gate.sh --check
 #       Repo-state mode (CI, /milestone & /roadmap pre-flights, and
-#       /milestone-audit's own self-check). Exit 0 = no audit debt and every
-#       record under audits/ is valid. Exit 1 = "FAIL: ..." lines on stdout.
+#       /milestone-audit's own self-check). Exit 0 = no audit debt, every
+#       record under audits/ is valid, and every hand-off item's provenance is
+#       clean. Exit 1 = "FAIL: ..." lines on stdout.
+#       TWO invariants share this mode, and callers that ACT on a failure must
+#       tell them apart by the line's prefix: "FAIL: milestone <m> ..." /
+#       "FAIL: record ..." is AUDIT DEBT (discharge it with /milestone-audit),
+#       while "FAIL: hand-off <id> ..." is a backlog-integrity violation that is
+#       not debt and is not discharged by an audit. They live in one script
+#       because both are deterministic git-provenance questions about the
+#       backlog, run by the same CI job on the same checkout — and adding a mode
+#       (or a script) would mean a consumer repo's workflow file had to change
+#       before the control could reach it.
 #   audit-gate.sh --files <path>...
 #       Merge mode (pre-merge-gate, CI diff classification). Given a PR's
 #       changed paths: exit 0 if the merge is allowed under the roadmap-scoped
@@ -378,7 +388,41 @@ done <<COMPLETE_EOF
 $COMPLETE
 COMPLETE_EOF
 
+# --- hand-off provenance: `attended` is AUTHORED, never TRANSITIONED into --------
+# A hand-off item (`status: attended`) says "this was always the human's to do".
+# The failure mode it creates is an agent relabelling its OWN stuck work as human
+# work: the goal template stops a run when only [blocked] and [attended] items
+# remain, so the flip converts an unfinished item into a legitimate termination
+# condition — and unlike [blocked] it carries no failure signal. That is the
+# textbook shape of a reward-hacked shortcut (2026-08-16 research memo, §3), and
+# the same memo's other finding is why this is a check and not a rule: prompts
+# telling a model not to take a shortcut are advisory and can even increase the
+# behaviour, while a deterministic check simply holds.
+#
+# The rule: for every item currently `attended`, the commit that introduced
+# `status: attended` must BE the commit that added the file. Authoring a hand-off
+# is legal; converting existing work into one is not. Provenance comes from git,
+# not from file content, so it cannot be forged by editing the item.
+#
+# The legitimate human move this forbids — "actually, F2.3 is mine now" — has a
+# supported path: archive F2.3 with a dropped_reason: and author the hand-off as a
+# new item. Both halves are visible in the diff, which is the point.
+#
+# Uncommitted files are skipped, not failed: /roadmap lints items in the working
+# tree before they are ever committed, and an unborn item has no provenance to
+# judge. CI runs this on the PR's own checkout, where the commits do exist.
 if [ "$MODE" = "--check" ]; then
+  for f in "${BACKLOG_DIR}"*.md; do
+    [ -f "$f" ] || continue
+    id="$(basename "$f" .md)"
+    case "$id" in *.*) : ;; *) continue ;; esac
+    [ "$(fm_get "$f" status)" = "attended" ] || continue
+    added="$(git log --diff-filter=A --format=%H -- "$f" 2>/dev/null | tail -1)"
+    became="$(git log --format=%H -S'status: attended' -- "$f" 2>/dev/null | tail -1)"
+    [ -n "$added" ] && [ -n "$became" ] || continue   # not committed yet — nothing to judge
+    [ "$added" = "$became" ] && continue
+    fail "hand-off $id: status: attended was introduced by $became but the item file was added by $added — an attended item is AUTHORED, never transitioned into (an agent must not relabel stuck work as human work; stuck work is [blocked]). If this is a deliberate re-assignment, archive $id with a dropped_reason: and author the hand-off as a new item."
+  done
   exit "$fails"
 fi
 
