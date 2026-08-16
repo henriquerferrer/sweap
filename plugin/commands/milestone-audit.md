@@ -51,9 +51,25 @@ to build its finder lens set — `default` runs the generic default lens set
 baked into the Workflow (correctness, authz/security, data-integrity,
 concurrency/races, test-integrity, api-contract); `default + [x, y]` appends
 project-drafted lenses for `x, y`; an explicit list replaces the defaults
-entirely for that run. The Workflow itself is **read-only**: finder → three
-adversarial refuters per finding → majority-survives. It never edits code and
-never triages — it returns the confirmed findings, sorted by severity.
+entirely for that run. The Workflow is finder → three adversarial refuters per
+finding → majority-survives. It never triages — it returns the confirmed
+findings, sorted by severity.
+
+Its finders and refuters are **mechanically read-only**: they run as the
+`audit-reader` agent (`Read`, `Grep`, `Glob` — no `Write`, no `Edit`, no
+`Bash`), so they cannot touch the repo even where a prompt might seem to invite
+it. Be precise about that guarantee's scope: the **Scope** stage needs `Bash`
+for `git log` and is constrained by instruction only. Until 2026-08-16 the whole
+workflow was read-only by documentation alone, and a refuter wrote a test file
+into a consumer repo's primary checkout to settle a claim it could not settle by
+reading — the docs did say read-only, but they said it to the calling session,
+never to the agent holding the tools.
+
+One consequence to expect: a refuter that *cannot run an experiment* now returns
+`refuted: false` and names the experiment, instead of refuting by default.
+Claims only a test run could settle survive to your triage rather than dying
+silently, so expect the occasional extra confirmed finding whose disposition is
+"verify this by hand".
 
 Once the Workflow returns, **triage every confirmed finding** into exactly one
 of the three buckets per the playbook's "Milestone audit" section (do this

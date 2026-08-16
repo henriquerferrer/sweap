@@ -163,12 +163,31 @@ const LENSES = (() => {
   return DEFAULT_LENSES
 })()
 
+// READ-ONLY IS A TOOLSET, NOT A SENTENCE. Every Find/Refute agent runs as
+// `audit-reader` (agents/audit-reader.md: Read, Grep, Glob — no Write, no Edit,
+// no Bash). Before this, the audit was documented read-only in the playbook and
+// in commands/milestone-audit.md, but both of those are addressed to the CALLING
+// SESSION: the finders and refuters never see them, their prompts said nothing
+// about writing, and they ran with the default workflow toolset. A refuter in a
+// consumer repo duly wrote `zz-refute-error-slot.test.tsx` into the human's
+// primary checkout to settle a claim empirically (2026-08-16) — doing exactly
+// what "or show the scenario cannot occur" invited, with the tools it was handed.
+// If you add a stage here, give it an agentType too, or say plainly in the docs
+// that it is not read-only. Never restore an unrestricted agent behind a prose
+// promise. (Scope, above, genuinely needs Bash for `git log` and is therefore
+// NOT mechanically constrained — that limit is documented, not hidden.)
+const NO_WRITES =
+  `\n\nYou are read-only: you have Read, Grep and Glob, and no way to run or write anything. ` +
+  `This audit reads merged code in someone's live checkout, so a file you create is one they find later and cannot attribute to anybody. ` +
+  `If a claim can only be settled by running something, say so in your answer rather than approximating it — never report an experiment you did not perform.`
+
 const found = await pipeline(
   LENSES,
   (lens) =>
     agent(
-      `${lens.prompt}\n\nMilestone scope (from a prior mapping agent):\n${scopeSummary}\n\nRead the actual code before claiming anything. Only report findings you can support with specific code evidence. No style nits — defects only.`,
-      { label: `find:${lens.key}`, phase: 'Find', schema: FINDINGS, effort: 'high' }
+      `${lens.prompt}\n\nMilestone scope (from a prior mapping agent):\n${scopeSummary}\n\nRead the actual code before claiming anything. Only report findings you can support with specific code evidence. No style nits — defects only.` +
+        NO_WRITES,
+      { label: `find:${lens.key}`, phase: 'Find', schema: FINDINGS, effort: 'high', agentType: 'audit-reader' }
     ),
   (result, lens) =>
     parallel(
@@ -179,8 +198,9 @@ const found = await pipeline(
           // silently killed true positives (review finding, PR #8).
           [1, 2, 3].map((i) => () =>
             agent(
-              `Adversarially REFUTE this audit finding about this codebase. Read the code at ${f.file} and its callers/tests yourself. Finding (lens ${lens.key}, severity ${f.severity}): ${f.title}\nClaim: ${f.claim}\nEvidence given: ${f.evidence}\n\nYour job is to prove it wrong: find the guard/test/permission check the finder missed, or show the scenario cannot occur. Default to refuted=true if the claim is uncertain, unreproducible, or already mitigated.`,
-              { label: `refute${i}:${f.title.slice(0, 30)}`, phase: 'Refute', schema: VERDICT, effort: 'high' }
+              `Adversarially REFUTE this audit finding about this codebase. Read the code at ${f.file} and its callers/tests yourself. Finding (lens ${lens.key}, severity ${f.severity}): ${f.title}\nClaim: ${f.claim}\nEvidence given: ${f.evidence}\n\nYour job is to prove it wrong BY READING: find the guard/test/permission check the finder missed, or show from the code that the scenario cannot occur. Default to refuted=true if the claim is uncertain or already mitigated. But if it is merely unreproducible-by-reading — i.e. only running something would settle it — return refuted=false and name that experiment in your reason; a finding that survives because it could not be disproved on the page is a correct outcome, and it goes to a human who can run things.` +
+                NO_WRITES,
+              { label: `refute${i}:${f.title.slice(0, 30)}`, phase: 'Refute', schema: VERDICT, effort: 'high', agentType: 'audit-reader' }
             )
           )
         ).then((verdicts) => {

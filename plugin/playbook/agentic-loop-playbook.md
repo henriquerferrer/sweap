@@ -647,11 +647,28 @@ the hard way: a hand-written milestone goal that once omitted the clause
 drained its items but stopped before its audit.)
 
 The evaluator won't call the goal met until the audit has run and its findings
-are triaged. The `/milestone-audit` **workflow itself is read-only** — it finds
-and reports confirmed findings, never edits code. What happens next is the
-**triage** the surrounding session performs (below): a bucket-1 fix is a
-deliberate, gated *follow-on* PR the session opens, not something the audit
-workflow does silently.
+are triaged. The `/milestone-audit` workflow finds and reports confirmed
+findings; it never edits code. What happens next is the **triage** the
+surrounding session performs (below): a bucket-1 fix is a deliberate, gated
+*follow-on* PR the session opens, not something the audit workflow does silently.
+
+**Read-only is a toolset, and its scope is exact.** The workflow's finders and
+refuters run as the `audit-reader` agent — `Read`, `Grep`, `Glob`, with no
+`Write`, `Edit` or `Bash` — so they *cannot* write to the repo. The `Scope`
+stage needs `Bash` for `git log` and is therefore governed by instruction only;
+say that rather than claiming the whole workflow is sealed. Why this is stated
+so precisely: until 2026-08-16 "read-only" lived exclusively in this paragraph
+and in `/milestone-audit`, both of which address the **calling session** — the
+finders and refuters never saw either, their prompts said nothing about writing,
+and they ran with the default toolset. A refuter in a consumer repo wrote a test
+file into the human's primary checkout to settle a claim empirically, where it
+sat untracked and would have run in their next test invocation. It did what the
+prompt invited with the tools it was handed. **A guarantee asserted to a third
+party is not a guarantee** — the same lesson as the hand-off escape hatch, one
+rung worse, because here the doctrine was never even communicated to the actor.
+Consequence of the lockdown, by design: a refuter that cannot run an experiment
+returns `refuted: false` and names it, so claims only a test run could settle now
+reach triage instead of being refuted by default.
 
 **Audit evidence (mandatory).** The audit only counts if it runs *after* the
 milestone's last item has actually merged to the project's default branch —
