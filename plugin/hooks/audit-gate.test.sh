@@ -553,5 +553,88 @@ commit_all "$R" rec
 run_gate "$R" --check
 check "blocks beyond total confirmed across axes => invalid" 1
 
+# --- T38-T43: the milestone boundary -------------------------------------------
+# The final PR of a milestone is the one merge the gate cannot ask for a record
+# on: the audit only runs against the merged mainline (playbook, "Audit
+# evidence"), and validate_record enforces that (range_head ancestor of HEAD).
+# Before this, that PR was denied in BOTH modes on its own checkout, so no
+# milestone could ever be completed. Consumer A hit it on F10.4, 2026-08-15.
+#
+# with_anchor <ref> <repo> <args...>: run the gate with SWEAP_MAIN_REF set.
+# Exported/unset around the call rather than prefixed onto run_gate — a
+# `VAR=x func` prefix on a FUNCTION can persist past the call in bash.
+with_anchor() { local a="$1"; shift; export SWEAP_MAIN_REF="$a"; run_gate "$@"; unset SWEAP_MAIN_REF; }
+
+# boundary_repo <name>: echoes "<repo> <base_sha>". At base_sha F1.1 is done and
+# F1.2 is todo (F1 incomplete); the tip flips F1.2 to done, exactly as the PR
+# that completes the milestone does.
+boundary_repo() {
+  local r; r="$(new_repo "$1")"
+  mk_item "$r" F1.1 done
+  mk_item "$r" F1.2 todo
+  commit_all "$r" base
+  local b; b="$(head_sha "$r")"
+  mk_item "$r" F1.2 done
+  commit_all "$r" "complete F1"
+  printf '%s %s\n' "$r" "$b"
+}
+
+# T38: --check on the completing diff -> pass, and say why
+read -r R BASE <<<"$(boundary_repo t38)"
+with_anchor "$BASE" "$R" --check
+check "milestone completed by this diff => --check passes" 0
+check_out "--check explains the deferral" "^DEFERRED: milestone F1 becomes complete"
+
+# T39: --files on the completing diff -> NOT denied. This is the case that
+# actually unblocks the merge: the CI job runs --files on the PR's own checkout,
+# and the PR touches the very item file that completed the milestone, so a
+# --check-only exemption would leave the deadlock intact.
+with_anchor "$BASE" "$R" --files roadmap/F1.2.md ROADMAP.md
+check "completing PR is not denied in merge mode" 0
+
+# T40: one PR later the exemption is GONE. The anchor now contains the
+# completion, so F1 is real debt and the next backlog-advancing PR is denied.
+with_anchor "$(head_sha "$R")" "$R" --files roadmap/F2.1.md
+check "after the completion lands, debt blocks the next item PR" 1
+check_out "post-landing denial names F1" "FAIL: audit debt .*F1"
+with_anchor "$(head_sha "$R")" "$R" --check
+check "after the completion lands, --check reports the debt" 1
+check_out "post-landing --check names F1" "FAIL: milestone F1 is complete but has no audit record"
+
+# T41: the exemption is per-milestone, not a blanket pass. Debt inherited from
+# the anchor still fails on the very same diff that completes another milestone.
+R="$(new_repo t41)"
+mk_item "$R" F0.1 done
+mk_item "$R" F1.1 done
+mk_item "$R" F1.2 todo
+commit_all "$R" base
+BASE="$(head_sha "$R")"
+mk_item "$R" F1.2 done
+commit_all "$R" "complete F1"
+with_anchor "$BASE" "$R" --check
+check "inherited debt still fails on a completing diff" 1
+check_out "inherited debt names F0" "FAIL: milestone F0 is complete but has no audit record"
+check_out "and F1 is still deferred" "^DEFERRED: milestone F1"
+with_anchor "$BASE" "$R" --files roadmap/F1.2.md
+check "inherited debt still denies the completing PR in merge mode" 1
+
+# T42: FAILS CLOSED on an unresolvable anchor — an unknown base exempts nothing,
+# so the pre-existing behaviour (and T3) is what a bogus ref gets.
+read -r R BASE <<<"$(boundary_repo t42)"
+with_anchor "refs/heads/no-such-branch-here" "$R" --check
+check "unresolvable anchor => nothing is exempt (fails closed)" 1
+check_out "fail-closed names the milestone" "FAIL: milestone F1 is complete but has no audit record"
+
+# T43: SCOPE — the exemption covers a MISSING record only. A record PRESENT on
+# the completing diff is validated strictly, because CI is the only surface that
+# catches a malformed record before it merges.
+read -r R BASE <<<"$(boundary_repo t43)"
+mk_record "$R" F1 "$BASE" "$(head_sha "$R")" 5 1 1 '### 1. x
+disposition: fix_pr #1'
+commit_all "$R" rec
+with_anchor "$BASE" "$R" --check
+check "a record present on the completing diff is still validated" 1
+check_out "malformed record on the completing diff is named" "FAIL: record .*raw (5)"
+
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" = 0 ]

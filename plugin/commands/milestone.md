@@ -18,6 +18,11 @@ Resolve the run:
   from the repo root — the repo's VENDORED gate when present, falling back to
   the plugin's (same reason as `/roadmap`: the vendored copy is what CI runs;
   the plugin path can be a stale cache build).
+ A `DEFERRED:` line is NOT debt: it means the state you are standing in is what
+  completed that milestone, so its audit could not have run yet (an audit reads
+  the merged default branch). Land that merge, then run `/milestone-audit` for
+  the named milestone before resolving anything new — the gate will deny the
+  next backlog-advancing PR until its record is in.
  Any `FAIL:` output means **audit debt**: a completed milestone lacks a
   valid audit record. The ONLY permitted work while debt exists is discharging
   it (run `/milestone-audit` for the named milestone; land its record PR) —

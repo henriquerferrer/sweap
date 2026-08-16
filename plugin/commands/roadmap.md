@@ -22,6 +22,9 @@ Resolve the milestone:
   while `${CLAUDE_PLUGIN_ROOT}` points at whatever plugin build this session
   resolved and can lag a record-format change. A pre-flight that disagrees with
   CI is worse than none — it trains you to wave off `FAIL:` lines.
+ A `DEFERRED:` line is not debt — the state you are in is what completed that
+  milestone, so its audit is due but could not yet have run. Land it, then
+  `/milestone-audit` that milestone before drafting the next one.
  `FAIL:` lines mean audit debt — do NOT draft the next milestone's
   items on top of an unaudited one; surface the debt and stop at that
   boundary (the merge gate would refuse the milestone PR anyway).

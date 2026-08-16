@@ -10,6 +10,11 @@
 # 2026-08-08 research memo: enforcement of "a valid audit EXISTS" is cheap and
 # deterministic even though the audit itself is expensive and session-run).
 #
+# The one merge this cannot ask for is the one that COMPLETES a milestone: the
+# audit is only legal against the merged mainline, so its record cannot exist
+# yet. That merge is exempt (see "the milestone boundary"); every merge after it
+# is not.
+#
 # Modes:
 #   audit-gate.sh --check
 #       Repo-state mode (CI, /milestone & /roadmap pre-flights, and
@@ -72,9 +77,9 @@ in_baseline() { local m; for m in $BASELINE; do [ "$m" = "$1" ] && return 0; don
 # item files) and compute complete milestones: milestone = id minus last dot
 # segment (parity with sweap-board.lib.mjs#milestoneOf); complete = every item
 # under the prefix is done. awk aggregation keeps this bash-3.2 safe.
-item_rows() { # "<milestone> <status>" per item file
-  local f id status
-  for f in "${BACKLOG_DIR}"*.md; do
+item_rows() { # item_rows [dir] -> "<milestone> <status>" per item file
+  local dir="${1:-$BACKLOG_DIR}" f id status
+  for f in "${dir}"*.md; do
     [ -f "$f" ] || continue
     id="$(basename "$f" .md)"
     case "$id" in *.*) : ;; *) continue ;; esac   # no dot => not an item file
@@ -86,7 +91,73 @@ item_rows() { # "<milestone> <status>" per item file
     printf '%s %s\n' "${id%.*}" "${status:-unknown}"
   done
 }
-COMPLETE="$(item_rows | awk '{tot[$1]++; if($2=="done") d[$1]++} END{for(m in tot) if(d[m]==tot[m]) print m}' | sort)"
+complete_from() { item_rows "$@" | awk '{tot[$1]++; if($2=="done") d[$1]++} END{for(m in tot) if(d[m]==tot[m]) print m}' | sort; }
+COMPLETE="$(complete_from)"
+
+# --- the milestone boundary -----------------------------------------------------
+# A milestone becomes complete in the very diff that flips its LAST item to done.
+# Both modes above compute COMPLETE from the tree they run in, so on that diff's
+# own checkout the milestone reads complete-with-no-record — and the audit that
+# would discharge it CANNOT have run yet: the playbook (§"Audit evidence") requires
+# the audit to run against the merged default branch, and validate_record enforces
+# that mechanically (range_head must be an ancestor of HEAD). The record is
+# unwritable before the merge and the merge was unreachable without the record.
+#
+# That deadlock was total: it blocked the final PR of EVERY milestone, forever.
+# Consumer A hit it on F10.4 (2026-08-15) the first time a milestone completed with the
+# CI job installed, and no ordering of merges escapes it.
+#
+# So: a milestone that is NOT complete at the mainline anchor but IS complete here
+# became complete in the state under review, and its missing record is not debt yet.
+# It becomes debt the moment this lands, and from then on the ordinary controls
+# hold the line one PR later, with no new machinery:
+#   - --files denies every subsequent backlog-advancing PR until the record lands
+#     (the anchor then contains the completion, so this exemption stops applying),
+#   - --check on push-to-main goes red immediately,
+#   - post-merge-auditcheck.sh raises it locally after the merge.
+# The first two are the enforcement. post-merge-auditcheck is a LOCAL PostToolUse
+# hook — stale-cacheable, silent on a web-UI merge, and it only writes a marker —
+# so do not rewrite this exemption as "deferred to the post-merge check". Resting
+# the invariant on that hook is precisely the hollow deferral the header comment
+# on merge mode warns about.
+#
+# SCOPE, deliberately narrow — this exempts a MISSING record only. A record that
+# is present is validated strictly even on the diff that completes its milestone,
+# because CI is the only surface that catches a malformed record before it merges.
+#
+# FAILS CLOSED: if the anchor cannot be resolved (no remote, offline, bad ref) the
+# base is unknown, nothing is exempt, and the gate behaves exactly as it did before.
+# The one relaxation is a local checkout whose main is ahead of an unpushed
+# origin/main: a completion merged locally reads as "new" until it is pushed.
+# push-to-main --check closes that window as soon as it exists.
+BASE_KNOWN=0
+BASE_COMPLETE=""
+if git rev-parse --verify -q "${MAIN_REF}^{commit}" >/dev/null 2>&1; then
+  if git rev-parse --verify -q "${MAIN_REF}:${BACKLOG_DIR%/}" >/dev/null 2>&1; then
+    # The backlog dir exists at the anchor: extract that tree and run the SAME
+    # parser over it. Reusing item_rows is the point — a second, divergent reading
+    # of the format is how the two states would drift apart.
+    if _bt="$(mktemp -d 2>/dev/null)"; then
+      if git archive --format=tar "${MAIN_REF}:${BACKLOG_DIR%/}" 2>/dev/null | (cd "$_bt" && tar -xf - 2>/dev/null); then
+        BASE_COMPLETE="$(complete_from "$_bt/")"
+        BASE_KNOWN=1
+      fi
+      rm -rf "$_bt"
+    fi
+  else
+    # Anchor resolves but has no backlog dir (the scaffolding commit): nothing was
+    # complete there. Known base, empty set — not the unknown-base case.
+    BASE_KNOWN=1
+  fi
+fi
+newly_complete() { # newly_complete <milestone>; 0 = became complete in the state under review
+  [ "$BASE_KNOWN" = 1 ] || return 1
+  local b
+  while IFS= read -r b; do [ "$b" = "$1" ] && return 1; done <<BASE_EOF
+$BASE_COMPLETE
+BASE_EOF
+  return 0
+}
 
 # --- record validation ----------------------------------------------------------
 # Task 2 (binding) and Task 3 (triage closure) extend this function. A record
@@ -280,6 +351,15 @@ while IFS= read -r m; do
   in_baseline "$m" && continue
   rec="${BACKLOG_DIR}audits/$m.md"
   if [ ! -f "$rec" ]; then
+    # The milestone boundary (see above). Exempt in BOTH modes, not just --check:
+    # the CI job runs --files against the PR's own checkout too, where this
+    # milestone reads complete and the PR touches the very item file that
+    # completed it — so a --check-only exemption would still deny the merge in
+    # merge mode and leave the deadlock fully intact.
+    if newly_complete "$m"; then
+      [ "$MODE" = "--check" ] && printf 'DEFERRED: milestone %s becomes complete in the state under review, so its audit cannot have run yet (the audit reads the MERGED default branch). Not debt here. It becomes debt the instant this lands: no backlog-advancing PR will pass the gate afterwards until %saudits/%s.md exists and validates. Run /milestone-audit for %s once this is on main.\n' "$m" "$BACKLOG_DIR" "$m" "$m"
+      continue
+    fi
     DEBT="$DEBT$m"$'\n'
     [ "$MODE" = "--check" ] && fail "milestone $m is complete but has no audit record ($rec) — run /milestone-audit for it"
   elif ! rec_out="$(validate_record "$m" "$rec")"; then

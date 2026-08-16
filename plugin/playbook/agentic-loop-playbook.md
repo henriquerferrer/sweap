@@ -606,6 +606,27 @@ refresh until sixteen hours after the bad merge. A check pinned in the repo
 cannot be stale-cached. **Any control that lives only in the plugin is a control
 whose version you do not know.**
 
+**The milestone boundary — the one merge the gate cannot ask for a record on.**
+The audit is only legal against the merged default branch (§"Audit evidence"),
+so on the PR that flips a milestone's *last* item to `done`, the record it would
+be asked for cannot exist yet: unwritable before the merge, and the merge
+unreachable without it. Both gate modes read the tree they run in, so on that
+PR's own checkout the milestone reads complete-with-no-record and both modes
+denied it — no milestone could ever be completed. Consumer A hit this on F10.4
+(2026-08-15), the first milestone to complete after the CI job was installed.
+
+The gate now exempts a milestone that is **not** complete at the mainline anchor
+but **is** complete in the state under review. The exemption is narrow: it covers
+a *missing* record only (a record that is present is still validated strictly, so
+CI keeps catching a malformed one before it merges), it is per-milestone (debt
+inherited from the anchor still denies that same PR), and it fails closed when
+the anchor cannot be resolved. Nothing is deferred to a backstop — one PR later
+the anchor contains the completion, the exemption stops applying by construction,
+and `--files` denies every backlog-advancing PR until the record lands. **So the
+audit is still mandatory; it is merely sequenced after the merge that makes it
+possible.** Merge the completing PR, then run `/milestone-audit` for it before
+anything else touches the backlog.
+
 **Required checks may not be available to you — plan the enforcement, not just
 the check.** Branch protection and rulesets are a PAID feature for private
 repos: on a Free plan both APIs 403 with *"Upgrade to GitHub Pro or make this

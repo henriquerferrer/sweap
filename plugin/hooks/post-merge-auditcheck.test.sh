@@ -31,6 +31,12 @@ check() { # check <desc> <wanted-rc>
   else fail=$((fail+1)); printf '  FAIL  %s (exit %s, wanted %s)\n%s\n' "$desc" "$RC" "$want" "$OUT"; fi
 }
 
+check_out() { # check_out <desc> <grep-pattern> (asserts on last run's OUT)
+  local desc="$1" pat="$2"
+  if printf '%s\n' "$OUT" | grep -q "$pat"; then pass=$((pass+1)); printf '  PASS  %s\n' "$desc"
+  else fail=$((fail+1)); printf '  FAIL  %s (no match: %s)\n%s\n' "$desc" "$pat" "$OUT"; fi
+}
+
 new_repo() {
   local r="$WORK/$1"
   mkdir -p "$r/roadmap/audits"
@@ -84,14 +90,43 @@ anchor_main "$R"
 run_hook "$R" "gh pr merge 125 --squash"
 check "record inherited from an older sweap => stays quiet" 0
 
-# T4: a complete milestone with NO record at all is unambiguous debt — no
-# format-version subtlety involved, alarm regardless of when it landed.
+# T4: a complete milestone with no record, where THIS merge is what completed it.
+# Not an alarm: the audit reads the MERGED branch, so it could not have run
+# before now, and the pre-merge gate allowed this merge deliberately (audit-gate,
+# "the milestone boundary"). It is a REMINDER — exit 0, distinct banner, distinct
+# durable marker — because "milestone completed, nobody audited, a new milestone
+# authored on top" is the 2026-08-11 incident itself.
 R="$(new_repo t4)"
 mk_done_item "$R" F9.1
 commit_all "$R"
 anchor_main "$R"
 run_hook "$R" "gh pr merge 130 --squash"
-check "complete milestone with no record => alarms" 2
+check "merge that COMPLETES a milestone => reminder, not alarm" 0
+check_out "reminder names the milestone" "AUDIT DUE — this merge completed milestone(s): F9"
+check_out "reminder does not cry debt" "Not debt and not a failure"
+if ls "$R/.claude"/audit-due-*.flag >/dev/null 2>&1; then
+  pass=$((pass+1)); printf '  PASS  %s\n' "reminder leaves a durable audit-due marker"
+else
+  fail=$((fail+1)); printf '  FAIL  %s\n' "reminder leaves a durable audit-due marker"
+fi
+if ls "$R/.claude"/audit-debt-*.flag >/dev/null 2>&1; then
+  fail=$((fail+1)); printf '  FAIL  %s\n' "reminder must NOT leave an alarm marker"
+else
+  pass=$((pass+1)); printf '  PASS  %s\n' "reminder must NOT leave an alarm marker"
+fi
+
+# T4b: the milestone was ALREADY complete before this merge and still has no
+# record — real debt, and the exemption must not launder it. Alarm, exit 2.
+# This is what T4 used to assert and what must survive the boundary change.
+R="$(new_repo t4b)"
+mk_done_item "$R" F9.1
+commit_all "$R" "F9 completes"
+anchor_main "$R"
+printf 'x\n' > "$R/src.ts"
+commit_all "$R" "PR #131: unrelated code"
+anchor_main "$R"
+run_hook "$R" "gh pr merge 131 --squash"
+check "milestone complete BEFORE this merge, no record => alarms" 2
 
 # T5: a clean repo stays quiet (no false alarm on the happy path).
 R="$(new_repo t5)"

@@ -104,6 +104,52 @@ wait "$watcher" 2>/dev/null
 out="$(cat "$tmp" 2>/dev/null)"
 rm -f "$tmp"
 
+# A merge that COMPLETED a milestone is the one case that is neither clean nor an
+# alarm. The gate exempts it deliberately (audit-gate.sh, "the milestone
+# boundary"): the audit is only legal against the merged mainline, so it could
+# NOT have run before this merge. Alarming here would cry wolf on the normal
+# happy path and contradict the pre-merge gate that just — correctly — allowed
+# the merge. Two controls disagreeing is worse than either alone.
+#
+# But it must not go silent either. "F9 completed, nobody ran its audit, three
+# PRs later a whole new milestone was authored on top" IS the 2026-08-11
+# incident. This merge is precisely the moment the audit becomes both possible
+# and mandatory, so it earns the same durable marker as a real alarm — under a
+# distinct name, with a distinct message, at exit 0. A reminder that blocks
+# nothing, and that the next session still sees.
+#
+# rc=0 (a clean run) is required: on a watchdog kill `out` is partial, and a
+# timed-out backstop stays quiet by design.
+if [ "$rc" = "0" ]; then
+  deferred="$(printf '%s\n' "$out" | grep '^DEFERRED:' || true)"
+  [ -n "$deferred" ] || exit 0
+  due="$(printf '%s\n' "$deferred" | sed -n 's/^DEFERRED: milestone \([^ ]*\) .*/\1/p' | tr '\n' ' ')"
+  marker_dir="$primary/.claude"
+  if mkdir -p "$marker_dir" 2>/dev/null; then
+    {
+      printf 'AUDIT DUE on main after merge at %s\n' "$(git -C "$primary" rev-parse --short HEAD 2>/dev/null)"
+      printf 'detected at: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)"
+      printf 'merge command: %s\n\n' "$cmd"
+      printf 'This merge COMPLETED milestone(s): %s\n' "$due"
+      printf 'The audit could not run before it (an audit reads the MERGED default\n'
+      printf 'branch). It can now, and it must: the gate will deny every\n'
+      printf 'backlog-advancing PR until each record lands and validates.\n\n'
+      printf 'Run /milestone-audit for each, land the record + triage follow-ups,\n'
+      printf 'then delete this marker.\n'
+    } > "$marker_dir/audit-due-$(git -C "$primary" rev-parse --short HEAD 2>/dev/null || echo unknown).flag" 2>/dev/null || true
+  fi
+  {
+    printf '\n################################################################\n'
+    printf '## AUDIT DUE — this merge completed milestone(s): %s\n' "$due"
+    printf '## Not debt and not a failure: the audit reads the MERGED branch, so it\n'
+    printf '## could not have run before now. It can now, and the gate will deny the\n'
+    printf '## next backlog-advancing PR until its record lands.\n'
+    printf '## Run /milestone-audit for each BEFORE authoring new backlog items.\n'
+    printf '################################################################\n'
+  } >&2
+  exit 0
+fi
+
 # Only a clean, non-zero verdict alarms. STALE: lines are pre-format records
 # inherited from an older sweap — reported by --check, non-blocking by design,
 # and emphatically not a "you just merged debt" event.

@@ -17,7 +17,10 @@ the record they land in does not parse. In order:
    `record` field** — it is the format template already filled in from the run's
    own data. Fill its `<FILL:...>` markers; do not compose the record yourself.
 4. Run `bash "$([ -f .github/scripts/audit-gate.sh ] && echo .github/scripts/audit-gate.sh || echo "${CLAUDE_PLUGIN_ROOT}/hooks/audit-gate.sh")" --check` and fix any
-   `FAIL:` line before opening the PR.
+   `FAIL:` line before opening the PR. (Run it from the repo root on the merged
+   default branch. A `DEFERRED:` line for the milestone you are auditing means
+   you are standing on a checkout where its last item is not yet merged — the
+   audit is not legal there; merge first.)
 5. Land record + follow-up items + index update in ONE PR through the gate.
 
 Step 3 is the one that has actually failed in the field: a consumer repo's F9
