@@ -666,9 +666,49 @@ sat untracked and would have run in their next test invocation. It did what the
 prompt invited with the tools it was handed. **A guarantee asserted to a third
 party is not a guarantee** — the same lesson as the hand-off escape hatch, one
 rung worse, because here the doctrine was never even communicated to the actor.
-Consequence of the lockdown, by design: a refuter that cannot run an experiment
-returns `refuted: false` and names it, so claims only a test run could settle now
-reach triage instead of being refuted by default.
+
+**Three verdicts, because "I couldn't check" is not a defence of the code.** A
+refuter returns `refuted` (a positive, code-grounded disproof — cite it),
+`stands` (read it thoroughly, could not break it), or `unverifiable` (only
+running something would settle it; the experiment must be named, and an
+`unverifiable` naming none is demoted to `stands`, so abstaining is never the
+cheap way out). Two refutations kill a finding — a **fixed** threshold, never
+renormalised to "a majority of votes cast", because renormalising would let two
+abstentions promote the third refuter to a majority of one, handing a single
+voter a veto exactly when the panel is least informed. Abstentions and lost
+votes are handled identically: excluded from the numerator, threshold unchanged.
+Why not a binary flag: a binary verdict forces a judge that lacks the evidence
+to guess, and whichever way the prompt tells it to guess, a limit of the
+*refuter's tools* silently becomes a claim about the *code*. Killing on
+uncertainty destroys true findings — the closest published system to this one
+lost a real CVE that way, unanimously, rescued only by a human. Passing them
+through as ordinary survivors floods triage with claims nobody checked, which is
+the documented way defect-finding tools lose their audience and get switched off.
+
+**The Validate stage — the empirical gate, spent only where reading ran out.**
+When a finding's panel *mostly abstained*, one `audit-prover` agent runs the
+named experiment and returns a verdict backed by a pasted command and its actual
+output. It has `Bash` and `Write`; its containment is `isolation: 'worktree'` —
+a throwaway git worktree, auto-removed if unchanged — rather than tool removal.
+Be equally honest about that: worktree isolation relocates the working
+directory, it is not a jail, and an absolute path escapes it. The agent's own
+instructions forbid absolute paths, and the failure it contains is the
+accidental one that actually happened, not an adversarial one. The stage exists
+because adversarial reasoning catches reasoning errors and not empirical ones —
+in that same published system, ten agents including a senior arbiter unanimously
+confirmed a finding that one fresh instance killed by compiling the code and
+running three tests. It is dispatched **conditionally**: a worktree per refuter
+would mean ninety sandboxes to settle a handful of verdicts.
+
+**`unverified` findings are a coverage gap, not a defect.** A finding that
+survived because nobody could check it is reported separately — a subset of
+`confirmed`, plus an optional `unverified:` key in the record and a
+`status: UNVERIFIED` line in its block. Triage it as **bucket 2**, a follow-up
+item that writes the missing experiment, not as a bucket-1 bug. Never let it be
+counted as "confirmed by adversarial review": that claims three adversaries
+failed to refute it when in fact three adversaries never looked. A large
+`unverified` count is itself the finding — it means the audit's reading tier is
+out of its depth on that surface.
 
 **Audit evidence (mandatory).** The audit only counts if it runs *after* the
 milestone's last item has actually merged to the project's default branch —

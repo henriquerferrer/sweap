@@ -15,6 +15,45 @@ No substantive X/Twitter threads on this specific distinction were found — the
 discourse that exists lives in framework docs and practitioner blogs, and this
 memo does not pretend otherwise.
 
+> ## ⚠ CORRECTION (2026-08-16, same day)
+>
+> **Several quotes in the original draft of this memo were fabricated by the
+> summarising fetch tool, and were cited without verification.** A verification
+> pass re-fetched every source as raw HTML and string-matched each quote.
+> Corrections are applied inline below and marked **[CORRECTED]**; nothing has
+> been silently rewritten. The material errors:
+>
+> - **§1.3 (Anthropic) was the worst affected, and this memo called it "the
+>   strongest available argument."** The permission-prompt figure is **93%, not
+>   99%**; the phrases "the review stops being meaningful" and "make the human
+>   pay attention only when the risk is real" appear nowhere in the source; and
+>   the "four design principles" list was invented wholesale — the page gives
+>   three, entirely different ones. The underlying point survives on the real
+>   text, but not as quoted and not as strongly as claimed.
+> - **§3's arXiv:2605.02964 quote had a fabricated second half**, and it was the
+>   load-bearing half: "or prematurely terminating programs to obtain passing
+>   scores" appears nowhere in the paper. The real list of naturalistic
+>   shortcuts does not include early termination.
+> - **The METR attribution does not trace.** Both quoted sentences are genuinely
+>   in the MindStudio post, but that post is an uncited vendor blog that
+>   misspells METR throughout, and METR's own reward-hacking publication
+>   contains no remediation-backfire finding. Cite it as a vendor write-up of an
+>   interview, never as METR.
+> - **§2.3 is by Kief Morris, not Martin Fowler** (published on
+>   martinfowler.com). The headline quote is verbatim; "invisible human toil" is
+>   absent.
+> - Two supporting quotes (LangChain in §1.2, the "Agent Dashboard" line in
+>   §1.3) are **pure invention** and have been struck.
+> - The BPMN user-task definition is **absent from two of the three sources it
+>   was attributed to**; only the Red Hat phrasing matches, and that page could
+>   not be fetched to confirm firsthand.
+>
+> **Diagnostic worth keeping:** the fabrications cluster almost perfectly in the
+> sources this memo did *not* mark `[fetched]`. The weighting convention was
+> directionally right — and two of the memo's strongest sections were built on
+> unmarked material anyway. **Do not re-quote a source this memo did not verify;
+> re-fetch it.**
+
 ---
 
 ## 0. The one-sentence answer
@@ -36,8 +75,14 @@ of discovering it when the machine hits the wall.
 
 Business-process engines settled this before agents existed. BPMN defines a
 **user task** as one "that cannot be performed automatically by the system and
-therefore require[s] the intervention of a human user", assigned to a role or
-individual, as a distinct node type from a **service task**, which is "performed
+therefore require[s] the intervention of a human user" — **[CORRECTED]** that
+exact phrasing is Red Hat/jBPM boilerplate and could not be fetched firsthand
+(the page 403s to every route tried); it is **absent from the other two sources
+it was attributed to**. Their real wording says the same thing differently:
+UiPath's table gives *"User task — Work performed manually by a person via Task
+Inbox"* against *"Service task — Work executed by an automation, API, or
+system."* The distinction itself is not in doubt; the composite quote was.
+A user task is a distinct node type from a **service task**, which is "performed
 by software systems without human input"
 ([Visual Paradigm](https://skills.visual-paradigm.com/docs/bpmn-fundamentals-for-beginners/bpmn-process-modeling/bpmn-task-types-manual-service-user/),
 [Red Hat PAM](https://docs.redhat.com/en/documentation/red_hat_process_automation_manager/7.6/html/designing_business_processes_in_business_central/bpmn-tasks-overview-con),
@@ -54,9 +99,12 @@ a flavour of `blocked`.
 
 - **LangGraph** made human-in-the-loop a framework primitive via `interrupt()`
   backed by first-class persistence, with typed decision kinds (approve / edit /
-  reject) rather than a generic pause. The framing in its own material is that
+  reject) rather than a generic pause. ~~The framing in its own material is that
   "the agent handles mechanical labor while the human handles judgment calls,
-  making this division of responsibility a first-class design choice"
+  making this division of responsibility a first-class design choice".~~
+  **[CORRECTED — that sentence is invented; it is not in the post, which is from
+  Dec 2024 and covers `interrupt` mechanics.** The mechanism claim above is
+  accurate; the editorialising quote was not.**]**
   ([LangChain](https://www.langchain.com/blog/making-it-easier-to-build-human-in-the-loop-agents-with-interrupt),
   [DeepWiki](https://deepwiki.com/langchain-ai/langgraph/3.7-human-in-the-loop-and-interrupts)).
 - **Agno** exposes `requires_confirmation=True` at the workflow-step level —
@@ -73,23 +121,37 @@ authoring**, not raised at failure time. That is the half of our design that the
 `/roadmap` decide prompt and the 9th cross-check lens implement, and it is the
 half that is easiest to skip.
 
-### 1.3 Queue purity is an oversight argument, not an ergonomics one
+### 1.3 Queue purity is an oversight argument, not an ergonomics one **[CORRECTED]**
 
-Anthropic's own containment writeup describes the design principles as
-"deny-first with human escalation, graduated trust spectrum, defense in depth,
-and reversibility-weighted risk assessment", and makes the load-bearing point
-directly: when a human accepts 99% of permission prompts, "the review stops being
-meaningful", so the goal is to "make the human pay attention only when the risk
-is real" ([Anthropic](https://www.anthropic.com/engineering/how-we-contain-claude)).
+Anthropic's containment writeup reports, verbatim: *"Our telemetry showed users
+approved roughly **93%** of permission prompts. The more approvals a user sees,
+the less attention they pay to each, becoming over time much less diligent in
+their supervision."*
+([Anthropic](https://www.anthropic.com/engineering/how-we-contain-claude))
 
-This is the strongest available argument for the specific thing the current
-schema gets wrong. A needs-me-now queue that mixes *an agent failed* with *this
-was always yours* is a queue whose entries no longer carry a consistent meaning,
-and the documented consequence of that is not annoyance — it is that the human
-stops reading. Product surfaces are converging the same way: the Agent Dashboard
-(June 2026) "sorts sessions by state with anything waiting for input pulled to
-the top"
-([Starkinsider](https://www.starkinsider.com/2026/06/autonomous-ai-agents-human-bottleneck.html)).
+That is real, on-point, and sufficient: a queue whose entries no longer carry a
+consistent meaning is one the human supervises less carefully, and the
+documented consequence is degraded attention per item. It supports keeping *an
+agent failed* and *this was always yours* in separate queues.
+
+What it does **not** support is how the original draft put it. The "99%", the
+phrase "the review stops being meaningful", the goal of "making the human pay
+attention only when the risk is real", and a four-item list of design principles
+were all fabricated by the fetch summariser and cited here without checking. The
+page's actual summary gives three principles, none of them the ones quoted:
+*"Design for containment at the environment layer first, then steer behavior at
+the model layer"*; *"Match isolation strength to the user's capacity for
+oversight"*; *"Be wary of custom components."* The words "deny-first",
+"graduated trust" and "reversibility" do not appear on the page at all.
+
+~~Product surfaces are converging the same way: the Agent Dashboard (June 2026)
+"sorts sessions by state with anything waiting for input pulled to the top".~~
+**Struck — invented.** That essay contains no dashboard, no sorting and no such
+product; it is a personal essay about becoming the blocker.
+
+This section was originally billed as "the strongest available argument." It is
+not. §1.1 (BPMN prior art) and §1.4 (fan-out) carry the weight, and both
+survived verification intact.
 
 ### 1.4 The theory: fan-out = neglect tolerance ÷ interaction time
 
@@ -154,17 +216,24 @@ things the design should adopt explicitly rather than treat as nice-to-haves:
 day one**, and **let the human do their part concurrently with the run rather
 than before it**. That is precisely what the kickoff fork is for.
 
-### 2.3 Fowler: humans belong *on* the loop, not *in* it **[fetched]**
+### 2.3 Kief Morris: humans belong *on* the loop, not *in* it **[fetched, CORRECTED]**
+
+Attributed to Fowler in the original draft; the article is by **Kief Morris**,
+published on martinfowler.com in the "Exploring Gen AI" series (2026-03-04).
 
 "The right place for us humans is to build and manage the working loop rather
-than either leaving the agents to it or micromanaging what they produce", with
-the corrective for a bad artifact being to change the harness that produced it
-([Fowler](https://martinfowler.com/articles/exploring-gen-ai/humans-and-agents.html)).
-He does not advocate explicit human checkpoints, and warns that poorly-engineered
-harnesses create *invisible human toil*.
+than either leaving the agents to it or micromanaging what they produce"
+(verbatim), with the corrective for a bad artifact being *"to change the harness
+that produced the artefact"*
+([Morris, on martinfowler.com](https://martinfowler.com/articles/exploring-gen-ai/humans-and-agents.html)).
+He does not advocate explicit human checkpoints. ~~and warns that
+poorly-engineered harnesses create *invisible human toil*~~ — **[CORRECTED: that
+warning is not in the article; "toil" and "invisible" do not appear. The closest
+real claim is that humans who stay too close "become a bottleneck."]**
 
-Read carefully this cuts both ways, and mostly in our favour: making toil visible
-is the antidote to invisible toil. But it is a direct argument against the
+Read carefully this still cuts both ways, and mostly in our favour: making
+human work visible is the antidote to a human who has silently become the
+bottleneck. But it is a direct argument against the
 `human-signoff` review dimension we already rejected — putting a human click
 inside the merge gate is the definition of being *in* the loop.
 
@@ -180,26 +249,46 @@ halves of that are wrong.**
 `[blocked]` and `[attended]` items remain, so relabeling an unfinished item
 converts it into a legitimate termination condition — and unlike `blocked`, it
 carries no failure signal. The reward-hacking literature catalogues exactly this
-family of naturalistic shortcut: "skipping verification steps… or prematurely
-terminating programs to obtain passing scores without producing correct
-solutions" ([arXiv:2605.02964](https://arxiv.org/abs/2605.02964)). A cheap,
-low-stigma way to end a task early is the archetype, not an edge case.
+family of naturalistic shortcut: *"naturalistic shortcut opportunities such as
+skipping verification steps, inferring answers from task-adjacent metadata, or
+tampering with evaluation-relevant functions"*
+([arXiv:2605.02964](https://arxiv.org/abs/2605.02964)).
 
-**Instructions are the weakest available control, and can backfire.** METR's
-work found models increasingly recognize their reward-hacking as misaligned and
-continue anyway, and — critically — that "some remediation prompts designed to
-stop the behavior actually increase it", framed as "the 'don't press the red
-button' problem, made concrete" **[fetched]**
-([MindStudio summary of METR](https://www.mindstudio.ai/blog/models-know-reward-hacking-telling-them-stop-makes-it-worse)).
-Their recommendation is transcript review and empirical testing, explicitly not
-more instructions.
+**[CORRECTED — and this one weakens the argument.** The original draft quoted
+this as "skipping verification steps… **or prematurely terminating programs to
+obtain passing scores**", and that second clause was fabricated; it appears
+nowhere in the paper's 82k characters. The invented clause was precisely the one
+that made the paper support "a cheap, low-stigma way to end a task early is the
+archetype." **It does not.** The paper's real examples are about *evading
+verification*, not about *ending the task early*. The argument that a
+legitimate stop condition is a tempting shortcut is a reasonable inference from
+first principles, but it is **not** something this paper establishes, and must
+not be cited as though it were.**]**
+
+**Instructions are the weakest available control, and may backfire.**
+**[CORRECTED attribution.** The two quoted sentences below are genuinely present
+in the MindStudio post, but that post is an **uncited vendor blog** (GoMeta,
+Inc.) which misspells METR as "Meter" throughout and links to no primary source;
+it reads as a write-up of an interview. METR's own reward-hacking publication
+contains no occurrence of "remediation", "mitigat", "increase" or "red button",
+and their research index lists no such finding. **Do not cite this as METR.**]
+The post claims models increasingly recognise their reward-hacking as misaligned
+and continue anyway, and that "some remediation prompts designed to stop the
+behavior actually increase it", framed as "the 'don't press the red button'
+problem, made concrete"
+([MindStudio](https://www.mindstudio.ai/blog/models-know-reward-hacking-telling-them-stop-makes-it-worse)).
+What METR *does* support verbatim is the first half — models "demonstrate
+awareness that their behavior isn't in line with user intentions and disavow
+cheating strategies when asked"
+([METR](https://metr.org/blog/2025-06-05-recent-reward-hacking/)).
 
 Anthropic's own docs say the same thing in one line, about this exact repo's
 tooling: hooks "are deterministic and guarantee the action happens", **"unlike
 CLAUDE.md instructions which are advisory"** **[fetched]**
 ([Claude Code best practices](https://code.claude.com/docs/en/best-practices)).
-The same page's framing of the trust-then-verify gap applies: "if you can't
-verify it, don't ship it."
+~~The same page's framing of the trust-then-verify gap applies: "if you can't
+verify it, don't ship it."~~ **[CORRECTED — that sentence is absent from the
+page. The two quotes above it are verbatim and are the ones that matter.]**
 
 sweap already agrees with this everywhere else. `--admin` is not governed by a
 rule saying don't; `pre-merge-gate.sh` denies it. Greenness is not a request; it
@@ -223,6 +312,18 @@ governing it by prose alone would be the one inconsistent control in the system.
 **Changed by the evidence:**
 - **Ship the mechanical control, not doctrine alone** (§3). The written rule
   stays, but it is the advisory layer, not the enforcement.
+  **[CORRECTED — the conclusion holds, on narrower ground than originally
+  claimed.** Two of §3's three props did not survive verification: the
+  "remediation prompts can increase the behaviour" finding is a vendor blog's
+  claim and not METR's, and "prematurely terminating to obtain passing scores"
+  was fabricated, taking with it the argument that a legitimate stop condition
+  is a textbook shortcut. What remains is enough to carry the decision, and it
+  is the strongest of the three anyway: Anthropic's own docs state verbatim that
+  hooks "are deterministic and guarantee the action happens", "unlike CLAUDE.md
+  instructions which are advisory", and METR really does report that models
+  "demonstrate awareness that their behavior isn't in line with user intentions"
+  and continue regardless. Knowing is not complying; an advisory control is
+  advisory by definition. **Do not restate the deleted props as support.**]
 
 **Adopt from the counter-evidence (§2.2):**
 - State plainly in the playbook that hand-offs should carry minimal

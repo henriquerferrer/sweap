@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SRC = readFileSync(join(HERE, "milestone-audit.js"), "utf8");
 const AGENT = readFileSync(join(HERE, "..", "agents", "audit-reader.md"), "utf8");
+const PROVER = readFileSync(join(HERE, "..", "agents", "audit-prover.md"), "utf8");
 
 // Option-object literals that name a phase. Matched line-scoped rather than
 // brace-balanced because the labels contain `${...}` interpolations; every
@@ -60,10 +61,71 @@ test("finder and refuter prompts also state the constraint in words", () => {
   assert.ok(uses.length >= 3, `NO_WRITES should be defined once and appended to both prompts (found ${uses.length} mentions)`);
 });
 
-test("the refuter does not refute a claim merely because it could not run it", () => {
-  // Removing Bash makes more claims unreproducible-by-the-refuter. Left alone,
-  // "default to refuted=true if unreproducible" would turn the lockdown into a
-  // silent kill-switch for exactly the findings that most need a human.
-  assert.match(SRC, /refuted=false/, "the refuter prompt must carve out unreproducible-by-reading");
-  assert.doesNotMatch(SRC, /uncertain,\s*unreproducible,\s*or already mitigated/, "the old refute-by-default-on-unreproducible wording is back");
+test("the Validate stage is sandboxed and uses the prover, not the reader", () => {
+  const validate = optionObjects.filter(([, phase]) => phase === "Validate");
+  assert.equal(validate.length, 1, "expected exactly one Validate dispatch");
+  assert.match(validate[0][0], /agentType:\s*'audit-prover'/);
+  // For an agent that CAN write, containment is about WHERE it writes. Without
+  // worktree isolation this stage reintroduces the bug it exists downstream of.
+  assert.match(validate[0][0], /isolation:\s*'worktree'/, "the prover must run in a throwaway worktree");
+});
+
+test("audit-prover may write and run, but only ever inside its own worktree", () => {
+  const tools = PROVER.match(/^tools:\s*(.+)$/m);
+  assert.ok(tools, "audit-prover.md must declare a tools: line");
+  const granted = tools[1].split(",").map((t) => t.trim());
+  assert.ok(granted.includes("Bash") && granted.includes("Write"), "the prover exists to run experiments; it needs both");
+  // Worktree isolation relocates the default working directory — it is not a
+  // jail, so an absolute path escapes it. That rule has to live in the agent's
+  // own instructions, because nothing else enforces it.
+  assert.match(PROVER, /absolute path/i, "audit-prover must forbid absolute paths explicitly");
+  assert.match(PROVER, /[Nn]ever commit/, "audit-prover must forbid committing from its worktree");
+});
+
+test("a three-valued verdict, and 'refuted' is never where uncertainty goes", () => {
+  assert.match(SRC, /enum:\s*\['refuted',\s*'stands',\s*'unverifiable'\]/, "the refuter verdict must be three-valued");
+  assert.doesNotMatch(SRC, /refuted:\s*\{\s*type:\s*'boolean'/, "the binary verdict is back — it forces a guess from a judge with no evidence");
+  assert.doesNotMatch(SRC, /Default to refuted=true/, "refute-by-default-on-uncertainty is back");
+  assert.match(SRC, /not about the code/, "the prompt must say that inability to verify is a fact about tools, not about the code");
+});
+
+// --- the vote arithmetic, extracted and actually executed --------------------
+// A Workflow script runs against injected globals with no module access, so it
+// cannot be imported and the tally cannot live in a shared file. Extracting the
+// marked pure function and evaluating it is how the arithmetic gets real
+// behavioural coverage instead of a grep over its source.
+const tallySrc = SRC.match(/\/\/ TALLY-START[\s\S]*?\n(const tally = [\s\S]*?\n\})\n\/\/ TALLY-END/);
+assert.ok(tallySrc, "could not extract the TALLY block — keep the markers around a single pure `const tally = ...`");
+const tally = new Function(`${tallySrc[1]}; return tally;`)();
+
+const vote = (verdict, experiment) => ({ verdict, reason: "r", ...(experiment ? { experiment } : {}) });
+const REF = vote("refuted"), STANDS = vote("stands");
+const ABS = vote("unverifiable", "pnpm test foo");
+const SHRUG = vote("unverifiable");
+
+test("tally: two refutations kill; one does not", () => {
+  assert.equal(tally([REF, REF, STANDS]).confirmed, false);
+  assert.equal(tally([REF, STANDS, STANDS]).confirmed, true);
+});
+
+test("tally: abstentions never count as refutations, and never lower the bar", () => {
+  // The bug this guards: renormalising to "a majority of votes cast" would make
+  // one refuter a majority once two abstain, handing a single voter a veto
+  // exactly when the panel knows least.
+  assert.equal(tally([REF, ABS, ABS]).confirmed, true, "1 refutation must not kill, however many abstained");
+  assert.equal(tally([ABS, ABS, ABS]).confirmed, true);
+  // A LOST vote (null) is treated identically to an abstention.
+  assert.equal(tally([REF, null, null]).confirmed, true);
+});
+
+test("tally: a mostly-abstaining panel routes to the empirical gate, a mostly-reading one does not", () => {
+  assert.equal(tally([ABS, ABS, STANDS]).needsProof, true);
+  assert.equal(tally([ABS, STANDS, STANDS]).needsProof, false, "one abstention against two real reads is not a stalemate");
+  assert.equal(tally([REF, REF, ABS]).needsProof, false, "a killed finding is not worth a sandbox");
+  assert.equal(tally([ABS, ABS, STANDS]).experiment, "pnpm test foo", "the named experiment must reach the prover");
+});
+
+test("tally: an abstention naming no experiment is demoted, so abstaining is not free", () => {
+  assert.equal(tally([SHRUG, SHRUG, STANDS]).needsProof, false, "shrugs must not buy a sandboxed run");
+  assert.equal(tally([SHRUG, SHRUG, SHRUG]).confirmed, true);
 });

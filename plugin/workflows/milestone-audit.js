@@ -5,7 +5,8 @@ export const meta = {
   phases: [
     { title: 'Scope', detail: 'map the milestone surface (tables, routes, server fns) and resolve audit.lenses' },
     { title: 'Find', detail: 'one finder per lens over the merged whole' },
-    { title: 'Refute', detail: 'three adversarial refuters per finding; majority kills' },
+    { title: 'Refute', detail: 'three read-only refuters per finding; 2 refutations kill' },
+    { title: 'Validate', detail: 'sandboxed run of the named experiment, only for findings reading could not settle' },
   ],
 }
 
@@ -30,11 +31,42 @@ const FINDINGS = {
   },
 }
 
+// THREE-VALUED, deliberately. A binary `refuted` forces a judge that lacks the
+// evidence to guess, and the prompt then decides which way it guesses — which is
+// how a capability limit ("I can't run this") silently becomes a claim about the
+// code ("this isn't a defect"). Binary grading makes guessing strictly better
+// than abstaining for the grader (Kalai et al. 2025), and the field's answer for
+// this exact shape is a third label: FEVER's SUPPORTED / REFUTED / NOT ENOUGH
+// INFO exists because binary was found inadequate for "the evidence doesn't
+// settle it". `stands` and `unverifiable` are epistemically opposite — "I read
+// it hard and could not break it" vs "I could not look" — and collapsing them
+// destroys the routing signal that tells a human which findings need a test run.
 const VERDICT = {
   type: 'object',
-  required: ['refuted', 'reason'],
+  required: ['verdict', 'reason'],
   properties: {
-    refuted: { type: 'boolean', description: 'true if the claim does NOT hold' },
+    verdict: {
+      enum: ['refuted', 'stands', 'unverifiable'],
+      description:
+        "'refuted' = a positive, code-grounded disproof (cite it). 'stands' = you read it thoroughly and could not break it. 'unverifiable' = reading alone cannot settle this; only running something would.",
+    },
+    reason: { type: 'string' },
+    experiment: {
+      type: 'string',
+      description:
+        "REQUIRED when verdict is 'unverifiable': the specific command or test that would settle the claim. An 'unverifiable' naming no experiment is counted as 'stands', so abstaining is never the cheap way out.",
+    },
+  },
+}
+
+// The Validate stage's verdict — same shape of question, but earned by running
+// something rather than by reading, which is the entire point of that stage.
+const PROOF = {
+  type: 'object',
+  required: ['verdict', 'evidence'],
+  properties: {
+    verdict: { enum: ['refuted', 'confirmed', 'unverifiable'] },
+    evidence: { type: 'string', description: 'the command actually run and its actual output, pasted' },
     reason: { type: 'string' },
   },
 }
@@ -181,6 +213,42 @@ const NO_WRITES =
   `This audit reads merged code in someone's live checkout, so a file you create is one they find later and cannot attribute to anybody. ` +
   `If a claim can only be settled by running something, say so in your answer rather than approximating it — never report an experiment you did not perform.`
 
+// TALLY-START — the vote arithmetic, kept as one pure function between these
+// markers because milestone-audit.test.mjs EXTRACTS and evaluates it. A Workflow
+// script runs against injected globals with no module access, so it cannot be
+// imported and this cannot be a shared file; extraction is how the arithmetic
+// gets real behavioural coverage instead of a grep. Keep the markers, keep it
+// pure, and keep it free of closure references.
+const tally = (verdicts) => {
+  const votes = (verdicts || []).filter(Boolean)
+  // An abstention naming no experiment is not an abstention, it is a shrug —
+  // and if shrugging counted, it would be the cheapest move on the board.
+  // Demote it to 'stands' so abstaining keeps a price (the same forcing function
+  // that makes a finder state why its own candidate might not be real).
+  const verdictOf = (v) =>
+    v.verdict === 'unverifiable' && !String(v.experiment ?? '').trim() ? 'stands' : v.verdict
+  const refuted = votes.filter((v) => verdictOf(v) === 'refuted').length
+  const abstained = votes.filter((v) => verdictOf(v) === 'unverifiable')
+  // FIXED threshold of 2 — never renormalised to "a majority of votes cast".
+  // Renormalising would let two abstentions promote the third refuter to a
+  // majority of one, handing a single voter a veto exactly when the panel is
+  // least informed: the PR #8 bug in a new costume. Abstentions and LOST votes
+  // are handled identically — excluded from the numerator, threshold unchanged.
+  // That is the learning-with-rejection result (an abstaining voter leaves the
+  // covered set) and the Nitzan-Paroush one (a voter at p≈0.5 carries weight
+  // zero, not a vote in either direction).
+  const killed = refuted >= 2
+  // Reading ran out only when the panel MOSTLY abstained. One abstention against
+  // two substantive reads is not a stalemate and is not worth a sandbox.
+  const needsProof = !killed && abstained.length >= 2
+  return {
+    confirmed: !killed,
+    needsProof,
+    experiment: abstained.find((v) => String(v.experiment ?? '').trim())?.experiment ?? null,
+  }
+}
+// TALLY-END
+
 const found = await pipeline(
   LENSES,
   (lens) =>
@@ -198,26 +266,82 @@ const found = await pipeline(
           // silently killed true positives (review finding, PR #8).
           [1, 2, 3].map((i) => () =>
             agent(
-              `Adversarially REFUTE this audit finding about this codebase. Read the code at ${f.file} and its callers/tests yourself. Finding (lens ${lens.key}, severity ${f.severity}): ${f.title}\nClaim: ${f.claim}\nEvidence given: ${f.evidence}\n\nYour job is to prove it wrong BY READING: find the guard/test/permission check the finder missed, or show from the code that the scenario cannot occur. Default to refuted=true if the claim is uncertain or already mitigated. But if it is merely unreproducible-by-reading — i.e. only running something would settle it — return refuted=false and name that experiment in your reason; a finding that survives because it could not be disproved on the page is a correct outcome, and it goes to a human who can run things.` +
+              `Adversarially REFUTE this audit finding about this codebase. Read the code at ${f.file} and its callers/tests yourself. Finding (lens ${lens.key}, severity ${f.severity}): ${f.title}\nClaim: ${f.claim}\nEvidence given: ${f.evidence}\n\nReturn exactly one of three verdicts.\n` +
+                `- 'refuted' — you found a POSITIVE, code-grounded disproof: the guard/test/permission check the finder missed, or code showing the scenario cannot occur. Cite it (path:line). Refuting requires evidence; it is not the default and it is not where uncertainty goes.\n` +
+                `- 'stands' — you read it thoroughly, including callers and tests, and could not break it.\n` +
+                `- 'unverifiable' — reading alone cannot settle this; only running something would. Name that exact command or test in the 'experiment' field. An 'unverifiable' with no experiment named is counted as 'stands', so do not use it as a shrug.\n\n` +
+                `Do NOT return 'refuted' because you are unsure. "I cannot verify this" is a fact about your tools, not about the code, and turning it into a refutation is how a real defect gets killed by a capability limit.` +
                 NO_WRITES,
               { label: `refute${i}:${f.title.slice(0, 30)}`, phase: 'Refute', schema: VERDICT, effort: 'high', agentType: 'audit-reader' }
             )
           )
-        ).then((verdicts) => {
-          const votes = verdicts.filter(Boolean)
-          const refuted = votes.filter((v) => v.refuted).length
-          // Majority of cast votes kills; lost refuter votes don't count
-          // against the finding.
-          return { ...f, lens: lens.key, confirmed: refuted < 2 }
-        })
+        ).then((verdicts) => ({ ...f, lens: lens.key, ...tally(verdicts) }))
       )
     )
 )
 
 const all = found.filter(Boolean).flat().filter(Boolean)
+
+// --- Validate: the empirical gate, spent only where reading ran out ------------
+// Adversarial reasoning catches reasoning errors; it does not catch empirical
+// ones. In the closest published system to this one, ten agents including a
+// senior arbiter unanimously confirmed a padding-oracle finding by reasoning,
+// and one fresh instance that compiled the code and ran three tests killed it —
+// "one test killed what 80+ agents' reasoning could not". Restricting the
+// refuters to read-only (the containment fix) deleted that gate; this stage
+// gives it back WITHOUT giving anyone write access to the user's checkout.
+//
+// `isolation: 'worktree'` is the containment: a fresh git worktree per agent,
+// auto-removed if unchanged, so a test file written where an agent naturally
+// writes one lands in a throwaway copy instead of the human's tree. Be honest
+// about its strength — it relocates the DEFAULT working directory, it is not a
+// jail. An absolute path still escapes it, which is why audit-prover.md makes
+// relative-paths-only a hard rule. The failure this contains was accidental,
+// not adversarial, and that is the threat it is sized for.
+//
+// CONDITIONALLY dispatched: only findings whose refuter panel MOSTLY abstained
+// pay for a worktree (~200-500ms + a checkout each). Auditing 30 findings with
+// 3 refuters each would otherwise mean 90 sandboxes to salvage a handful of
+// verdicts. Cheap read-only panel first, empirical gate only where it is the
+// deciding factor — the stage-gated shape the literature converged on.
+const pending = all.filter((f) => f.needsProof)
+if (pending.length) log(`${pending.length} finding(s) reading could not settle — running the named experiments in sandboxes`)
+const proofs = await parallel(
+  pending.map((f) => () =>
+    agent(
+      `A read-only refuter panel could not settle this audit finding: the verdict needs something RUN. You have a throwaway git worktree — use it.\n\n` +
+        `Finding (lens ${f.lens}, severity ${f.severity}): ${f.title}\nFile: ${f.file}\nClaim: ${f.claim}\nEvidence given: ${f.evidence}\n\n` +
+        `The experiment the panel said would settle it:\n${f.experiment || '(none named — design the smallest decisive experiment yourself)'}\n\n` +
+        `Run it. Paste the exact command and its exact output as your evidence. Return 'refuted' if the claim does not hold, 'confirmed' if it does, or 'unverifiable' if you genuinely could not run a decisive experiment (say what blocked you). Never report a result you did not observe.`,
+      { label: `prove:${f.title.slice(0, 30)}`, phase: 'Validate', schema: PROOF, effort: 'high', agentType: 'audit-prover', isolation: 'worktree' }
+    ).then((p) => ({ finding: f, proof: p }))
+  )
+)
+for (const r of proofs.filter(Boolean)) {
+  const f = r.finding
+  const v = r.proof?.verdict
+  // A LOST validator leaves the finding exactly as the panel left it: surviving
+  // but unproven. Losing the empirical gate must never silently upgrade a
+  // finding to "verified", and must never kill it either.
+  if (v === 'refuted') { f.confirmed = false; f.proven = 'refuted' }
+  else if (v === 'confirmed') { f.proven = 'confirmed' }
+  else { f.proven = 'unverifiable' }
+  f.proofEvidence = r.proof?.evidence ?? null
+}
+
 const confirmed = all.filter((f) => f.confirmed)
 const killed = all.length - confirmed.length
-log(`${all.length} raw findings, ${killed} refuted, ${confirmed.length} confirmed`)
+// A finding that survived only because nobody could check it is NOT "confirmed
+// by adversarial review", and a record that counts it as one overclaims: it
+// says three adversaries failed to refute when in fact three adversaries never
+// looked. Tracked as a SUBSET of confirmed so the record's
+// `raw = refuted + confirmed` arithmetic (audit-gate.sh) is untouched — the
+// same purely-additive move `axes:` used, no sweap_format bump.
+const unverified = confirmed.filter((f) => f.needsProof && f.proven !== 'confirmed')
+log(
+  `${all.length} raw findings, ${killed} refuted, ${confirmed.length} confirmed` +
+    (unverified.length ? ` (${unverified.length} of them UNVERIFIED — reading could not settle them and the sandboxed run did not either)` : '')
+)
 
 const order = { critical: 0, high: 1, medium: 2, low: 3 }
 confirmed.sort((a, b) => order[a.severity] - order[b.severity])
@@ -248,29 +372,54 @@ const record = [
   `raw: ${all.length}`,
   `refuted: ${killed}`,
   `confirmed: ${confirmed.length}`,
+  // Optional, additive, and a SUBSET of `confirmed` — so `raw = refuted +
+  // confirmed` still holds and audit-gate.sh needs no change (same move as
+  // `axes:`). Emitted only when non-zero: a record that silently counts
+  // never-checked findings as adversarially-confirmed is a record that
+  // overclaims its own evidence.
+  ...(unverified.length ? [`unverified: ${unverified.length}`] : []),
   `workflow_run: <FILL:this run's workflow id>`,
   `journal_sha256: <FILL:shasum -a 256 <transcriptDir>/journal.jsonl>`,
   '---',
   '',
   `# ${scope?.milestone ?? 'milestone'} audit`,
   '',
-  ...confirmed.flatMap((f, i) => [
-    `### ${i + 1}. ${f.title}`,
-    `severity: ${f.severity}`,
-    `lens: ${f.lens}`,
-    `disposition: <FILL: fix_pr #NN | followup <id> | blocked <id>>`,
-    '',
-    `file: ${f.file}`,
-    '',
-    f.claim,
-    '',
-  ]),
+  ...confirmed.flatMap((f, i) => {
+    // An unverified finding is a TEST-COVERAGE GAP, not an established defect:
+    // nothing disproved it and nothing demonstrated it. Saying so in the block
+    // (and steering its disposition to a follow-up item that writes the missing
+    // test) keeps the confirmed list honest about what it is claiming.
+    const unproven = f.needsProof && f.proven !== 'confirmed'
+    return [
+      `### ${i + 1}. ${f.title}`,
+      `severity: ${f.severity}`,
+      `lens: ${f.lens}`,
+      ...(unproven
+        ? [
+            `status: UNVERIFIED — the refuter panel could not settle this by reading${f.proven === 'unverifiable' ? ' and the sandboxed run could not either' : ''}`,
+            `experiment: ${f.experiment || '(none named)'}`,
+            `disposition: <FILL: followup <id> — an item that writes the experiment above; use fix_pr/blocked only if you have verified it yourself>`,
+          ]
+        : [`disposition: <FILL: fix_pr #NN | followup <id> | blocked <id>>`]),
+      '',
+      `file: ${f.file}`,
+      '',
+      f.claim,
+      '',
+      ...(f.proofEvidence ? [`Sandboxed run:`, '', '```', f.proofEvidence, '```', ''] : []),
+    ]
+  }),
 ].join('\n')
 
 return {
   milestone: scope?.milestone,
   range: scope?.range,
   confirmed,
-  stats: { raw: all.length, refuted: killed, confirmed: confirmed.length },
+  // `unverified` is a subset of `confirmed`, surfaced separately so the calling
+  // session can triage it as what it is — a coverage gap needing an experiment,
+  // not an established defect. The playbook's summary requirement quotes
+  // `stats` verbatim, so the number travels into the run summary too.
+  unverified,
+  stats: { raw: all.length, refuted: killed, confirmed: confirmed.length, unverified: unverified.length },
   record,
 }

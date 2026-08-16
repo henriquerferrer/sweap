@@ -65,11 +65,26 @@ into a consumer repo's primary checkout to settle a claim it could not settle by
 reading — the docs did say read-only, but they said it to the calling session,
 never to the agent holding the tools.
 
-One consequence to expect: a refuter that *cannot run an experiment* now returns
-`refuted: false` and names the experiment, instead of refuting by default.
-Claims only a test run could settle survive to your triage rather than dying
-silently, so expect the occasional extra confirmed finding whose disposition is
-"verify this by hand".
+A refuter returns one of **three** verdicts — `refuted` (a cited, code-grounded
+disproof), `stands` (read it thoroughly and could not break it), or
+`unverifiable` (only running something would settle it, and it must name that
+experiment). Two refutations kill a finding; abstentions are excluded from the
+count and never lower the bar. When a panel *mostly* abstains, a **Validate**
+stage runs the named experiment in a throwaway git worktree (`audit-prover`,
+`isolation: 'worktree'`) and returns a verdict backed by a pasted command and
+its actual output.
+
+**This changes what you triage.** The Workflow now returns `unverified` — a
+subset of `confirmed` — and the record carries an `unverified:` count plus a
+`status: UNVERIFIED` line on those blocks. Those are **coverage gaps, not
+established defects**: nothing disproved them and nothing demonstrated them.
+Triage them as **bucket 2**, a follow-up item that writes the experiment named
+in the block, and reach for bucket 1 or 3 only if you verified the claim
+yourself. Do not report them as "confirmed by adversarial review" — that claims
+three adversaries failed to refute what three adversaries never looked at. If
+the `unverified` count is large, say so in the summary: it means the audit's
+reading tier was out of its depth on that surface, which is worth more than any
+single entry in the list.
 
 Once the Workflow returns, **triage every confirmed finding** into exactly one
 of the three buckets per the playbook's "Milestone audit" section (do this
