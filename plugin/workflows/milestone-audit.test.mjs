@@ -70,6 +70,21 @@ test("the Validate stage is sandboxed and uses the prover, not the reader", () =
   assert.match(validate[0][0], /isolation:\s*'worktree'/, "the prover must run in a throwaway worktree");
 });
 
+test("audit-reader's restriction is declared in depth, not once", () => {
+  // `tools:` alone is a definition-time restriction, and Claude Code's docs are
+  // explicit that omitting it inherits EVERY tool without erroring — so a botched
+  // edit fails wide open. disallowedTools is applied first and survives that;
+  // audit-agent-guard.sh then denies at the moment of the call regardless.
+  for (const t of ["Write", "Edit", "NotebookEdit", "Bash"]) {
+    assert.match(AGENT, new RegExp(`^disallowedTools:.*\\b${t}\\b`, "m"), `disallowedTools must include ${t}`);
+  }
+});
+
+test("a high unverified ratio is called out, not left as a number to divide", () => {
+  assert.match(SRC, /unverified\.length \* 2 >= confirmed\.length/, "expected a ratio check on the unverified count");
+  assert.match(SRC, /PROVISIONAL/, "the warning must say what to do with the list, not just report a number");
+});
+
 test("audit-prover may write and run, but only ever inside its own worktree", () => {
   const tools = PROVER.match(/^tools:\s*(.+)$/m);
   assert.ok(tools, "audit-prover.md must declare a tools: line");

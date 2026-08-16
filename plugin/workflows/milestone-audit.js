@@ -342,6 +342,19 @@ log(
   `${all.length} raw findings, ${killed} refuted, ${confirmed.length} confirmed` +
     (unverified.length ? ` (${unverified.length} of them UNVERIFIED — reading could not settle them and the sandboxed run did not either)` : '')
 )
+// Say it loudly when most of the "confirmed" list was never actually checked.
+// A bare count is easy to skim past, and separating unverified from confirmed
+// achieves nothing if the reader has to do the division themselves. A high ratio
+// is a finding ABOUT THE AUDIT — the reading tier was out of its depth on this
+// surface — and it needs reading BEFORE the list is trusted, not after.
+if (confirmed.length && unverified.length * 2 >= confirmed.length) {
+  log(
+    `⚠ ${unverified.length} of ${confirmed.length} confirmed findings are UNVERIFIED — nothing ` +
+      `disproved them and nothing demonstrated them. Treat this list as PROVISIONAL: the panel ` +
+      `could not check most of what it passed through. Triage the unverified ones as coverage ` +
+      `gaps (bucket 2 — write the named experiment), not as established defects.`
+  )
+}
 
 const order = { critical: 0, high: 1, medium: 2, low: 3 }
 confirmed.sort((a, b) => order[a.severity] - order[b.severity])

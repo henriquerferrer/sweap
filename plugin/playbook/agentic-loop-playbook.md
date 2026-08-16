@@ -654,7 +654,18 @@ surrounding session performs (below): a bucket-1 fix is a deliberate, gated
 
 **Read-only is a toolset, and its scope is exact.** The workflow's finders and
 refuters run as the `audit-reader` agent — `Read`, `Grep`, `Glob`, with no
-`Write`, `Edit` or `Bash` — so they *cannot* write to the repo. The `Scope`
+`Write`, `Edit` or `Bash` — so they *cannot* write to the repo. That is enforced
+at three independent layers, because a `tools:` line is a *definition-time*
+restriction and a botched edit dropping it inherits every tool without erroring:
+the `tools:` list, a `disallowedTools:` list (applied first, so it survives that
+edit), and `audit-agent-guard.sh` — a `PreToolUse` hook that fires inside
+sub-agents, reads `agent_type`, and denies at the moment of the call regardless
+of whether either list took effect. That third layer carries the weight, because
+workflow sub-agents run with file edits auto-approved and no human prompt behind
+them. The same hook confines `audit-prover` to its worktree by denying an
+absolute-path write outside the session cwd; its `Bash` is deliberately NOT
+path-checked, because a shell line cannot be parsed reliably enough to be a
+control, and pretending otherwise would be worse than saying so. The `Scope`
 stage needs `Bash` for `git log` and is therefore governed by instruction only;
 say that rather than claiming the whole workflow is sealed. Why this is stated
 so precisely: until 2026-08-16 "read-only" lived exclusively in this paragraph
