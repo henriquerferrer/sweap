@@ -153,6 +153,28 @@ test("deriveBacklog produces frontier, blocked, grouped backlog, edges", () => {
   assert.ok(d.edges.some((e) => e.from === "F1.1" && e.to === "F1.2"));
 });
 
+test("deriveBacklog: blocked items carry their boundary count (absent reads as 0)", () => {
+  const items = [
+    mk("F1.1", "blocked", [], { blocked: "which scope?", carried: 2 }),
+    mk("F1.2", "blocked", [], { blocked: "keep it persistent?" }),
+  ];
+  const d = deriveBacklog(items);
+  assert.deepEqual(d.blocked.map((b) => [b.id, b.carried]), [["F1.1", 2], ["F1.2", 0]]);
+});
+
+test("loadItems reads carried:, defaulting a missing or junk value to 0", () => {
+  const item = (id, extra) => `---\nid: ${id}\ntitle: ${id}\nstatus: blocked\ndepends_on: []\nblocked: "a question"\n${extra}---\n\n# ${id}\n`;
+  const dir = fixture({
+    "roadmap/F1.1.md": item("F1.1", "carried: 3\n"),
+    "roadmap/F1.2.md": item("F1.2", ""),
+    "roadmap/F1.3.md": item("F1.3", "carried: soon\n"),
+  });
+  const byId = new Map(loadItems(dir, "roadmap/").map((i) => [i.id, i]));
+  assert.equal(byId.get("F1.1").carried, 3);
+  assert.equal(byId.get("F1.2").carried, 0);
+  assert.equal(byId.get("F1.3").carried, 0);   // roadmap-lint rejects it; the board must not render NaN
+});
+
 test("deriveBacklog: attended items are their own queue, never the frontier or blocked", () => {
   const items = [
     mk("F1.1", "attended", [], { handoff: "create the live Stripe account" }),

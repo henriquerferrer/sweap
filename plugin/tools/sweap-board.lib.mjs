@@ -87,7 +87,7 @@ export function loadItems(projectDir, backlogDir) {
   try { files = readdirSync(dir).filter((f) => f.endsWith(".md")); } catch { return []; }
   return files.map((f) => {
     const id = f.replace(/\.md$/, "");
-    const bad = { id, title: id, status: "unknown", dependsOn: [], reviewDimensions: [], lane: null, followupOf: null, blocked: null, handoff: null, malformed: true, file: f };
+    const bad = { id, title: id, status: "unknown", dependsOn: [], reviewDimensions: [], lane: null, followupOf: null, blocked: null, carried: 0, handoff: null, malformed: true, file: f };
     let fm;
     try { fm = parseFrontmatter(readFileSync(join(dir, f), "utf8")).fm; } catch { return bad; }
     if (!fm || !fm.status) return bad;
@@ -100,6 +100,10 @@ export function loadItems(projectDir, backlogDir) {
       lane: fm.lane || null,
       followupOf: fm.followup_of || null,
       blocked: fm.blocked || null,
+      // Milestone boundaries this question has survived unanswered. Absent on
+      // every item authored before the blocked-queue drain shipped, and absent
+      // on every question that has never crossed a boundary — both read as 0.
+      carried: Number.isFinite(Number(fm.carried)) && Number(fm.carried) >= 0 ? Number(fm.carried) : 0,
       handoff: fm.handoff || null,
       malformed: Boolean(fm.id && fm.id !== id),
       file: f,
@@ -169,7 +173,12 @@ export function deriveBacklog(items) {
     .filter((i) => i.status === "todo" && isUnblocked(i, byId, byMilestone))
     .sort(compareItems);
 
-  const blocked = items.filter((i) => i.status === "blocked").map((i) => ({ id: i.id, title: i.title, question: i.blocked || "(no question recorded)" }));
+  // `carried` rides along so the column can show a question's AGE. The queue was
+  // always visible here; what it never showed is that a question had sat through
+  // whole milestones, which is the thing that makes it worth answering now.
+  const blocked = items
+    .filter((i) => i.status === "blocked")
+    .map((i) => ({ id: i.id, title: i.title, question: i.blocked || "(no question recorded)", carried: i.carried || 0 }));
 
   // Hand-offs are a SEPARATE queue from blocked on purpose: blocked means an
   // agent failed and needs an answer, attended means this was always the

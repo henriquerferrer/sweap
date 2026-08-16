@@ -69,6 +69,20 @@ if [ "$status" = "attended" ] && [ -z "$(get handoff)" ]; then
   fail "attended item missing handoff: (the task the human performs — if it is a QUESTION for the human to answer, the item is blocked, not attended)"
 fi
 
+# `carried:` counts the MILESTONE BOUNDARIES a blocked question has survived
+# unanswered. /roadmap's blocked-queue pre-flight is its only writer. It is
+# deliberately optional and never required: no pre-existing item file has it, an
+# absent value reads as 0 everywhere, and a question that has never crossed a
+# boundary has nothing to record. It is also NOT rejected on other statuses —
+# like `blocked:` itself (see consumer A FL.1), it is retained after the item is
+# answered, as the record of how long the answer took. All this lint owes it is
+# the format contract, so `carried: soon` can't reach the board or the gate.
+if printf '%s\n' "$fm" | grep -q '^carried:'; then
+  case "$(get carried)" in
+    ""|*[!0-9]*) fail "carried: must be a non-negative integer (the count of milestone boundaries this question has survived unanswered)" ;;
+  esac
+fi
+
 # --- depends_on: the flat inline [a, b] form the whole greppable substrate
 # assumes. A YAML block list (or a bare scalar) reads as an empty inline value
 # and would silently skip dependency resolution, so reject anything that is not

@@ -31,10 +31,60 @@ Resolve the milestone:
  Other `FAIL:` lines mean audit debt — do NOT draft the next milestone's
   items on top of an unaudited one; surface the debt and stop at that
   boundary (the merge gate would refuse the milestone PR anyway).
+ `AGING:` lines are not debt and never fail: they are the open blocked
+  questions and how many boundaries each has survived. They are step 0's
+  input — carry them there, don't just print them.
 - The first argument if given (e.g. `F3` or `DS4`, naming its prefix
   explicitly); otherwise the next milestone from the index's "Later milestones"
   sketch that has **no item files yet** under `backlog.dir` (the next one to
   author), using the default prefix above.
+
+**Step 0 — work the blocked queue, BEFORE the brainstorm.** A milestone boundary
+is the one moment a direction call is already being made and new work is already
+being scoped, and it is where blocked questions leak: they are surfaced in three
+read-only places and drained in none, so they survive whole milestones unasked
+(`docs/research/2026-08-16-blocked-question-queue.md`). The `AGING:` lines the
+pre-flight gate just printed are this step's input. Keep it a **separate step**:
+answering accumulated questions inside the new milestone's narrative anchors them
+to it, and the two are different modes.
+
+1. Read every `status: blocked` item file, for any configured prefix.
+2. **Triage** each into one of three, using `/unblock`'s classification (read
+   that command's step 2 — the same rules apply here):
+   - *premise invalidated* by shipped code — propose closing, **with the
+     evidence**;
+   - *both branches produce the same item file* (the double-turn test) — propose
+     closing with the default, showing the two identical simulations;
+   - *a direction call* — prepare it; **never answer it yourself**.
+   Propose the first two categories as **one batch confirmation** — they are
+   evidence, not decisions, and cost the human a single yes.
+3. **Rank** what remains: most transitively-gated not-yet-done items first, then
+   highest `carried:`, then oldest.
+4. **Ask at most three**, one at a time, Socratically — *plus every item at
+   `carried: ≥2`, which is mandatory*. The cap is deliberate: dumping the whole
+   queue at a boundary gets it satisficed (clinical-decision-support override
+   rates run 49–96%), and a rubber-stamped answer is worse than an unanswered
+   question because it leaves a record saying it was answered. The human can ask
+   for more.
+5. **`carried: ≥2` is asked, not offered.** The brainstorm does not start until
+   each such item is answered, defaulted on the human's explicit say-so (recorded
+   as an answer, marked `(default taken)`), or dropped with a `dropped_reason:`.
+   Its `> **RECOMMENDATION:**` note has by then been in the file for a full
+   boundary, so the deadline never springs a fresh proposal on anyone.
+6. **Everything left unresolved carries.** Increment `carried:`, append
+   `> **CARRIED (YYYY-MM-DD):** unanswered through <milestone>.` under
+   `## Notes`, and add `> **RECOMMENDATION (YYYY-MM-DD):** <default> —
+   <rationale>` if the item has none yet. Then state the skip and its cost in one
+   line and move on.
+
+Below `carried: 2` this is a **soft** gate — surface, offer, record the skip —
+unlike the audit-debt check above it, which is hard. Audit debt is never
+legitimately deferrable; a direction call is, up to a point, and that point is
+what `carried:` measures. Answered items flip `blocked → todo` with a spec
+authored (or to `done` when the answer produces no work) exactly as `/unblock`
+defines, and then rejoin the frontier like any other item — that is how a
+question you answer here gets built in the next `/milestone` run. All of step 0's
+writes ride in the milestone PR the brainstorm produces; do not open a second one.
 
 Run the **milestone brainstorm** exactly as the playbook's "Milestone brainstorm"
 section defines it. The three decision phases (decide, cross-check, reconcile)
@@ -52,7 +102,9 @@ review is asked for:
    (unblocked `status: todo` item files with `followup_of:` set, for any
    configured prefix) as read-only context, so the
    new milestone isn't authored blind to pending fixes on the same surface.
-   (A frontmatter scan — no header matching needed.) Do NOT drain or reschedule
+   (A frontmatter scan — no header matching needed.) This scan covers pending
+   *fixes* only; pending *questions* are step 0's job and are already resolved
+   or carried by the time you get here. Do NOT drain or reschedule
    them here — `/roadmap` stays a pure direction-loop command; execution
    scheduling is `/milestone`'s job.
    Likewise surface the **idea inbox** (`<backlog.dir>ideas/*.md`, if any) as

@@ -700,5 +700,65 @@ commit_all "$R" mixed
 run_gate "$R" --check
 check "an open hand-off keeps its milestone incomplete (no audit debt)" 0
 
+# --- blocked-question aging (AGING:, informational, never a failure) -----------
+# The whole point of this block is that it CANNOT change an exit code. If a
+# future edit lets it, these are the tests that catch it.
+mk_blocked() { # mk_blocked <repo> <id> [carried]
+  local r="$1" id="$2" carried="${3:-}"
+  { printf -- '---\nid: %s\ntitle: %s\nstatus: blocked\ndepends_on: []\nreview-dimensions: []\n' "$id" "$id"
+    printf 'blocked: "Should the row lead with the file name? Answer with > ANSWER: add it / skip it."\n'
+    [ -n "$carried" ] && printf 'carried: %s\n' "$carried"
+    printf -- '---\n\n# %s\n' "$id"
+  } > "$r/roadmap/$id.md"
+}
+
+# T50: a blocked item with no debt anywhere still exits 0, and says so.
+R="$(new_repo t50)"
+mk_blocked "$R" F1.1
+mk_item "$R" F1.2 todo
+commit_all "$R" blocked-question
+run_gate "$R" --check
+check "a blocked question never fails the gate" 0
+check_out "AGING line names the item" "AGING: blocked F1\.1 "
+check_out "AGING line points at /unblock" "/unblock F1\.1"
+
+# T51: absent carried: reads as 0, not as an error or a blank.
+check_out "absent carried: reads as 0" "carried 0 milestone boundary"
+
+# T52: at carried >= 2 the message changes from offered to ASKED — this is the
+# bounded-deferral deadline, and the wording is the only thing that carries it.
+R="$(new_repo t52)"
+mk_blocked "$R" F1.1 2
+mk_item "$R" F1.2 todo
+commit_all "$R" carried-twice
+run_gate "$R" --check
+check "a twice-carried question still does not fail the gate" 0
+check_out "carried 2 says ASKED, not offered" "AGING: blocked F1\.1 — carried 2 .*ASKED, not offered"
+
+# T53: AGING coexists with real audit debt without masking it — the debt still
+# fails, still names the milestone, and the AGING line rides alongside.
+R="$(new_repo t53)"
+mk_item "$R" F1.1 done
+mk_blocked "$R" F2.1
+commit_all "$R" debt-and-a-question
+run_gate "$R" --check
+check "audit debt still fails with a blocked item present" 1
+check_out "debt is still named" "FAIL: milestone F1 .*no audit record"
+check_out "AGING rides alongside the failure" "AGING: blocked F2\.1 "
+
+# T54: merge mode (--files) says nothing about blocked items. Blocked questions
+# are a boundary concern; the merge path must stay silent and fast.
+R="$(new_repo t54)"
+mk_blocked "$R" F1.1
+mk_item "$R" F1.2 todo
+commit_all "$R" q
+run_gate "$R" --files src/a.ts
+check "merge mode passes with a blocked item" 0
+if printf '%s\n' "$OUT" | grep -q '^AGING:'; then
+  fail=$((fail+1)); printf '  FAIL  merge mode must not print AGING lines\n%s\n' "$OUT"
+else
+  pass=$((pass+1)); printf '  PASS  merge mode prints no AGING lines\n'
+fi
+
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" = 0 ]

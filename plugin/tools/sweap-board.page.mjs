@@ -19,6 +19,9 @@ export function renderPage() {
   .item { padding:6px 8px; border:1px solid var(--line); border-radius:6px; margin-bottom:6px; background:var(--bg); }
   .item b { font-weight:600; } .meta { color:var(--muted); font-size:12px; }
   .blocked .item { border-color:var(--bad); } .blocked .q { color:var(--bad); }
+  /* A carried question is one that has already outlived a milestone. Warn-toned
+     rather than red: the age is the nag, the question itself is the alarm. */
+  .badge.carried { color:var(--warn); border-color:var(--warn); }
   /* Hand-offs are the human's OWN queue — warn-toned, never the red that means
      "an agent failed". Two different asks deserve two different colours. */
   .mine .item { border-color:var(--warn); } .mine .task { color:var(--warn); }
@@ -70,7 +73,7 @@ function draw(s) {
   renderList(document.getElementById("inflight"), s.inFlight, i => '<div class="item"><b>'+esc(i.id)+'</b> '+esc(i.title)+'<div class="meta">'+esc(i.step||"working")+(i.branch?' · '+esc(i.branch):'')+(i.pr?' · PR #'+i.pr:'')+' <span class="badge ci-'+esc(i.ci)+'">'+esc(i.ci)+'</span></div></div>', "nothing in flight");
   renderList(document.getElementById("mergequeue"), s.mergeQueue, q => '<div class="item">PR #'+q.pr+' '+esc(q.title)+' <span class="badge ci-'+esc(q.ci)+'">'+esc(q.ci)+'</span></div>', "queue empty");
   renderList(document.getElementById("attended"), s.attended, a => '<div class="item"><b>'+esc(a.id)+'</b> '+esc(a.title)+'<div class="task">'+esc(a.task)+'</div><div class="meta">'+(a.ready?'/handoff '+esc(a.id):'waiting on a dependency')+(a.gates&&a.gates.length?' · gates '+a.gates.length+' item'+(a.gates.length>1?'s':'')+': '+a.gates.map(esc).join(", "):'')+'</div></div>', "no hand-offs 🎉");
-  renderList(document.getElementById("blocked"), s.blocked, b => '<div class="item"><b>'+esc(b.id)+'</b> '+esc(b.title)+'<div class="q">'+esc(b.question)+'</div></div>', "none blocked 🎉");
+  renderList(document.getElementById("blocked"), s.blocked, b => '<div class="item"><b>'+esc(b.id)+'</b> '+esc(b.title)+'<div class="q">'+esc(b.question)+'</div><div class="meta">'+(b.carried?'<span class="badge carried">carried '+b.carried+' boundar'+(b.carried>1?'ies':'y')+(b.carried>=2?' · asked at the next /roadmap':'')+'</span> · ':'')+'/unblock '+esc(b.id)+'</div></div>', "none blocked 🎉");
   document.getElementById("backlog").innerHTML = (s.backlog||[]).map(g => '<div class="ms"><h3>'+esc(g.milestone)+'</h3>'+g.items.map(i => '<div class="item'+(i.malformed?' malformed':'')+'"><span class="st-'+esc(i.status)+'">●</span> <b>'+esc(i.id)+'</b> '+esc(i.title)+' <span class="meta">'+esc(i.status)+(i.dependsOn&&i.dependsOn.length?' · deps: '+i.dependsOn.map(esc).join(", "):'')+'</span></div>').join("")+'</div>').join("") || '<div class="empty">no items</div>';
   renderList(document.getElementById("ideas"), s.ideas, i => '<div class="item"><b>'+esc(i.title)+'</b> <span class="meta">'+esc(i.file)+(i.created?' · '+esc(i.created.slice(0,10)):'')+'</span></div>', "inbox empty");
   document.getElementById("graph").innerHTML = graphSvg(s);

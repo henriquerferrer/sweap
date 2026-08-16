@@ -16,7 +16,7 @@ the usual rule — an item dep is satisfied when its file is `status: done`, a
 bare-milestone dep when every item under it is done), in frontier order. If the
 resolved item is not `status: attended`, stop and say so — this command does not
 touch any other status. A `[blocked]` item is a *question* awaiting a
-`> ANSWER:` line, not a hand-off; answer it in the item file instead.
+`> ANSWER:` line, not a hand-off; work it with `/unblock <id>` instead.
 
 **Then, in order:**
 

@@ -105,6 +105,7 @@ trivial (this flatness is a format contract, not a style preference):
     followup_of:             # optional milestone tag — marks an audit-debt item
     premise:                 # REQUIRED when deferred — machine-checkable predicate
     blocked:                 # REQUIRED when blocked — the question awaiting "> ANSWER:"
+    carried:                 # optional int — milestone boundaries this question has survived
     handoff:                 # REQUIRED when attended — the task the HUMAN performs
     ---
 
@@ -119,7 +120,7 @@ trivial (this flatness is a format contract, not a style preference):
     - <observable behavior a test asserts>
 
     ## Notes
-    <optional: "> ANSWER:" threads, UNBLOCKED annotations, links>
+    <optional: "> ANSWER:" threads, UNBLOCKED/CARRIED annotations, links>
 
 **The four states, and who owns each.** Status is the ownership axis, which is
 why these are mutually exclusive values rather than flags: `todo` means
@@ -137,7 +138,13 @@ exactly that.
 The line between the two that page the human: **`blocked:` holds a QUESTION,
 `handoff:` holds a TASK.** If the human's next move is to answer, the item is
 blocked. If their next move is to *do something*, it is attended. See
-**Attended items** below.
+**Attended items** and **Blocked items** below.
+
+Both queues have a command that *drains* them — `/unblock <id>` for a question,
+`/handoff <id>` for a task. A queue that is only displayed is not worked: sweap
+listed blocked items in three read-only places for months and consumer A still
+carried five questions through whole milestones unasked
+(`docs/research/2026-08-16-blocked-question-queue.md`).
 
 **Spec gate (mechanical, one gate, two call sites).** An item is runnable
 only if `roadmap-lint.sh` passes on its file. For a `todo` item that is the
@@ -246,6 +253,13 @@ requirement, and it holds in both environments.
   every part an agent legitimately can, check its *Done when* condition, and on
   their explicit confirmation flip it to `done` through a gated PR. Interactive
   only; never invoked by an unattended run.
+- **`/unblock [id]`** — walk one `status: blocked` item with the human: brief the
+  question, prepare the fork (options, a recommended default, what each answer
+  produces), take their answer, and close it through a gated PR — to `todo` with
+  a spec authored, or to `done` when the answer produces no work. Prepares
+  everything; answers nothing. Interactive only; never invoked by an unattended
+  run. `/roadmap`'s step 0 does the same for the whole queue at a milestone
+  boundary — see **Blocked items**.
 
 ## Review dimensions (tagged per backlog item)
 
@@ -332,9 +346,10 @@ may ADD dimensions it judges necessary; it may not remove tagged ones.
   worker error, fixed through the next gated PR (e.g. folded into the next
   queued item's branch), never by committing to `main`.
 - At goal end (met or stopped): if `notify` is `push`, send a push notification
-  summarizing merged PRs, blocked items, and **open hand-offs** (`status:
-  attended`, with what each one gates — the human's own queue is part of "what
-  now?", not a detail); list any leftover worktrees/branches
+  summarizing merged PRs, blocked items (each with `/unblock <id>` and its
+  `carried:` count, so the summary is actionable rather than a list), and **open
+  hand-offs** (`status: attended`, with what each one gates — the human's own
+  queue is part of "what now?", not a detail); list any leftover worktrees/branches
   in the final message; the primary checkout is already current (see above), so
   `git pull --ff-only` is a no-op for the human.
 - **Merge gate (substitute for branch protection, unavailable on the free
@@ -480,6 +495,73 @@ reward-hacking literature, telling a model not to take a shortcut can even
 increase the behaviour; every other tempting shortcut in this pipeline
 (`--admin`, merging red, skipping the audit) is denied by a mechanism, and this
 one is no different.
+
+## Blocked items (a question awaiting an answer)
+
+A `[blocked]` item is **active work that is stuck** because a human has to decide
+something. Writing one is correct behaviour — escalate-don't-guess — and the
+authoring rules are unchanged: the question goes in `blocked:` verbatim, the
+human is notified, and the run moves to the next item.
+
+What was missing, until 2026-08-16, was the other half: **nothing drained the
+queue.** Blocked items appeared in the end-of-run summary, on the board, and in
+the loop's stop condition — three read-only displays — while the questions
+survived milestone after milestone (consumer A: five of six questions outlived a full
+authoring-and-draining cycle; one outlived two). The fix is a **closing event at
+the boundary**, not a fourth place to look.
+
+**Working one.** `/unblock [id]` walks a single question: brief, prepare, take
+the answer, close it through a gated PR. `/roadmap`'s **step 0** works the whole
+queue at the milestone boundary before the brainstorm starts. Both use the same
+classification, and both are bound by the rule below.
+
+**The agent prepares; the agent does not answer.** For any question, the agent
+may restate the fork, list the options, recommend a **default with its
+rationale**, and simulate what the resulting item file looks like under each
+answer. It may propose closing a question only in two evidenced cases: the
+premise has been *invalidated by shipped code* (attach the diff), or the
+double-turn simulation shows *both answers produce the same item file*, so the
+fork was never a direction call. Everything else — taste, scope, policy,
+cross-milestone information architecture — is the human's, and stays theirs.
+
+Why this is written as a hard rule rather than left to judgement: having the repo
+in context makes it *easier*, not harder, to talk yourself out of asking. The
+2026-08-16 research memo (§4) cites the finding directly — retrieved context
+makes models less likely to ask a clarifying question and more likely to assume
+an interpretation. A step that says "check whether these are answerable" is that
+condition exactly, which is why it ends in a classification instead of an answer.
+
+**Aging, and the deadline.** `carried: N` counts the milestone boundaries a
+question has survived unanswered. `/roadmap`'s step 0 is its only writer; it
+increments on each boundary the item is not resolved at and records
+`> **CARRIED (YYYY-MM-DD):** unanswered through <milestone>.` under `## Notes`,
+adding `> **RECOMMENDATION (YYYY-MM-DD):** <default> — <rationale>` if the item
+has none. `audit-gate.sh --check` prints a non-failing `AGING:` line per open
+question, so the boundary's own pre-flight reports what is pending.
+
+At **`carried: ≥2` the question is asked, not offered**: the next `/roadmap` does
+not start its brainstorm until the item is answered, defaulted on the human's
+explicit say-so (recorded as an answer marked `(default taken)`), or dropped with
+a `dropped_reason:`. Below that it stays a soft gate — surfaced, offered, and the
+skip recorded with its cost. An unanswered direction call is legitimately
+deferrable in a way audit debt never is; `carried:` is what bounds the deferral.
+
+**Closing one.** On the human's answer, append `> **ANSWER (YYYY-MM-DD):**` under
+`## Notes`, keep `blocked:` and `carried:` as the record of what was asked and how
+long it waited, and then either:
+
+- **the answer produces work** → `status: todo`, *with `## Spec` and
+  `## Acceptance` authored from the answer* (a blocked item is a record without a
+  spec, and `roadmap-lint.sh` requires both for `todo` — the flip is real work,
+  not a status edit); the item then rejoins the frontier like any other, which is
+  how an answered question gets built in the next run; or
+- **the answer produces no work** → `status: done` with the answer as the record.
+  The decision *is* the outcome. Keep the file in place rather than archiving it:
+  it stays findable as the reason the behaviour is what it is, and `done` keeps
+  milestone-completeness arithmetic correct.
+
+**Never**: relabel a blocked item `attended` to get a run-stop — a hand-off is
+authored, never transitioned into, and `audit-gate.sh --check` enforces it.
 
 ## Deferred items (parked behind a future dependency)
 
@@ -629,6 +711,10 @@ no cron, no standing agent. Standard template:
 > `{milestone: "<milestone>", range: "<base>..<head>"}` for that range,
 > triage the confirmed findings (below), and post a summary before stopping.
 > Stop when only [blocked] or [attended] items remain, or after N turns.*
+
+(Both stop conditions have a drain: `/unblock <id>` for a question, `/handoff
+<id>` for a task. Name them in the stop message — "3 blocked, 1 hand-off" without
+the next move is what let consumer A carry five questions across whole milestones.)
 
 (A milestone with an **open hand-off** cannot complete, so its audit is not yet
 due and this template does not apply — `/milestone` prints its
@@ -1096,6 +1182,7 @@ flag per existing doctrine; never retry-until-green.
 | `claude --continue` / `--resume` | Pick a session back up after a crash/reboot; long sessions survive via context summarization | User |
 | `/board` (read-only viewer) | Local loopback page showing the live run (frontier/in-flight/merge-queue/hand-offs/blocked) + backlog + dep graph; derives state from item files + git + PRs, never writes | User runs; safe during autonomous runs |
 | `/handoff <id>` | Walks one `[attended]` hand-off with the human, then flips it to done through a gated PR on their explicit confirmation | User runs; interactive only |
+| `/unblock <id>` | Walks one `[blocked]` question with the human — prepares the fork, never answers it — then closes it through a gated PR (`todo` + authored spec, or `done`) | User runs; interactive only |
 
 ## Model policy
 

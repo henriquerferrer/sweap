@@ -486,6 +486,101 @@ depends_on: [H1.1]
 '
 check "a todo item may depend on an attended item" 0 "$WORK/H1.5.md"
 
+# --- carried: (milestone boundaries a blocked question has survived) --------
+# Optional everywhere, format-checked when present, and legal on any status
+# because it is retained after the question is answered (see consumer A FL.1, which
+# keeps `blocked:` long after flipping out of blocked).
+mk C1.1.md '---
+id: C1.1
+title: a fresh question
+status: blocked
+depends_on: []
+blocked: "Should the history row lead with the file name? Answer with > ANSWER:"
+---
+
+# C1.1 — a fresh question
+'
+check "blocked item without carried: passes (absent reads as 0)" 0 "$WORK/C1.1.md"
+
+mk C1.2.md '---
+id: C1.2
+title: a carried question
+status: blocked
+depends_on: []
+blocked: "Should the history row lead with the file name? Answer with > ANSWER:"
+carried: 2
+---
+
+# C1.2 — a carried question
+
+## Notes
+> **CARRIED (2026-08-16):** unanswered through F10.
+'
+check "blocked item with carried: 2 passes" 0 "$WORK/C1.2.md"
+
+mk C1.3.md '---
+id: C1.3
+title: zero is fine
+status: blocked
+depends_on: []
+blocked: "A question. Answer with > ANSWER:"
+carried: 0
+---
+
+# C1.3 — zero is fine
+'
+check "carried: 0 passes" 0 "$WORK/C1.3.md"
+
+mk C1.4.md '---
+id: C1.4
+title: not a number
+status: blocked
+depends_on: []
+blocked: "A question. Answer with > ANSWER:"
+carried: two
+---
+
+# C1.4 — not a number
+'
+check "carried: with a non-integer fails" 1 "$WORK/C1.4.md"
+
+mk C1.5.md '---
+id: C1.5
+title: negative
+status: blocked
+depends_on: []
+blocked: "A question. Answer with > ANSWER:"
+carried: -1
+---
+
+# C1.5 — negative
+'
+check "carried: negative fails" 1 "$WORK/C1.5.md"
+
+mk C1.6.md '---
+id: C1.6
+title: answered, provenance retained
+status: todo
+depends_on: []
+blocked: "The question that was asked. Answer with > ANSWER:"
+carried: 3
+---
+
+# C1.6 — answered, provenance retained
+
+## Notes
+> **ANSWER (2026-08-16):** add it.
+
+## Spec
+- **Surface:** src/import.ts
+- **Interfaces:** recordBatch(fileName) -> BatchId
+- **Out of scope:** re-import
+
+## Acceptance (e2e)
+- the history row shows the uploaded file name
+'
+check "carried:/blocked: retained on a todo item passes (post-unblock provenance)" 0 "$WORK/C1.6.md"
+
 check "missing file fails" 1 "$WORK/does-not-exist.md"
 
 out="$(bash "$LINT" 2>&1)"; rc=$?

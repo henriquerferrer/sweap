@@ -28,6 +28,11 @@ Resolve the run:
   authored as one, which is the move the playbook's "Never an escape hatch"
   forbids. No audit discharges it. Fix the item (archive-and-re-author, per the
   failure message) before running anything.
+ `AGING:` lines are informational and never fail: an open blocked question and
+  how many milestone boundaries it has survived. This run does not drain them —
+  the boundary does, in `/roadmap`'s step 0 — but list them with the run's open
+  hand-offs so the human sees both needs-me-now queues at kickoff, and offer
+  `/unblock <id>` for any that gate work in this run's scope.
  Any OTHER `FAIL:` output (`FAIL: milestone ...` / `FAIL: record ...`) means
   **audit debt**: a completed milestone lacks a
   valid audit record. The ONLY permitted work while debt exists is discharging

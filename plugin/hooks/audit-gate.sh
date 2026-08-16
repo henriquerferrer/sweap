@@ -30,6 +30,10 @@
 #       backlog, run by the same CI job on the same checkout — and adding a mode
 #       (or a script) would mean a consumer repo's workflow file had to change
 #       before the control could reach it.
+#       This mode also prints NON-FAILING "AGING: blocked <id> ..." lines, one
+#       per open blocked question, so the boundary that reads this output learns
+#       what is pending on the human. Informational by design — see the block
+#       that emits them.
 #   audit-gate.sh --files <path>...
 #       Merge mode (pre-merge-gate, CI diff classification). Given a PR's
 #       changed paths: exit 0 if the merge is allowed under the roadmap-scoped
@@ -423,6 +427,40 @@ if [ "$MODE" = "--check" ]; then
     [ "$added" = "$became" ] && continue
     fail "hand-off $id: status: attended was introduced by $became but the item file was added by $added — an attended item is AUTHORED, never transitioned into (an agent must not relabel stuck work as human work; stuck work is [blocked]). If this is a deliberate re-assignment, archive $id with a dropped_reason: and author the hand-off as a new item."
   done
+
+  # --- blocked-question aging: INFORMATIONAL, never a failure ------------------
+  # A [blocked] item is a question waiting on a human. Unlike audit debt, an
+  # unanswered direction call is LEGITIMATELY deferrable — the cost of waiting is
+  # real but bounded, and blocking a build on someone's taste call would be
+  # crying wolf. So this prints and never fails; `AGING:` joins `DEFERRED:` and
+  # `STALE:` as a non-failing prefix.
+  #
+  # Why it lives here at all, when the board and the run summary already list
+  # blocked items: those are read-only displays, and consumer A proved they change
+  # nothing (2026-08-16 research memo — five of six questions survived a whole
+  # milestone authoring cycle unasked). The evidence there says the intervention
+  # that works is a documented pending-state AT THE TRANSITION, and this gate is
+  # already what /roadmap runs as its pre-flight at exactly that moment. Riding
+  # on plumbing the boundary already reads beats a fourth place to look.
+  #
+  # It is surfacing, not enforcement, and deliberately so: skipping the carry
+  # increment buys an agent nothing it wants, so it is not the shortcut shape
+  # that earns a mechanism here (contrast the hand-off provenance check above).
+  for f in "${BACKLOG_DIR}"*.md; do
+    [ -f "$f" ] || continue
+    id="$(basename "$f" .md)"
+    case "$id" in *.*) : ;; *) continue ;; esac
+    [ "$(fm_get "$f" status)" = "blocked" ] || continue
+    carried="$(fm_get "$f" carried)"
+    case "$carried" in ""|*[!0-9]*) carried=0 ;; esac
+    q="$(fm_get "$f" blocked | cut -c1-100)"
+    if [ "$carried" -ge 2 ]; then
+      printf 'AGING: blocked %s — carried %s milestone boundaries: "%s…". At carried 2 this is ASKED, not offered: /roadmap will not start the next brainstorm until it is answered, defaulted on your explicit say-so, or dropped with a dropped_reason:. Answer it now with /unblock %s.\n' "$id" "$carried" "$q" "$id"
+    else
+      printf 'AGING: blocked %s — carried %s milestone boundary(ies): "%s…". Answer it with /unblock %s; at carried 2 it stops being optional.\n' "$id" "$carried" "$q" "$id"
+    fi
+  done
+
   exit "$fails"
 fi
 
