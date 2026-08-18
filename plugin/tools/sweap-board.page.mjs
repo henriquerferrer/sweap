@@ -44,7 +44,7 @@ export function renderPage() {
     <div class="cols">
       <div><h2>Frontier (ready)</h2><div class="col" id="frontier"></div></div>
       <div><h2>In-flight</h2><div class="col" id="inflight"></div></div>
-      <div><h2>Merge queue</h2><div class="col" id="mergequeue"></div></div>
+      <div><h2>Merge gate</h2><div class="col" id="mergequeue"></div></div>
       <div class="mine"><h2>🙋 Yours — hand-offs</h2><div class="col" id="attended"></div></div>
       <div class="blocked"><h2>⛔ Blocked — needs you</h2><div class="col" id="blocked"></div></div>
     </div>

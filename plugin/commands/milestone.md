@@ -159,14 +159,15 @@ the merge gate requires CI e2e green, so CI is the authoritative test gate. Say
 which mode you ended up in. Never block the run on Docker, or on the absence of
 `services.up` — the loop is identical either way.
 
-Parallel width (coordinator mode). Read `parallel:` from the `## sweap
-config` block (default 2; clamp values above 4 to 4 and say so). If it is 2
-or more, say the run will operate in **coordinator mode** per the playbook's
-"Parallel runs (coordinator mode)" section — frontier scheduling,
-worktree-isolated workers, the FIFO always-verify merge queue, and the
-`.claude/sweap-board.md` board file. The printed goal line is IDENTICAL to
-the serial form — the mode changes how the run executes, not its definition
-of done.
+Parallel width. Read `parallel:` from the `## sweap config` block (default 1;
+clamp values above 4 to 4 and say so). At **1** — the default — the run is the
+serial loop and there is nothing to announce. At 2 or more it operates in
+**coordinator mode** per the playbook's "Parallel runs" section — frontier
+scheduling, worktree-isolated workers, the FIFO always-verify merge gate, and
+the `.claude/sweap-board.md` board file. That mode is opt-in against measured
+evidence that it bought ~+9% here, so when it is on, say so explicitly and say
+why the project declared it. The printed goal line is IDENTICAL either way —
+the mode changes how the run executes, not its definition of done.
 
 Before any dispatch (either mode, serial included), run the spec gate on the
 item: `bash ${CLAUDE_PLUGIN_ROOT}/hooks/roadmap-lint.sh <backlog.dir>/<ID>.md`

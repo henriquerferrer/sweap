@@ -55,9 +55,11 @@ overrides only the keys that differ from the baked defaults. The keys:
   Default **`push`**.
 - **`turns.default`** — the default turn budget for an autonomous run. Default
   **`160`**.
-- **`parallel`** — max concurrent roadmap items. Default **`2`** (coordinator
-  mode). Set `1` for the strictly serial loop (see **Parallel runs (coordinator
-  mode)**); hard cap **4** — clamp anything higher to 4 and say so.
+- **`parallel`** — max concurrent roadmap items. Default **`1`**, the serial
+  loop. `2` or more opts into coordinator mode, which is opt-in for a stated
+  reason rather than the standard run shape (see **Parallel runs** for the
+  measurements that demoted it, and the conditions that would restore it); hard
+  cap **4** — clamp anything higher to 4 and say so.
 
 References to `ROADMAP.md`, the milestone prefix `F`, and `just …` recipe names
 below are the baked defaults; a project that overrides them reads its own values
@@ -89,7 +91,7 @@ hazard.
   as read-only context; reconcile moves triaged ones to
   `roadmap/ideas/archive/`.
 - **`.claude/sweap-board.md`** (gitignored) stays the *ephemeral* layer —
-  in-flight claims and queue order only (see Parallel runs).
+  in-flight claims and merge order only (see Parallel runs).
 
 Item file schema. Frontmatter keys are single-line and `depends_on` is an
 inline `[a, b]` list — keep it flat so `roadmap-lint.sh` and plain greps stay
@@ -121,6 +123,15 @@ trivial (this flatness is a format contract, not a style preference):
 
     ## Notes
     <optional: "> ANSWER:" threads, UNBLOCKED/CARRIED annotations, links>
+
+**Authoring `lane:`** — make a lane as narrow as the real file overlap: two
+items share one only if they literally touch the same files. An over-broad lane
+serializes genuinely disjoint work — consumer A put FM.3 (which edits
+`document-http.ts` and routes) in `lane: documents-storage` alongside FM.1/4/5
+(which edit `patient-documents.tsx`), and all four then ran strictly serially
+for no reason. The lane only bites in coordinator mode, so this is guidance for
+opt-in runs; but it is written when the item is, long before anyone knows which
+mode will run it.
 
 **The four states, and who owns each.** Status is the ownership axis, which is
 why these are mutually exclusive values rather than flags: `todo` means
@@ -1123,108 +1134,52 @@ Running the audit is a deliberate token spend; it is pre-authorized per-run via
 the goal clause above, or triggered manually.
 
 Rationale: loop tightness with machine verification remains the PRIMARY
-throughput lever. Frontier parallelism (next section) is a secondary lever
-that mostly recovers CI dead time on genuinely independent items — expect
-~1.5–2x on an independent frontier, not K-x; a serially-dependent milestone
-gains nothing and simply runs the serial loop.
+throughput lever, and on this backlog it is very nearly the only one. Frontier
+parallelism (next section) recovers CI dead time on genuinely independent items
+— which measured **17%** of transitions in consumer A, worth **+9.4% at K = 2**. It
+is opt-in for that reason; a serially-dependent milestone gains nothing from it
+and simply runs the serial loop.
 
-## Parallel runs (coordinator mode)
+## Parallel runs (coordinator mode — opt-in)
 
-Active when `parallel:` is 2 or more — the **default is `2`**, so coordinator
-mode is the standard run shape; declare `parallel: 1` to opt back into the
-strictly serial loop (hard cap 4). A width-1 frontier (serial dependency
-chain) degrades to the serial loop automatically either way. Evidence base and locked
-decisions: the parallel-roadmap-runs spec (2026-07-18) in the sweap plugin
-repo. The shape is **thin coordinator, fat gates** — the gates do the
-verifying; the coordinator only schedules.
+**The default is `parallel: 1`.** Coordinator mode is opt-in and wants a stated
+reason; it is not the standard run shape.
 
-**Workers (unchanged).** Each in-flight item runs the standard per-feature
-loop in its own worktree — TDD, fresh-context review, review dimensions,
-PR — one item to a clean mergeable state. A worker reports back only a
-compressed summary (~1–2k tokens): item, worktree@branch, PR number, gate
-state, blocked question if any. Workers never merge; the coordinator owns
-the queue.
+That is measured, not argued. Across ~99 consecutive merged-PR transitions in
+Consumer A only **17 had two roadmap items genuinely in flight together (~17%)** —
+the rest were lane-locked or dependency-chained (F11.1 → … → F11.7 is a strict
+7-deep chain). Amdahl at p = 0.17: **+9.4% at K = 2**, ceiling **+20.7% at
+K = ∞**. This section used to promise "~1.5–2x on an independent frontier", and
+1.5x at K = 2 needs p ≥ 0.667 — two thirds of the frontier independent. 17% is
+already the generous reading: it counts a PR idling in CI while another opens,
+not only true co-dispatch. There was no contention to manage either — CI e2e is
+11–14 min (~110 merges/day of serial capacity) against ~1 PR/hour arriving,
+utilization ~0.2, where Uber built SubmitQueue for 1,000 changes/day and
+GitHub's merge queue serves 2,500 PRs/month across 500 engineers. Worse, at
+K ≥ 2 the always-verify queue *increases* total CI minutes (every queued PR
+rebases and re-runs the full e2e on the combined state) and the CI-gated rule
+below makes each worker slower. Board upkeep, frontier recomputation and
+mandatory instrumentation were ceremony bought for a single-digit gain.
 
-**Coordinator (holds no implementation state — everything durable lives on
-disk: the backlog index + item files, the board, per-item progress files,
-git, PRs).**
+**Re-enable on numbers, not intuition:** set `parallel: 2` when a run's
+instrumentation shows **≥2/3 of the frontier genuinely independent** AND PR
+arrival approaching **~4/hour**. Both conditions, not either.
 
-1. **Frontier:** every unblocked `status: todo` item that **passes
-   `roadmap-lint.sh`** (the spec gate — a todo item failing lint is not
-   runnable: fix mechanically or escalate), in frontier order (debt-first,
-   then index milestone order, then numeric item order) — the `/milestone`
-   picker taking the top K instead of the top 1. Recompute after every merge
-   or block (a merge may unblock items), and dispatch **event-driven**: the
-   moment a merge frees or unblocks a slot, fill it — never hold dispatch
-   waiting for the rest of a "wave" to finish.
-2. **Dispatch** up to `parallel:` workers as background agents in isolated
-   worktrees. Co-dispatch rules: items sharing a `lane:` value NEVER run
-   together (a declared coupled chain is serial by construction); two
-   `migration`-tagged items NEVER run together; and judgment on top — never
-   co-dispatch two items plausibly touching the same surface (the
-   **Interfaces** bullets are the first thing to compare).
-3. **Merge queue (FIFO, always-verify):** when a worker's PR is ready —
-   rebase the branch onto current `main`, `git push --force-with-lease`,
-   wait for CI green on the rebased head, then `gh pr merge <n> --squash`
-   (the pre-merge gate hook independently re-verifies greenness AND
-   mechanically verifies the head is not behind its base via the compare
-   API — branch-protection-independent — so stale-green merges are denied
-   even on free-plan repos where GitHub never reports BEHIND).
-   **Speculative rebase:** the moment a merge lands, immediately rebase the
-   next queued PR so its combined-state CI runs during otherwise-idle time.
-   The rebase runs inside the owning item's worktree (the branch is checked
-   out there — git will refuse it in the primary checkout). A textual conflict
-   during the rebase — rare by construction now that status lives in per-item
-   files and the index changes only at milestone boundaries — is resolved by
-   the owning worker, never by force-pushing over the other side.
-   Diff-disjointness may pick queue ORDER (least-entangled first); it NEVER
-   skips the combined-state CI run — there is no "looks independent"
-   fast-path, by locked decision (industry skips are hermetic-build-graph
-   proofs or statistically-measured skips with post-land safety nets; this
-   pipeline has neither).
-4. **Board:** maintain `.claude/sweap-board.md` (gitignored, never
-   committed) — one line per in-flight item:
-   `<item> | <status/current step> | <worktree>@<branch> | PR #<n> |
-   <blocked question or ->`, plus the current merge-queue order. The board
-   is BOTH the human's at-a-glance status surface and the coordinator's
-   externalized memory: on restart (`claude --continue` or a fresh
-   session), rebuild all state from board + the backlog (index + item files) +
-   `git worktree list` + open PRs. Losing the coordinator loses nothing.
-   Before the first dispatch of a run, ensure `.claude/sweap-board.md` is in
-   the project's `.gitignore` — append it if missing (the scaffold self-heals
-   this on session start, but the coordinator double-checks).
+**When opted in** (2–4; hard cap 4): thin coordinator, fat gates — workers in
+isolated worktrees, each slot held until the PR *merges*, FIFO merges that
+rebase and re-verify green, `.claude/sweap-board.md` (gitignored) as the
+coordinator's externalized memory. Three rules carry the risk: never co-dispatch
+items sharing a `lane:`, two `migration`-tagged items, or anything plausibly
+touching the same surface; and at K ≥ 2 workers run CI-gated, because one shared
+local services stack produces spurious failures. Everything else —
+mechanics, evidence base, locked decisions — is in
+`docs/superpowers/specs/2026-07-18-parallel-roadmap-runs-design.md` in the sweap
+plugin repo. Read it there; it is not restated here, deliberately.
 
-**Width is review bandwidth, not worker capacity.** A dispatch slot is held
-until the item's PR *merges* — not until code-complete — so open unmerged PRs
-consume width and the queue self-throttles to what actually lands. This is
-the practitioner-converged constraint ("it's only so much my mind can
-review"): more workers than the merge queue can absorb just piles up unmerged
-branches going stale. Raise `parallel:` only when the instrumentation shows
-the queue, not the workers, is idle.
-
-**Failure handling (all existing doctrine, mapped):** worker blocked →
-escalate-don't-guess, mark `status: blocked`, notify, fill the slot with the next
-frontier item. Worker dies mid-feature → re-dispatch onto the same
-worktree; it resumes from the progress file + git history (pick-up-cold).
-CI red after rebase — a semantic conflict, exactly what the queue exists to
-catch → the owning worker gets the standard ~3 distinct fix attempts, then
-`status: blocked` with the PR left open.
-
-**Local services at K≥2:** parallel workers sharing one local services stack
-(same DB, same ports) interfere and produce spurious failures that burn fix
-attempts. In coordinator mode, workers treat local services as unavailable and
-run CI-gated (CI runs per-PR, isolated, and is the authoritative gate anyway)
-unless the project explicitly declares its services parallel-safe.
-
-**Instrumentation (mandatory in the end-of-run summary):** max/mean
-concurrency achieved, rebases performed, conflicts hit (textual vs
-CI-caught semantic), queue-caused CI reruns, and rough wall-clock vs
-estimated serial. Widen K (≤4) only when this data says parallelism pays;
-retreat to `parallel: 1` when it doesn't.
-
-**CI determinism is a standing constraint:** a merge queue amplifies a
-flaky suite (every flake blocks the queue head). Fix or quarantine-with-
-flag per existing doctrine; never retry-until-green.
+**Not coordinator machinery, and unaffected by `parallel:`** — worktree-per-PR,
+`post-merge-cleanup.sh`, and the pre-merge gate's compare-API freshness check.
+That last is a *correctness* control, not a concurrency one: `main` moves under
+an in-flight branch at width 1 too, and a Free-plan repo never reports BEHIND.
 
 ## The three loops (what autonomy replaces, and what it can't)
 
@@ -1260,7 +1215,7 @@ flag per existing doctrine; never retry-until-green.
 | Headless `claude -p` + auto permission mode | Scripted/CI-triggered sessions; classifier gates commands | Scripts/CI/events |
 | Agentic CI (GitHub Actions) | Claude reviews every PR; merge gated on green e2e + clean review | Git events |
 | `claude --continue` / `--resume` | Pick a session back up after a crash/reboot; long sessions survive via context summarization | User |
-| `/board` (read-only viewer) | Local loopback page showing the live run (frontier/in-flight/merge-queue/hand-offs/blocked) + backlog + dep graph; derives state from item files + git + PRs, never writes | User runs; safe during autonomous runs |
+| `/board` (read-only viewer) | Local loopback page showing the live run (frontier/in-flight/merge-gate/hand-offs/blocked) + backlog + dep graph; derives state from item files + git + PRs, never writes | User runs; safe during autonomous runs |
 | `/handoff <id>` | Walks one `[attended]` hand-off with the human, then flips it to done through a gated PR on their explicit confirmation | User runs; interactive only |
 | `/unblock <id>` | Walks one `[blocked]` question with the human — prepares the fork, never answers it — then closes it through a gated PR (`todo` + authored spec, or `done`) | User runs; interactive only |
 
