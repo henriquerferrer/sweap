@@ -56,12 +56,12 @@ finding → majority-survives (the refuters score, the pipeline cuts — see bel
 It never triages — it returns the confirmed findings, sorted by severity.
 
 Its finders and refuters are **mechanically read-only**: they run as the
-`audit-reader` agent (which the Workflow resolves by address — plugin-scoped
-`sweap:audit-reader` when installed as a plugin, bare when the repo ships its
-own `.claude/agents/` copy; an agent type it cannot resolve is a thrown run,
-never an unconstrained dispatch) (`Read`, `Grep`, `Glob` — no `Write`, no `Edit`, no
+`audit-reader` agent (`Read`, `Grep`, `Glob` — no `Write`, no `Edit`, no
 `Bash`), so they cannot touch the repo even where a prompt might seem to invite
-it. Be precise about that guarantee's scope: the **Scope** stage needs `Bash`
+it. The Workflow addresses that agent by *resolving* it rather than naming it:
+plugin-scoped `sweap:audit-reader` when installed as a plugin, bare when the
+repo ships its own `.claude/agents/` copy, and an agent type it cannot resolve
+aborts the run rather than dispatching without one. Be precise about that guarantee's scope: the **Scope** stage needs `Bash`
 for `git log` and is constrained by instruction only. Until 2026-08-16 the whole
 workflow was read-only by documentation alone, and a refuter wrote a test file
 into a consumer repo's primary checkout to settle a claim it could not settle by
