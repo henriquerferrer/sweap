@@ -45,9 +45,17 @@ values above):
 > guessing. Never create a `status: attended` item and never transition one into
 > it — work you cannot finish is `[blocked]`. When the last <MILESTONE> item
 > merges, run `/milestone-audit` for that range and triage the confirmed
-> findings. Stop when only `[blocked]` or `[attended]` items remain, or after
+> findings. Stop when the only `[todo]` items left are audit follow-ups carrying
+> `followup_of: <MILESTONE>` (the next run's debt, not this run's work), and
+> everything else remaining is `[blocked]` or `[attended]` — or after
 > <TURNS> turns. Notify with a merged-PRs, blocked-items and open-hand-offs
 > summary.
+
+The follow-up clause in that stop condition is not boilerplate. A correct audit ends by CREATING work: bucket-2 triage writes
+`followup_of:` todo items, so a run that audits well can never literally reach
+"only blocked or attended remain" — consumer A's F11 run hit exactly that and had to
+escalate the ambiguity. Those items are the NEXT run's debt (the frontier drains
+them debt-first), not this one's.
 
 This kickoff prompt inherits every autonomy rule from the playbook (TDD, the
 review dimensions, end-of-run hygiene, escalate-don't-guess, the merge gate) —

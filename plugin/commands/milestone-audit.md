@@ -1,5 +1,5 @@
 ---
-description: Adversarial cross-feature audit of a merged milestone (finder → refuter, majority-survives), then triage confirmed findings.
+description: Adversarial cross-feature audit of a merged milestone (finder → scoring refuters, majority-survives), then triage confirmed findings.
 argument-hint: "[milestone-id] [range] — milestone-id (e.g. F6) is strongly recommended: without it the Workflow can't refuse a wrong-milestone run, it just infers one. range defaults to inferring the merged range from the item files"
 ---
 
@@ -52,11 +52,14 @@ baked into the Workflow (correctness, authz/security, data-integrity,
 concurrency/races, test-integrity, api-contract); `default + [x, y]` appends
 project-drafted lenses for `x, y`; an explicit list replaces the defaults
 entirely for that run. The Workflow is finder → three adversarial refuters per
-finding → majority-survives. It never triages — it returns the confirmed
-findings, sorted by severity.
+finding → majority-survives (the refuters score, the pipeline cuts — see below).
+It never triages — it returns the confirmed findings, sorted by severity.
 
 Its finders and refuters are **mechanically read-only**: they run as the
-`audit-reader` agent (`Read`, `Grep`, `Glob` — no `Write`, no `Edit`, no
+`audit-reader` agent (which the Workflow resolves by address — plugin-scoped
+`sweap:audit-reader` when installed as a plugin, bare when the repo ships its
+own `.claude/agents/` copy; an agent type it cannot resolve is a thrown run,
+never an unconstrained dispatch) (`Read`, `Grep`, `Glob` — no `Write`, no `Edit`, no
 `Bash`), so they cannot touch the repo even where a prompt might seem to invite
 it. Be precise about that guarantee's scope: the **Scope** stage needs `Bash`
 for `git log` and is constrained by instruction only. Until 2026-08-16 the whole
@@ -65,12 +68,23 @@ into a consumer repo's primary checkout to settle a claim it could not settle by
 reading — the docs did say read-only, but they said it to the calling session,
 never to the agent holding the tools.
 
-A refuter returns one of **three** verdicts — `refuted` (a cited, code-grounded
-disproof), `stands` (read it thoroughly and could not break it), or
-`unverifiable` (only running something would settle it, and it must name that
-experiment). Two refutations kill a finding; abstentions are excluded from the
-count and never lower the bar. When a panel *mostly* abstains, a **Validate**
-stage runs the named experiment in a throwaway git worktree (`audit-prover`,
+A refuter does **not** return a verdict. It returns the `path:line` spans it
+read, the code bearing on the claim, what would falsify its own answer, and
+`confidence` — its probability, 0 to 1, that the finding is wrong. The pipeline
+cuts: a score strictly above `TUNING.refutedAt` (0.5) is a refutation, and
+`TUNING.killVotes` (2) of the three seats kill a finding. Both numbers live in
+one `TUNING` block in the Workflow. Evidence is required symmetrically — the
+answer that leaves a finding alone cites code on the same terms as the one that
+kills it, and an answer citing none is a schema violation, never a demotion.
+Lost or unscored votes are excluded from the count and never lower the bar.
+
+This replaces a three-valued verdict that took the kill rate from 63–73% to
+2.7% in one change, so if you see `refuted`/`stands`/`unverifiable` in a run's
+journal you are on an old plugin build — say so rather than reading the numbers.
+`unverifiable` is now an **out-of-band ticket**: a refuter that cannot settle a
+claim by reading names the exact command in `experiment` *and still scores*. One
+such ticket on a surviving finding routes it to the **Validate** stage, which
+runs that experiment in a throwaway git worktree (`audit-prover`,
 `isolation: 'worktree'`) and returns a verdict backed by a pasted command and
 its actual output.
 
@@ -154,7 +168,11 @@ PR as debt discharge).
     bash "$GATE" --check
 
 A `FAIL:` line means the record is malformed or mis-bound — fix the record,
-never the gate. A `STALE:` line is an inherited pre-format record from an older
+never the gate. One `FAIL:` is not about formatting: if the record says `raw: 0`
+the gate demands `finders_reporting: >= 1`, because a zero-findings record and a
+record from a run whose finders all died are the same document otherwise. The
+Workflow emits that key; if you are hand-writing a record and cannot honestly
+fill it, the audit did not run and the answer is to run it, not to fill it in. A `STALE:` line is an inherited pre-format record from an older
 sweap; it does not block, and it is not yours to fix in this run unless it names
 the milestone you just audited.
 

@@ -19,6 +19,7 @@ which is this template already populated.
     raw: 14
     refuted: 9
     confirmed: 5
+    finders_reporting: 6
     workflow_run: wf_...
     journal_sha256: <sha256 of the run's journal.jsonl>
     ---
@@ -83,8 +84,9 @@ produced which finding; do not invent per-finding attribution for a UI axis.
   legacy and reported without blocking, while a record introduced by the work
   under review is judged strictly. Never hand-write a version the installed gate
   does not speak; the gate names the mismatch.
-- **All eleven keys required.** A record missing provenance/scope fields is not
-  a record.
+- **All eleven unconditional keys required.** A record missing provenance/scope
+  fields is not a record. (`finders_reporting` is the twelfth, always emitted
+  and conditionally enforced — see below.)
 - **`range_base` / `range_head` are separate keys**, both resolvable commits
   here. The Workflow returns ONE string `<base>..<head>` — split it on `..`.
   `rev-parse` first if it returned a ref rather than a SHA.
@@ -93,6 +95,16 @@ produced which finding; do not invent per-finding attribution for a UI axis.
   milestone must have flipped to `status: done` within the audited range. An
   audit of a stale range fails structurally — that is the point.
 - **`raw == refuted + confirmed`**, all numeric.
+- **`finders_reporting: <n>`** — how many finder lenses actually returned a
+  result. The Workflow emits it on every record; the gate DEMANDS it, `>= 1`,
+  whenever `raw` is 0. Reason: a `0 / 0 / 0` record passes every other check on
+  this list, and it is also exactly what a run whose finders all died produces
+  (consumer A's F11 lost eleven finder agents to an unresolvable agent type). The
+  property being enforced is *this audit ran*, which is a different claim from
+  *this audit was clean*. Records written before the key existed still validate
+  unless they claim zero findings — purely additive, no `sweap_format` bump.
+  It is scoped to the primary axis: a `ui.raw: 0` comes from a different
+  workflow, which does not emit this key.
 - **One `### <n>. <title>` block per DISTINCT DEFECT.** By default that is one
   per confirmed finding. When several lenses converge on the same underlying
   defect — the normal outcome of a multi-lens ensemble, and usually the

@@ -19,6 +19,8 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const SRC = readFileSync(join(HERE, "milestone-audit.js"), "utf8");
 const AGENT = readFileSync(join(HERE, "..", "agents", "audit-reader.md"), "utf8");
 const PROVER = readFileSync(join(HERE, "..", "agents", "audit-prover.md"), "utf8");
+const MANIFEST = JSON.parse(readFileSync(join(HERE, "..", "plugin.json"), "utf8"));
+const MARKETPLACE = JSON.parse(readFileSync(join(HERE, "..", "..", ".claude-plugin", "marketplace.json"), "utf8"));
 
 // Option-object literals that name a phase. Matched line-scoped rather than
 // brace-balanced because the labels contain `${...}` interpolations; every
@@ -27,12 +29,89 @@ const PROVER = readFileSync(join(HERE, "..", "agents", "audit-prover.md"), "utf8
 // correct direction for a guard.
 const optionObjects = [...SRC.matchAll(/\{[^\n]*phase:\s*'([A-Za-z]+)'[^\n]*\}/g)];
 
-test("every Find and Refute agent is dispatched as audit-reader", () => {
+// Which dispatcher a stage went through: the nearest `agentAs('<role>'` or bare
+// `agent(` opening before its options object. `agentAs` is what binds a
+// constrained agent type; a bare `agent(` with no agentType gets the default
+// toolset, which can Write.
+const dispatcherFor = (index) => {
+  const opens = [...SRC.slice(0, index).matchAll(/\bagentAs\('(\w+)'|\bagent\(/g)];
+  const last = opens[opens.length - 1];
+  return last ? (last[1] ?? "agent") : null;
+};
+
+test("every Find and Refute agent is dispatched through the read-only resolver", () => {
   const constrained = optionObjects.filter(([, phase]) => phase === "Find" || phase === "Refute");
   assert.ok(constrained.length >= 2, "expected at least the finder and refuter dispatches");
-  for (const [obj, phase] of constrained) {
-    assert.match(obj, /agentType:\s*'audit-reader'/, `a ${phase} agent runs without agentType: 'audit-reader' — it would get the default toolset, which can Write: ${obj}`);
+  for (const m of constrained) {
+    const phase = m[1];
+    assert.equal(dispatcherFor(m.index), "reader",
+      `a ${phase} agent is not dispatched via agentAs('reader', ...) — a bare agent() call with no agentType gets the default toolset, which can Write: ${m[0]}`);
   }
+});
+
+// --- addressability, not string equality ------------------------------------
+// The previous version of this file asserted that the dispatched string equalled
+// the agent file's `name:` frontmatter. Both sides were the bare name, so it
+// passed while every plugin install was broken: a plugin agent is addressable
+// only under its SCOPED name (`<plugin>:<agent>`), and consumer A's F11 audit lost
+// all eleven finders to `agent type 'audit-reader' not found`. The property is
+// "the workflow can address the agent in whatever install it lands in", which
+// two strings I wrote cannot demonstrate.
+test("the resolver can address the agent in a plugin install AND in a local repo", () => {
+  const names = SRC.match(/const AUDIT_AGENTS = \{([^}]*)\}/);
+  assert.ok(names, "expected an AUDIT_AGENTS map of role -> bare agent name");
+  for (const [file, doc] of [["audit-reader.md", AGENT], ["audit-prover.md", PROVER]]) {
+    const bare = doc.match(/^name:\s*(\S+)$/m);
+    assert.ok(bare, `${file} must declare a name:`);
+    assert.ok(names[1].includes(`'${bare[1]}'`),
+      `${file} declares name: ${bare[1]}, which the workflow never tries to address`);
+  }
+  // A LOCAL definition under .claude/agents/ registers bare...
+  assert.match(SRC, /queue = \[[^\n]*,\s*bare\]/, "the bare name must be a candidate — that is how a repo-local .claude/agents/ definition registers");
+  // ...and a plugin-shipped one registers under the plugin's namespace, which
+  // must be THIS plugin's name (marketplace entry included: the docs say a
+  // marketplace may list a plugin under a different name, and that name is what
+  // the namespace follows).
+  const scoped = SRC.match(/const PLUGIN_NAME = '([^']+)'/);
+  assert.ok(scoped, "expected a PLUGIN_NAME for the scoped candidate");
+  assert.equal(scoped[1], MANIFEST.name, "the scoped candidate must follow plugin.json's name");
+  assert.deepEqual(MARKETPLACE.plugins.map((p) => p.name), [MANIFEST.name],
+    "the marketplace lists this plugin under a different name, so the scoped candidate would be wrong");
+  assert.match(SRC, /\$\{PLUGIN_NAME\}:\$\{bare\}/, "the scoped candidate must be built from PLUGIN_NAME");
+});
+
+test("an unresolvable agent type is a thrown error, never an unconstrained dispatch", () => {
+  // Falling back to no agentType would silently restore the default toolset —
+  // the exact regression the read-only lockdown exists to prevent. Every
+  // candidate must end in one of the audit agents' names.
+  const resolver = SRC.slice(SRC.indexOf("const agentAs ="), SRC.indexOf("// TALLY-START"));
+  assert.match(resolver, /throw new Error\(/, "exhausting the candidates must throw");
+  assert.doesNotMatch(resolver, /agentType:\s*(undefined|null|''|""|)\s*[,}]/, "the resolver must never dispatch without an agent type");
+  assert.match(resolver, /n === bare \|\| n\.endsWith\(`:\$\{bare\}`\)/,
+    "a name harvested from the runtime's error must still be one of the audit agents");
+});
+
+test("the resolver learns the real name from what the runtime says it has", () => {
+  // Robustness to a rename this script cannot see: it has no filesystem access,
+  // so it cannot read plugin.json, but the not-found error lists every agent
+  // that does exist. Simulated here against the verbatim message from the F11
+  // run that exposed the bug.
+  const resolverSrc = SRC.slice(SRC.indexOf("const PLUGIN_NAME ="), SRC.indexOf("// TALLY-START"));
+  const REAL = "acme-fork:audit-reader";
+  const calls = [];
+  const agent = async (_prompt, opts) => {
+    calls.push(opts.agentType);
+    if (opts.agentType !== REAL) {
+      throw new Error(`agent type '${opts.agentType}' not found. Available agents: claude, Explore, general-purpose, ${REAL}, acme-fork:audit-prover, acme-fork:reviewer`);
+    }
+    return { findings: [] };
+  };
+  const agentAs = new Function("agent", `${resolverSrc}; return agentAs;`)(agent);
+  return agentAs("reader", "p", { label: "l" }).then((out) => {
+    assert.deepEqual(out, { findings: [] });
+    assert.equal(calls[calls.length - 1], REAL, "the resolver must land on the name the runtime offered");
+    assert.ok(calls.every((c) => c && c.endsWith("audit-reader")), `it must never try an unrelated agent type: ${calls}`);
+  });
 });
 
 test("audit-reader grants no tool that can modify the repo", () => {
@@ -46,10 +125,17 @@ test("audit-reader grants no tool that can modify the repo", () => {
   assert.deepEqual(granted, ["Read", "Grep", "Glob"]);
 });
 
-test("the agentType string matches the agent definition's name", () => {
-  const name = AGENT.match(/^name:\s*(\S+)$/m);
-  assert.ok(name, "audit-reader.md must declare a name:");
-  assert.equal(name[1], "audit-reader", "a rename here silently un-restricts the workflow's agents");
+test("a lens that did not report is never counted as a clean lens", () => {
+  // An audit whose finders all die produces raw: 0 — which passes every
+  // arithmetic check in audit-gate.sh and reads as a clean milestone. The
+  // workflow must fail at the source instead of emitting that artifact.
+  assert.match(SRC, /if \(!reporting\.length\) \{[\s\S]*?throw new Error/, "the workflow must throw when no lens reported");
+  assert.match(SRC, /lenses: \[\$\{reporting\.join/, "the record must list the lenses that RAN, not the ones configured");
+  assert.match(SRC, /\.then\(\(findings\) => \(\{ lens: lens\.key, findings \}\)\)/,
+    "which lenses reported must be read off the results, not inferred from array position");
+  assert.match(SRC, /finders_reporting: \$\{reporting\.length\}/, "the record must carry affirmative evidence that finders ran");
+  assert.match(SRC, /throw new Error\(`milestone-audit: the \$\{lens\.key\} finder returned no result`\)/,
+    "a finder returning nothing must throw, so the pipeline records that lens as lost rather than empty");
 });
 
 test("finder and refuter prompts also state the constraint in words", () => {
@@ -64,7 +150,7 @@ test("finder and refuter prompts also state the constraint in words", () => {
 test("the Validate stage is sandboxed and uses the prover, not the reader", () => {
   const validate = optionObjects.filter(([, phase]) => phase === "Validate");
   assert.equal(validate.length, 1, "expected exactly one Validate dispatch");
-  assert.match(validate[0][0], /agentType:\s*'audit-prover'/);
+  assert.equal(dispatcherFor(validate[0].index), "prover", "the Validate stage must resolve the prover, not the reader");
   // For an agent that CAN write, containment is about WHERE it writes. Without
   // worktree isolation this stage reintroduces the bug it exists downstream of.
   assert.match(validate[0][0], /isolation:\s*'worktree'/, "the prover must run in a throwaway worktree");
@@ -97,50 +183,149 @@ test("audit-prover may write and run, but only ever inside its own worktree", ()
   assert.match(PROVER, /[Nn]ever commit/, "audit-prover must forbid committing from its worktree");
 });
 
-test("a three-valued verdict, and 'refuted' is never where uncertainty goes", () => {
-  assert.match(SRC, /enum:\s*\['refuted',\s*'stands',\s*'unverifiable'\]/, "the refuter verdict must be three-valued");
+test("the refuter verdict is a scalar, not a taxonomy", () => {
+  // The regression this guards is measured: a categorical verdict took the kill
+  // rate from 63-73% to 2.7% on one prompt change, while a frozen UI axis in the
+  // same run held at 40%. Any re-introduction of a label the refuter picks from
+  // puts the decision boundary back inside the model.
+  assert.doesNotMatch(SRC, /enum:\s*\['refuted',\s*'stands',\s*'unverifiable'\]/, "the three-valued refuter verdict is back");
   assert.doesNotMatch(SRC, /refuted:\s*\{\s*type:\s*'boolean'/, "the binary verdict is back — it forces a guess from a judge with no evidence");
   assert.doesNotMatch(SRC, /Default to refuted=true/, "refute-by-default-on-uncertainty is back");
-  assert.match(SRC, /not about the code/, "the prompt must say that inability to verify is a fact about tools, not about the code");
+  const refutation = SRC.match(/const REFUTATION = \{[\s\S]*?\n\}/);
+  assert.ok(refutation, "expected a REFUTATION schema for the refuter");
+  assert.match(refutation[0], /confidence:\s*\{[\s\S]*?type:\s*'number'/, "the refuter must emit a scalar");
+  assert.match(refutation[0], /minimum:\s*0[\s\S]*?maximum:\s*1/, "the scalar must be bounded 0..1");
+  assert.doesNotMatch(refutation[0], /enum:/, "no enum may reappear on the refuter's output");
+});
+
+test("evidence is required symmetrically, for every answer", () => {
+  // The sink was built by pricing the directions differently: two costly inlets
+  // (a disproof, a named experiment) and one that required nothing. A required
+  // list that does not branch on the score is what keeps that from re-forming.
+  const refutation = SRC.match(/const REFUTATION = \{[\s\S]*?\n\}/)[0];
+  const required = refutation.match(/required:\s*\[([^\]]*)\]/);
+  assert.ok(required, "REFUTATION must declare a required list");
+  const keys = required[1].split(",").map((k) => k.trim().replace(/'/g, ""));
+  assert.deepEqual(keys.sort(), ["confidence", "evidence", "falsifier", "read"].sort(),
+    "every answer must cite what it read, the code it found, what would falsify it, and a score");
+  // Enforcement must be the schema (which forces a retry), never a demotion:
+  // a demotion is a drain into whichever answer is cheapest, i.e. the bug.
+  assert.match(SRC, /never a demotion|not a demotion|never as a demotion/i,
+    "the file must say plainly that under-evidenced answers are a schema violation, not a demotion");
+});
+
+test("the refuted bar is reachable by reading, not by running", () => {
+  // The shipped bar demanded "a positive, code-grounded disproof" from an agent
+  // with no ability to run code — unearnable by construction.
+  assert.doesNotMatch(SRC, /positive, code-grounded disproof/, "the unearnable refutation bar is back");
+  assert.match(SRC, /READING standard, not a running standard/,
+    "the prompt must tell the refuter that contradicting the claim is a reading standard");
+});
+
+test("the out-of-band ticket is not a verdict and cannot replace the score", () => {
+  assert.match(SRC, /OUT-OF-BAND TICKET/, "expected the experiment field to be labelled as a ticket");
+  assert.match(SRC, /it does not replace your score/, "the prompt must say the ticket does not substitute for scoring");
+  // The old shape demoted an experiment-less abstention to 'stands'. Nothing may
+  // demote on the ticket now, because it no longer competes with the score.
+  assert.doesNotMatch(SRC, /counted as 'stands'/, "the abstention demotion is back");
+});
+
+test("strictness lives in the pipeline as named, tunable numbers", () => {
+  assert.match(SRC, /const TUNING = \{/, "the cut must be a pipeline value, not an adjective in a prompt");
+  // Stated numerically to the refuter, per the confidence-target prescription,
+  // and INTERPOLATED so tuning the number cannot leave the prompt quoting a
+  // stale price.
+  assert.match(SRC, /\$\{TUNING\.refutedAt\}/, "the prompt must interpolate the live cut, not restate it");
+  assert.match(SRC, /\$\{TUNING\.killVotes\}/, "the prompt must interpolate the live kill threshold");
+  assert.match(SRC, /\$\{WRONG_CALL_PENALTY\}/, "the prompt must state the payoff numerically");
+  assert.match(SRC, /t\/\(1-t\)/, "the payoff must be traceable to the rule it comes from");
 });
 
 // --- the vote arithmetic, extracted and actually executed --------------------
 // A Workflow script runs against injected globals with no module access, so it
 // cannot be imported and the tally cannot live in a shared file. Extracting the
-// marked pure function and evaluating it is how the arithmetic gets real
-// behavioural coverage instead of a grep over its source.
-const tallySrc = SRC.match(/\/\/ TALLY-START[\s\S]*?\n(const tally = [\s\S]*?\n\})\n\/\/ TALLY-END/);
-assert.ok(tallySrc, "could not extract the TALLY block — keep the markers around a single pure `const tally = ...`");
-const tally = new Function(`${tallySrc[1]}; return tally;`)();
+// marked block and evaluating it is how the arithmetic gets real behavioural
+// coverage instead of a grep over its source. The WHOLE block is extracted (not
+// just the function), because the tunables it defaults to are part of the
+// behaviour under test.
+const tallySrc = SRC.match(/\/\/ TALLY-START[\s\S]*?\n([\s\S]*?)\n\/\/ TALLY-END/);
+assert.ok(tallySrc, "could not extract the TALLY block — keep the markers around the tunables and a single pure `tally`");
+const { tally, TUNING } = new Function(`${tallySrc[1]}; return { tally, TUNING };`)();
 
-const vote = (verdict, experiment) => ({ verdict, reason: "r", ...(experiment ? { experiment } : {}) });
-const REF = vote("refuted"), STANDS = vote("stands");
-const ABS = vote("unverifiable", "pnpm test foo");
-const SHRUG = vote("unverifiable");
+test("the shipped tuning is the documented one", () => {
+  // The kill threshold is deliberately NOT retuned by the scalar change: the
+  // literature says the optimal threshold needs a calibration set with
+  // ground-truth labels, and picking one without it just re-rolls the dice that
+  // produced 63% and 2.7%. This assertion is here to be edited BY that work.
+  assert.equal(TUNING.killVotes, 2, "the kill threshold moved without a calibration set");
+  // 0.5 is the neutral cut — the only value that asserts nothing about the
+  // relative cost of a wrong kill versus a wrong pass.
+  assert.equal(TUNING.refutedAt, 0.5);
+  assert.equal(TUNING.proofTickets, 1);
+});
+
+// A refuter's answer: evidence fields plus a score, and optionally a ticket.
+const vote = (confidence, experiment) => ({
+  read: "src/x.ts:1-20",
+  evidence: "src/x.ts:14 guards it",
+  falsifier: "a caller that skips the guard",
+  confidence,
+  ...(experiment ? { experiment } : {}),
+});
+const REF = vote(0.9), STANDS = vote(0.1);
+const TICKET = vote(0.2, "pnpm test foo");
 
 test("tally: two refutations kill; one does not", () => {
   assert.equal(tally([REF, REF, STANDS]).confirmed, false);
   assert.equal(tally([REF, STANDS, STANDS]).confirmed, true);
 });
 
-test("tally: abstentions never count as refutations, and never lower the bar", () => {
+test("tally: the cut is strictly greater than the threshold", () => {
+  // "Answer only if you are > t confident" — a score sitting exactly on the cut
+  // is not a refutation, in either the prompt's telling or the arithmetic's.
+  const ON_THE_CUT = vote(TUNING.refutedAt);
+  assert.equal(tally([ON_THE_CUT, ON_THE_CUT, ON_THE_CUT]).refutedVotes, 0);
+  const JUST_OVER = vote(TUNING.refutedAt + 0.01);
+  assert.equal(tally([JUST_OVER, JUST_OVER, STANDS]).confirmed, false);
+});
+
+test("tally: a lost or unscored vote never counts as a refutation and never lowers the bar", () => {
   // The bug this guards: renormalising to "a majority of votes cast" would make
-  // one refuter a majority once two abstain, handing a single voter a veto
+  // one refuter a majority once two are lost, handing a single voter a veto
   // exactly when the panel knows least.
-  assert.equal(tally([REF, ABS, ABS]).confirmed, true, "1 refutation must not kill, however many abstained");
-  assert.equal(tally([ABS, ABS, ABS]).confirmed, true);
-  // A LOST vote (null) is treated identically to an abstention.
-  assert.equal(tally([REF, null, null]).confirmed, true);
+  assert.equal(tally([REF, null, null]).confirmed, true, "1 refutation must not kill, however many were lost");
+  assert.equal(tally([REF, { read: "x", evidence: "y", falsifier: "z" }, {}]).confirmed, true, "a scoreless answer is a lost vote, not a refutation");
+  assert.equal(tally([REF, vote("high"), vote(NaN)]).confirmed, true, "a non-numeric score is a lost vote");
 });
 
-test("tally: a mostly-abstaining panel routes to the empirical gate, a mostly-reading one does not", () => {
-  assert.equal(tally([ABS, ABS, STANDS]).needsProof, true);
-  assert.equal(tally([ABS, STANDS, STANDS]).needsProof, false, "one abstention against two real reads is not a stalemate");
-  assert.equal(tally([REF, REF, ABS]).needsProof, false, "a killed finding is not worth a sandbox");
-  assert.equal(tally([ABS, ABS, STANDS]).experiment, "pnpm test foo", "the named experiment must reach the prover");
+test("tally: the ticket suspends a surviving finding, and never resolves one", () => {
+  assert.equal(tally([TICKET, STANDS, STANDS]).needsProof, true, "one ticket routes to the empirical gate");
+  assert.equal(tally([TICKET, STANDS, STANDS]).experiment, "pnpm test foo", "the named experiment must reach the prover");
+  assert.equal(tally([TICKET, STANDS, STANDS]).confirmed, true, "a ticket must not kill a finding");
+  assert.equal(tally([STANDS, STANDS, STANDS]).needsProof, false, "nothing to run when nobody ticketed");
+  assert.equal(tally([REF, REF, TICKET]).needsProof, false, "a killed finding is not worth a sandbox");
 });
 
-test("tally: an abstention naming no experiment is demoted, so abstaining is not free", () => {
-  assert.equal(tally([SHRUG, SHRUG, STANDS]).needsProof, false, "shrugs must not buy a sandboxed run");
-  assert.equal(tally([SHRUG, SHRUG, SHRUG]).confirmed, true);
+test("tally: a ticket carries no weight on the score", () => {
+  // The old shape made abstention a THIRD VERDICT, so filing one was a way of
+  // not scoring — and it was demoted to 'stands' when no experiment was named,
+  // which drained mass into the free option. Now the two axes are independent:
+  // a ticketing refuter still scores, and its score counts exactly as much.
+  const TICKETED_REFUTATION = vote(0.9, "pnpm test foo");
+  const t = tally([TICKETED_REFUTATION, REF, STANDS]);
+  assert.equal(t.confirmed, false, "a refuter that also ticketed still casts a full refutation");
+  assert.equal(t.needsProof, false);
+  // A ticket with no command is simply not a ticket — nothing to demote.
+  assert.equal(tally([vote(0.1, "   "), STANDS, STANDS]).needsProof, false);
+});
+
+test("tally: the thresholds are parameters, not constants baked into the arithmetic", () => {
+  // Tier 2 (a labeled calibration set) is what earns a different threshold. Its
+  // edit must be one number, so this asserts the number is actually plumbed.
+  const minorityVeto = { ...TUNING, killVotes: 1 };
+  assert.equal(tally([REF, STANDS, STANDS], minorityVeto).confirmed, false, "killVotes must be honoured");
+  const strict = { ...TUNING, refutedAt: 0.95 };
+  assert.equal(tally([REF, REF, REF], strict).confirmed, true, "refutedAt must be honoured");
+  const patient = { ...TUNING, proofTickets: 2 };
+  assert.equal(tally([TICKET, STANDS, STANDS], patient).needsProof, false, "proofTickets must be honoured");
 });

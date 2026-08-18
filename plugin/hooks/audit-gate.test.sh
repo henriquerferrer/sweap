@@ -47,11 +47,12 @@ mk_item() {
 }
 commit_all() { git -C "$1" add -A && git -C "$1" -c user.email=t@t -c user.name=t commit -qm "${2:-c}"; }
 head_sha() { git -C "$1" rev-parse HEAD; }
-# mk_record <repo> <milestone> <base> <head> <raw> <refuted> <confirmed> [body]
+# mk_record <repo> <milestone> <base> <head> <raw> <refuted> <confirmed> [body] [extra-frontmatter]
 mk_record() {
-  local r="$1" m="$2" base="$3" head="$4" raw="$5" ref="$6" conf="$7" body="${8:-}"
+  local r="$1" m="$2" base="$3" head="$4" raw="$5" ref="$6" conf="$7" body="${8:-}" extra="${9:-}"
   { printf -- '---\nsweap_format: 1\nmilestone: %s\nrange_base: %s\nrange_head: %s\nlens_mode: default\n' "$m" "$base" "$head"
     printf 'lenses: [correctness, authz]\nraw: %s\nrefuted: %s\nconfirmed: %s\n' "$raw" "$ref" "$conf"
+    [ -n "$extra" ] && printf '%s\n' "$extra"
     printf -- 'workflow_run: wf_test\njournal_sha256: 0123abcd\n---\n\n# %s audit\n%s\n' "$m" "$body"
   } > "$r/roadmap/audits/$m.md"
 }
@@ -102,7 +103,7 @@ base="$(head_sha "$R")"
 mk_item "$R" F1.1 done
 mk_item "$R" F1.2 done
 commit_all "$R"
-mk_record "$R" F1 "$base" "$(head_sha "$R")" 0 0 0
+mk_record "$R" F1 "$base" "$(head_sha "$R")" 0 0 0 "" "finders_reporting: 6"
 commit_all "$R" record
 run_gate "$R" --check
 check "valid record clears debt" 0
@@ -261,7 +262,7 @@ base="$(head_sha "$R")"
 mk_item "$R" F1.1 done
 commit_all "$R"
 range_head="$(head_sha "$R")"
-mk_record "$R" F1 "$base" "$range_head" 0 0 0
+mk_record "$R" F1 "$base" "$range_head" 0 0 0 "" "finders_reporting: 6"
 commit_all "$R" record
 # Now (after the record is committed) create and complete a follow-up item.
 # This is the normal debt-drain flow: the follow-up was referenced in the record
@@ -761,6 +762,76 @@ if printf '%s\n' "$OUT" | grep -q '^AGING:'; then
 else
   pass=$((pass+1)); printf '  PASS  merge mode prints no AGING lines\n'
 fi
+
+# --- "this audit ran" is a separate claim from "this audit was clean" ----------
+# A 0/0/0 record satisfies every other check in validate_record: required keys
+# present, raw == refuted + confirmed, blocks == defects, binding intact. It is
+# also precisely what a run whose finders ALL died emits. These cases pin the
+# affirmative evidence that separates the two.
+
+# T55: zero findings with no evidence of work -> invalid, and says why
+R="$(new_repo t55)"
+base="$(head_sha "$R")"
+mk_item "$R" F1.1 done
+commit_all "$R"
+mk_record "$R" F1 "$base" "$(head_sha "$R")" 0 0 0
+commit_all "$R" record
+run_gate "$R" --check
+check "zero-findings record without finders_reporting => debt" 1
+check_out "the failure names the missing evidence" "raw: 0 but no finders_reporting:"
+
+# T56: zero findings, and the evidence says nothing reported -> invalid
+R="$(new_repo t56)"
+base="$(head_sha "$R")"
+mk_item "$R" F1.1 done
+commit_all "$R"
+mk_record "$R" F1 "$base" "$(head_sha "$R")" 0 0 0 "" "finders_reporting: 0"
+commit_all "$R" record
+run_gate "$R" --check
+check "zero findings from zero reporting finders => debt" 1
+check_out "it is called a dead run, not a clean milestone" "not a clean milestone"
+
+# T57: zero findings with a non-numeric count -> invalid
+R="$(new_repo t57)"
+base="$(head_sha "$R")"
+mk_item "$R" F1.1 done
+commit_all "$R"
+mk_record "$R" F1 "$base" "$(head_sha "$R")" 0 0 0 "" "finders_reporting: all of them"
+commit_all "$R" record
+run_gate "$R" --check
+check "non-numeric finders_reporting => debt" 1
+check_out "names the numeric requirement" "finders_reporting must be numeric"
+
+# T58: the demand is scoped to a zero-findings record. A record that found things
+# is self-evidently the product of a run, and every record written before this
+# key existed must keep validating (purely additive, no sweap_format bump).
+R="$(new_repo t58)"
+base="$(head_sha "$R")"
+mk_item "$R" F1.1 done
+commit_all "$R"
+mk_record "$R" F1 "$base" "$(head_sha "$R")" 1 0 1 '### 1. a
+disposition: fix_pr #1'
+commit_all "$R" record
+run_gate "$R" --check
+check "a record with findings needs no finders_reporting" 0
+
+# T59: the UI axis is a different producer and is not conscripted into this.
+R="$(new_repo t59)"
+base="$(head_sha "$R")"
+mk_item "$R" F1.1 done
+commit_all "$R"
+mk_record "$R" F1 "$base" "$(head_sha "$R")" 0 0 0 "" "finders_reporting: 6
+axes: [ui]
+ui.raw: 0
+ui.refuted: 0
+ui.confirmed: 0
+ui.lens_mode: explicit
+ui.lenses: [a11y]
+ui.workflow_run: wf_ui
+ui.journal_sha256: beef"
+commit_all "$R" record
+run_gate "$R" --check
+check "a zero UI axis needs no ui.finders_reporting" 0
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" = 0 ]

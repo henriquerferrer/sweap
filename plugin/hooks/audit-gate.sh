@@ -223,11 +223,38 @@ validate_record() { # validate_record <milestone> <file> ; 0 = valid
   fi
 
   # --- triage closure: counts add up and every confirmed finding lands somewhere
-  local raw refuted confirmed body blocks dispo ref reftype reffile
+  local raw refuted confirmed body blocks dispo ref reftype reffile finders
   raw="$(fm_get "$rec" raw)"; refuted="$(fm_get "$rec" refuted)"; confirmed="$(fm_get "$rec" confirmed)"
   case "$raw$refuted$confirmed" in *[!0-9]*) fail "record $rec: raw/refuted/confirmed must be numeric"; ok=0 ;; esac
   if [ "$ok" = 1 ] && [ "$raw" -ne $((refuted + confirmed)) ]; then
     fail "record $rec: raw ($raw) != refuted ($refuted) + confirmed ($confirmed)"; ok=0
+  fi
+
+  # --- "this audit ran", which is not the same claim as "this audit was clean"
+  # A zero-findings record is the one shape that satisfies every other check here
+  # while asserting nothing at all: 0 == 0 + 0, no blocks to dispose of, binding
+  # intact, required keys present (`raw: 0` is non-empty). It is also exactly
+  # what a totally BROKEN run produces — consumer A's F11 audit lost all eleven finder
+  # agents to an unresolvable agent type, and the record that fell out of that
+  # would have passed here as a clean milestone.
+  #
+  # So a record claiming zero findings must carry affirmative evidence of work:
+  # `finders_reporting`, the number of lenses that actually returned a result,
+  # emitted by the workflow itself (which now refuses to return at all when that
+  # number is 0). Demanded ONLY when raw is 0, so every record written before the
+  # key existed still validates — purely additive, no sweap_format bump, the same
+  # move `axes:` and `unverified:` made.
+  #
+  # Scoped to the PRIMARY axis on purpose. A `ui.raw: 0` comes from a different
+  # workflow (the Tier-2 UI critique, deliberately frozen as a control), and this
+  # gate does not get to invent keys for a producer that does not emit them.
+  if [ "$ok" = 1 ] && [ "$raw" -eq 0 ]; then
+    finders="$(fm_get "$rec" finders_reporting)"
+    case "$finders" in
+      "") fail "record $rec: raw: 0 but no finders_reporting: — a zero-findings record is indistinguishable from a run whose finders all died, so it must state how many lenses actually reported. Re-run the audit with a current plugin, or add finders_reporting: <n> if you can attest they ran."; ok=0 ;;
+      *[!0-9]*) fail "record $rec: finders_reporting must be numeric"; ok=0 ;;
+      *) [ "$finders" -ge 1 ] || { fail "record $rec: finders_reporting: 0 — this audit reported nothing because nothing ran; it is not a clean milestone"; ok=0; } ;;
+    esac
   fi
 
   # --- additional audit axes -----------------------------------------------

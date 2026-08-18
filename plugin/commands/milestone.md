@@ -94,8 +94,8 @@ the named milestone's items (debt-first). Report the list of items in `D`. Like
 the deferred scan, this is stateless — it just re-reads current statuses — so
 running it here every time is safe and idempotent. (An item in `D` that turns
 out to need a direction call on pickup escalates to `[blocked]` and is left for
-the human, exactly like any other item — the "Stop when only [blocked] items
-remain" clause below still lets the run finish.)
+the human, exactly like any other item — the stop clause in the printed goal
+below still lets the run finish.)
 
 Hand-off scan, then **the kickoff fork** (see the playbook's "Attended items"
 section). Collect `H`: every `status: attended` item file in the run's scope
@@ -200,9 +200,17 @@ travels with the completing run instead).
 /goal First, every outstanding audit follow-up item in the backlog is [done];
 then every unblocked <MILESTONE> item is [done] per its definition of done, and
 the <MILESTONE> milestone-audit (plus the Tier-2 UI audit for a UI-heavy
-milestone) has run and been triaged. Stop when only [blocked] or [attended]
-items remain, or after <TURNS> turns.
+milestone) has run and been triaged. Stop when the only [todo] items left are
+audit follow-ups carrying followup_of: <MILESTONE> (those are the next run's
+debt, not this run's work), and everything else remaining is [blocked] or
+[attended] — or after <TURNS> turns.
 ```
+
+That stop condition names the follow-ups deliberately. A correct audit ends by CREATING work: bucket-2 triage writes
+`followup_of:` todo items, so a run that audits well can never literally reach
+"only blocked or attended remain" — consumer A's F11 run hit exactly that and had to
+escalate the ambiguity. Those items are the NEXT run's debt (the frontier drains
+them debt-first), not this one's.
 
 **Hand-offs outstanding** (an `M` was resolved, but the human deferred one or
 more of its hand-offs). The audit clause is deliberately absent and replaced by

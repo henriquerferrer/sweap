@@ -710,7 +710,15 @@ no cron, no standing agent. Standard template:
 > of done; and when the last item merges, run `/milestone-audit` with
 > `{milestone: "<milestone>", range: "<base>..<head>"}` for that range,
 > triage the confirmed findings (below), and post a summary before stopping.
-> Stop when only [blocked] or [attended] items remain, or after N turns.*
+> Stop when the only [todo] items left are audit follow-ups carrying
+> followup_of: <milestone> (the next run's debt, not this run's work), and
+> everything else remaining is [blocked] or [attended] — or after N turns.*
+
+(The follow-up clause is load-bearing, not padding. A correct audit ends by CREATING work: bucket-2 triage writes
+`followup_of:` todo items, so a run that audits well can never literally reach
+"only blocked or attended remain" — consumer A's F11 run hit exactly that and had to
+escalate the ambiguity. Those items are the NEXT run's debt (the frontier drains
+them debt-first), not this one's.)
 
 (Both stop conditions have a drain: `/unblock <id>` for a question, `/handoff
 <id>` for a task. Name them in the stop message — "3 blocked, 1 hand-off" without
@@ -738,6 +746,20 @@ findings; it never edits code. What happens next is the **triage** the
 surrounding session performs (below): a bucket-1 fix is a deliberate, gated
 *follow-on* PR the session opens, not something the audit workflow does silently.
 
+**Read-only is a toolset, and the toolset has to be addressable.** A plugin
+agent registers under its **scoped** name (`sweap:audit-reader`); the same file
+in a repo's own `.claude/agents/` registers **bare**. The workflow dispatched
+the bare name unconditionally, so it worked in sweap's checkout and was broken
+for every plugin install — consumer A's F11 audit lost all eleven finder agents to
+`agent type 'audit-reader' not found` and only completed because the session
+hand-patched its own copy of the script. It now resolves: scoped name, then bare
+name, then — if the runtime rejects both — whatever name the not-found error
+says it *does* have, which survives a plugin or marketplace rename the script
+cannot see. What it never does is fall back to *no* agent type: an unresolvable
+agent is a thrown error, because the alternative is the default toolset, which
+can `Write`. Watch for this class when reviewing: a guarantee that depends on a
+name is only as good as that name's addressability in the install it lands in.
+
 **Read-only is a toolset, and its scope is exact.** The workflow's finders and
 refuters run as the `audit-reader` agent — `Read`, `Grep`, `Glob`, with no
 `Write`, `Edit` or `Bash` — so they *cannot* write to the repo. That is enforced
@@ -764,27 +786,69 @@ prompt invited with the tools it was handed. **A guarantee asserted to a third
 party is not a guarantee** — the same lesson as the hand-off escape hatch, one
 rung worse, because here the doctrine was never even communicated to the actor.
 
-**Three verdicts, because "I couldn't check" is not a defence of the code.** A
-refuter returns `refuted` (a positive, code-grounded disproof — cite it),
-`stands` (read it thoroughly, could not break it), or `unverifiable` (only
-running something would settle it; the experiment must be named, and an
-`unverifiable` naming none is demoted to `stands`, so abstaining is never the
-cheap way out). Two refutations kill a finding — a **fixed** threshold, never
-renormalised to "a majority of votes cast", because renormalising would let two
-abstentions promote the third refuter to a majority of one, handing a single
-voter a veto exactly when the panel is least informed. Abstentions and lost
-votes are handled identically: excluded from the numerator, threshold unchanged.
-Why not a binary flag: a binary verdict forces a judge that lacks the evidence
-to guess, and whichever way the prompt tells it to guess, a limit of the
-*refuter's tools* silently becomes a claim about the *code*. Killing on
-uncertainty destroys true findings — the closest published system to this one
-lost a real CVE that way, unanimously, rescued only by a human. Passing them
-through as ordinary survivors floods triage with claims nobody checked, which is
-the documented way defect-finding tools lose their audience and get switched off.
+**Evidence and a number, not a verdict — and the number lives in the pipeline.**
+A refuter returns four things about a finding, every time: the `path:line`
+spans it actually read, the code it found bearing on the claim, what would
+falsify its own answer, and `confidence` — its probability, 0 to 1, that the
+finding is **wrong**. It does not return a label. The pipeline cuts: a
+refutation is a score strictly above `TUNING.refutedAt` (**0.5**), and
+`TUNING.killVotes` (**2**) of the three seats kill a finding. Both numbers live
+in one `TUNING` block in the workflow, and the prompt interpolates them so it
+can never quote a stale price.
+
+Why the shape rather than the labels. This was a boolean, then
+`refuted`/`stands`/`unverifiable`, and that one change took the panel's kill
+rate from 63–73% to **2.7%** (1 of 36) — while a UI-critic axis with an
+unchanged prompt held at 40% in the same run, which is the control that makes it
+causal. 216 verdicts split 210 `stands` / 6 `refuted` / 0 `unverifiable`. A
+categorical verdict puts the decision boundary **inside the model**, where an
+adjective moves it 25×, and the labels were priced asymmetrically on top of
+that: `refuted` demanded a "positive, code-grounded disproof" from an agent that
+cannot run code, `unverifiable` demanded an experiment and was demoted to
+`stands` without one, and `stands` demanded nothing. Two costly inlets, one free
+sink. The generic version of that is worse than the specific one — adding an
+option perturbs the distribution for non-semantic reasons at all — so the fix is
+not better labels, it is no labels. Every lab externalises this: OpenAI's
+`score_model` grader returns `{"result": float, "steps": ReasoningStep[]}` with
+a separate `pass_threshold` in the config; the model scores, the system cuts.
+The research behind this paragraph, with every quote re-fetched raw and
+string-matched, is `docs/research/2026-08-18-refuter-verdict-design.md`.
+
+**Evidence is required symmetrically.** The answer that leaves a finding alone
+cites code on exactly the same terms as the answer that kills it — the required
+schema fields do not branch on which way the score points, and an answer citing
+no code is a **schema violation** that the model is made to retry. Never a
+demotion: a demotion is a drain into whichever answer is cheapest, which is the
+mechanism this design exists to delete.
+
+**`unverifiable` is now an out-of-band ticket, not a verdict.** A refuter that
+cannot settle a claim by reading names the exact command in `experiment` —
+*and still scores*, on what it did manage to read. The ticket **suspends** the
+finding for the Validate stage rather than resolving it, and being off the
+scoring axis is the whole point: a ticket cannot take probability mass from a
+score the way a third label takes it from the other two. One ticket routes
+(`TUNING.proofTickets`); the old ">=2 of 3 abstained" bar, combined with a
+label nobody ever chose, is what made the Validate stage structurally
+unreachable.
+
+**Why the kill threshold is still 2.** Not because it is known to be right —
+63–73% was very likely also wrong, in the direction nobody was measuring. There
+is a real argument it should fall to 1: under documented positive bias an
+agreeable majority is the failure mode rather than the safeguard, and the paper
+making that case proposes a minority veto. That same paper is why it has not
+moved — the optimal threshold "requires a calibration set with ground-truth
+labels", and flipping it on intuition re-rolls the dice that produced 63% and
+2.7%. What is fixed is the *renormalisation*: never "a majority of votes cast",
+because that lets two lost votes promote the third refuter to a majority of one,
+handing a single voter a veto exactly when the panel is least informed. Lost and
+unscored votes are excluded from the numerator with the threshold left where it
+is. **The next piece of work is the labeled set** — seeded known-bad and
+known-good findings — and until it exists no kill rate, 2.7% or 73%, can be
+called right or wrong.
 
 **The Validate stage — the empirical gate, spent only where reading ran out.**
-When a finding's panel *mostly abstained*, one `audit-prover` agent runs the
-named experiment and returns a verdict backed by a pasted command and its actual
+When a refuter has ticketed a surviving finding as unsettleable by reading, one
+`audit-prover` agent runs the named experiment and returns a verdict backed by a pasted command and its actual
 output. It has `Bash` and `Write`; its containment is `isolation: 'worktree'` —
 a throwaway git worktree, auto-removed if unchanged — rather than tool removal.
 Be equally honest about that: worktree isolation relocates the working
@@ -795,7 +859,11 @@ because adversarial reasoning catches reasoning errors and not empirical ones �
 in that same published system, ten agents including a senior arbiter unanimously
 confirmed a finding that one fresh instance killed by compiling the code and
 running three tests. It is dispatched **conditionally**: a worktree per refuter
-would mean ninety sandboxes to settle a handful of verdicts.
+would mean ninety sandboxes to settle a handful of verdicts. Its own verdict is
+still categorical and still three-valued, deliberately — that agent *has* the
+capability, its answer is backed by a pasted command and its actual output, and
+its `unverifiable` means "I tried to run it and something blocked me", a fact it
+earned rather than a bucket it fell into. Nothing routes onward from it either.
 
 **`unverified` findings are a coverage gap, not a defect.** A finding that
 survived because nobody could check it is reported separately — a subset of
@@ -806,6 +874,18 @@ counted as "confirmed by adversarial review": that claims three adversaries
 failed to refute it when in fact three adversaries never looked. A large
 `unverified` count is itself the finding — it means the audit's reading tier is
 out of its depth on that surface.
+
+**A zero-findings audit must prove it ran.** "This audit was clean" and "this
+audit ran" are different claims, and a `0 / 0 / 0` record makes the first while
+the second may be false: it satisfies every arithmetic and binding check the
+gate performs. It is also exactly what a totally failed run produces. Two
+layers close that. The workflow **throws** rather than returning when no lens
+reported — fail at the source, where the failure is still attributable — and
+lists in `lenses:` only the lenses that actually ran, logging any that were
+lost. And every record carries `finders_reporting: <n>`, which
+`audit-gate.sh` demands (`>= 1`) whenever `raw` is 0. A finding no refuter ever
+scored is likewise counted as `unverified` rather than as adversarially
+confirmed.
 
 **Audit evidence (mandatory).** The audit only counts if it runs *after* the
 milestone's last item has actually merged to the project's default branch —
