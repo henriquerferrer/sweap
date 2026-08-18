@@ -15,10 +15,24 @@
 # human-reads-the-output link from the chain.
 #
 # It ALSO denies a PR whose head is BEHIND its base — green checks against an old
-# base say nothing about the COMBINED state that would land, the core hazard of
-# parallel runs (see the parallel-runs spec, 2026-07-18). Freshness is enforced
-# PROTECTION-INDEPENDENTLY: `mergeStateStatus == BEHIND` is a fast-path deny, but
-# GitHub only reports BEHIND under strict required-status-check branch protection
+# base say nothing about the COMBINED state that would land.
+#
+# THIS IS A CORRECTNESS CONTROL, NOT CONCURRENCY MACHINERY. It used to be
+# described here as guarding "the core hazard of parallel runs", which was always
+# attributing a general effect to a specific cause, and became actively
+# misleading once `parallel: 1` went default (2026-08-18). Measured over consumer A's
+# 161 merged PRs: 42 (26%) had another PR land on `main` while they were open —
+# and restricted to PRs open two hours or less, still 27 of 138 (20%), against a
+# median open window of 19 minutes. One PR went stale in five minutes. A
+# single-worker pipeline merges audit records, fix-PRs, follow-ups and chores
+# between a branch's green and its merge, so the base rate here is INDEPENDENT of
+# `parallel:` and larger than the 17% co-dispatch rate that demoted coordinator
+# mode. Do not delete this check — or tests d7/d8, which are the only things that
+# catch its removal — on the grounds that parallel runs are now opt-in.
+#
+# Freshness is enforced PROTECTION-INDEPENDENTLY: `mergeStateStatus == BEHIND` is
+# a fast-path deny, but GitHub only reports BEHIND under strict
+# required-status-check branch protection
 # (empirically verified — a free-plan repo one commit behind its base reports
 # mergeStateStatus CLEAN), so BEHIND alone is vacuous on the target repos this
 # runs against. For EVERY other mergeStateStatus the hook makes the ground-truth

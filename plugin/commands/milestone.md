@@ -163,7 +163,7 @@ Parallel width. Read `parallel:` from the `## sweap config` block (default 1;
 clamp values above 4 to 4 and say so). At **1** — the default — the run is the
 serial loop and there is nothing to announce. At 2 or more it operates in
 **coordinator mode** per the playbook's "Parallel runs" section — frontier
-scheduling, worktree-isolated workers, the FIFO always-verify merge gate, and
+scheduling, worktree-isolated workers, the FIFO always-verify merge queue, and
 the `.claude/sweap-board.md` board file. That mode is opt-in against measured
 evidence that it bought ~+9% here, so when it is on, say so explicitly and say
 why the project declared it. The printed goal line is IDENTICAL either way —

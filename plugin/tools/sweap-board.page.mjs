@@ -44,7 +44,7 @@ export function renderPage() {
     <div class="cols">
       <div><h2>Frontier (ready)</h2><div class="col" id="frontier"></div></div>
       <div><h2>In-flight</h2><div class="col" id="inflight"></div></div>
-      <div><h2>Merge gate</h2><div class="col" id="mergequeue"></div></div>
+      <div><h2>Open PRs</h2><div class="col" id="mergequeue"></div></div>
       <div class="mine"><h2>🙋 Yours — hand-offs</h2><div class="col" id="attended"></div></div>
       <div class="blocked"><h2>⛔ Blocked — needs you</h2><div class="col" id="blocked"></div></div>
     </div>
@@ -71,7 +71,7 @@ function draw(s) {
   document.getElementById("notes").innerHTML = (s.notes||[]).map(n => '<span>⚠ '+esc(n)+'</span>').join("");
   renderList(document.getElementById("frontier"), s.frontier, i => '<div class="item"><b>'+esc(i.id)+'</b> '+esc(i.title)+(i.lane?' <span class="meta">lane:'+esc(i.lane)+'</span>':'')+'</div>', "nothing ready");
   renderList(document.getElementById("inflight"), s.inFlight, i => '<div class="item"><b>'+esc(i.id)+'</b> '+esc(i.title)+'<div class="meta">'+esc(i.step||"working")+(i.branch?' · '+esc(i.branch):'')+(i.pr?' · PR #'+i.pr:'')+' <span class="badge ci-'+esc(i.ci)+'">'+esc(i.ci)+'</span></div></div>', "nothing in flight");
-  renderList(document.getElementById("mergequeue"), s.mergeQueue, q => '<div class="item">PR #'+q.pr+' '+esc(q.title)+' <span class="badge ci-'+esc(q.ci)+'">'+esc(q.ci)+'</span></div>', "queue empty");
+  renderList(document.getElementById("mergequeue"), s.mergeQueue, q => '<div class="item">PR #'+q.pr+' '+esc(q.title)+' <span class="badge ci-'+esc(q.ci)+'">'+esc(q.ci)+'</span></div>', "none open");
   renderList(document.getElementById("attended"), s.attended, a => '<div class="item"><b>'+esc(a.id)+'</b> '+esc(a.title)+'<div class="task">'+esc(a.task)+'</div><div class="meta">'+(a.ready?'/handoff '+esc(a.id):'waiting on a dependency')+(a.gates&&a.gates.length?' · gates '+a.gates.length+' item'+(a.gates.length>1?'s':'')+': '+a.gates.map(esc).join(", "):'')+'</div></div>', "no hand-offs 🎉");
   renderList(document.getElementById("blocked"), s.blocked, b => '<div class="item"><b>'+esc(b.id)+'</b> '+esc(b.title)+'<div class="q">'+esc(b.question)+'</div><div class="meta">'+(b.carried?'<span class="badge carried">carried '+b.carried+' boundar'+(b.carried>1?'ies':'y')+(b.carried>=2?' · asked at the next /roadmap':'')+'</span> · ':'')+'/unblock '+esc(b.id)+'</div></div>', "none blocked 🎉");
   document.getElementById("backlog").innerHTML = (s.backlog||[]).map(g => '<div class="ms"><h3>'+esc(g.milestone)+'</h3>'+g.items.map(i => '<div class="item'+(i.malformed?' malformed':'')+'"><span class="st-'+esc(i.status)+'">●</span> <b>'+esc(i.id)+'</b> '+esc(i.title)+' <span class="meta">'+esc(i.status)+(i.dependsOn&&i.dependsOn.length?' · deps: '+i.dependsOn.map(esc).join(", "):'')+'</span></div>').join("")+'</div>').join("") || '<div class="empty">no items</div>';
