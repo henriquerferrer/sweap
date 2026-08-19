@@ -29,8 +29,22 @@ decided later by `/roadmap` at triage.
    ' "<title>" "<body>" "${CLAUDE_PLUGIN_ROOT}/tools/sweap-board.lib.mjs"
    ```
 
-5. **Confirm.** Report the created path (the snippet prints it) and that the
-   idea will surface at the next `/roadmap` run.
+5. **Land it.** An idea that exists only in the working tree is not captured,
+   it is exposed: `git clean`, a re-clone or a dead disk loses it, and no other
+   machine can see it. So the inbox goes to `origin` like everything else.
+   - **If nothing else is in flight**, flush it yourself: worktree, commit
+     EVERY pending file under `<backlog.dir>ideas/` (not just the one you just
+     wrote — one PR drains the whole inbox, including anything the board's
+     Ideas form left there), open `chore(ideas): capture <n> idea(s)`, merge on
+     green, run end-of-run hygiene. This PR is never backlog-advancing —
+     `audit-gate.sh` classifies `<backlog.dir>ideas/` as a non-item subdir — so
+     it lands even during audit debt.
+   - **If you are mid-feature**, do NOT interrupt that work with a second PR.
+     Leave the file and say so plainly: the next gated PR this session opens
+     carries it (the playbook's sweep rule, End-of-run hygiene).
+6. **Confirm.** Report the created path (the snippet prints it), where it
+   landed (PR number, or "riding on the next PR"), and that it surfaces at the
+   next `/roadmap` run.
 
-Do NOT commit anything — idea files stay untracked until `/roadmap` triages
-them into a milestone PR.
+Never EDIT an existing idea file and never write one by hand — `writeIdea` is
+create-only and owns the format. Committing one is not editing it.

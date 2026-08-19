@@ -89,7 +89,13 @@ hazard.
   page's Ideas form or the `/idea` command. Invisible to lint, dep resolution,
   and the frontier (like `archive/`). `/roadmap`'s decide phase surfaces them
   as read-only context; reconcile moves triaged ones to
-  `roadmap/ideas/archive/`.
+  `roadmap/ideas/archive/`. **Idea files are committed, not scratch** — see the
+  sweep rule under End-of-run hygiene. They were untracked-until-triaged until
+  2026-08-19, which lost the difference between "captured" and "still on one
+  disk": consumer A carried three uncommitted ideas for up to three days while
+  sessions, following their own judgment, committed untriaged ones into
+  unrelated PRs anyway (2 of the 3 times an idea ever reached git). A rule the
+  agents override two thirds of the time is the defect.
 - **`.claude/sweap-board.md`** (gitignored) stays the *ephemeral* layer —
   in-flight claims and merge order only (see Parallel runs).
 
@@ -312,6 +318,17 @@ may ADD dimensions it judges necessary; it may not remove tagged ones.
 
 ## End-of-run hygiene (mandatory)
 
+- **Sweep the idea inbox into whatever PR you are already opening.** Before
+  committing, `git status` the `<backlog.dir>ideas/` directory; any untracked
+  idea file rides along in this PR. It costs one line in the diff and it is the
+  only mechanism that covers ideas captured from the board's Ideas form, which
+  writes over HTTP with no session behind it and can never open a PR itself. Do
+  not open a separate PR for them mid-feature, and do not hold them back for
+  `/roadmap` — an idea sitting untracked is one `git clean` from gone, and the
+  human wrote it. (`/idea` flushes the inbox itself when nothing is in flight;
+  this rule is what catches everything else. An ideas-only PR is never
+  backlog-advancing — `audit-gate.sh` classifies `<backlog.dir>ideas/` as a
+  non-item subdir — so it lands even during audit debt.)
 - **Never commit to the local `main` checkout — not even docs.** Every commit
   happens in a worktree and reaches `main` only through a PR. (This keeps the
   primary checkout from diverging; auto-mode cannot hard-reset it later.)

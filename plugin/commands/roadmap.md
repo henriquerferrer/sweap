@@ -129,7 +129,9 @@ review is asked for:
    drafted item under `backlog.dir`,
    move every triaged idea file from `<backlog.dir>ideas/` to
    `<backlog.dir>ideas/archive/` (provenance preserved, inbox drained — untriaged
-   ideas stay put),
+   ideas stay put, and any that are still UNTRACKED get committed where they sit:
+   this PR is the backstop for ideas captured by the board's Ideas form, which
+   writes over HTTP with no session and so can never open a PR of its own),
    update the index's milestone list (move the
    milestone out of "Later milestones"), and run
    `bash ${CLAUDE_PLUGIN_ROOT}/hooks/roadmap-lint.sh <file>` on every new item
