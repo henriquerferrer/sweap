@@ -38,10 +38,11 @@ This mechanically, idempotently:
    gate is vendored (not checked out from sweap in CI) so the check needs no PAT
    and no cross-repo access — both repos being private would otherwise require a
    secret whose expiry would block every PR.
-4. **Runtime gitignore rules:** ensures the project's `.gitignore` excludes both
-   sweap runtime files — `post-merge-redcheck.sh`'s marker file
-   (`.claude/main-red-*.flag`) and the coordinator's parallel-runs board
-   (`.claude/sweap-board.md`) — appending each line only if missing, creating
+4. **Runtime gitignore rules:** ensures the project's `.gitignore` excludes
+   sweap's runtime files — `post-merge-redcheck.sh`'s marker file
+   (`.claude/main-red-*.flag`), the coordinator's parallel-runs board
+   (`.claude/sweap-board.md`), and the run file `/milestone` writes at kickoff
+   (`.claude/sweap-run.md`) — appending each line only if missing, creating
    `.gitignore` if absent, never duplicated. The scaffold self-heals these on
    every session start (the gitignore step runs before the already-scaffolded
    fast-guard), so an existing project gains a newly-added rule on its next

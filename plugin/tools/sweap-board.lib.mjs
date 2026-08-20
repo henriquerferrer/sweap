@@ -1,7 +1,7 @@
 // sweap-board.lib.mjs — pure, testable core for the board viewer.
 // No process/network side effects, with one exception: writeIdea() is a
 // create-only fs-write helper (new files under <backlogDir>ideas/ only).
-// buildState() itself takes injected git/gh runners and touches no fs beyond reads.
+// buildState() itself takes injected git/gh/audit runners and touches no fs beyond reads.
 // Reads item files with the same flat-frontmatter contract roadmap-lint enforces.
 import { readFileSync, readdirSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
@@ -42,6 +42,62 @@ export function readConfig(projectDir) {
   return {
     backlogFile: grab("backlog.file") || defaults.backlogFile,
     backlogDir: dir.endsWith("/") ? dir : dir + "/",
+  };
+}
+
+// --- the milestone index (backlog.file) ---------------------------------------
+// The index carries the two things item files structurally cannot: a
+// milestone's GOAL sentence and the human's PRIORITY ORDER. Both are what a
+// "what is running" card has to say out loud, so the board reads the index for
+// the first time here. Bullets are read ONLY under a heading naming milestones,
+// which keeps the index's prose (which also uses dashes) out of the parse.
+export function parseMilestoneIndex(text) {
+  const out = [];
+  const seen = new Set();
+  let inSection = false, sketch = false;
+  for (const raw of String(text).replace(/\r\n?/g, "\n").split("\n")) {
+    const h = raw.match(/^#{1,6}\s+(.*)$/);
+    if (h) {
+      inSection = /milestone/i.test(h[1]);
+      // "## Later milestones (sketch, not yet specced)" is not runnable work.
+      sketch = inSection && /later|sketch|not yet|future/i.test(h[1]);
+      continue;
+    }
+    if (!inSection) continue;
+    const m = raw.match(/^\s*[-*]\s+([A-Za-z][A-Za-z0-9]*(?:\.\d+)*)\s*[—–:-]\s*(.*)$/);
+    if (!m || seen.has(m[1])) continue;
+    seen.add(m[1]);
+    out.push({ id: m[1], goal: m[2].trim().replace(/\s+/g, " "), sketch });
+  }
+  return out;
+}
+
+export function readMilestoneIndex(projectDir, backlogFile) {
+  try { return parseMilestoneIndex(readFileSync(join(projectDir, backlogFile), "utf8")); }
+  catch { return []; }
+}
+
+// --- the run file (.claude/sweap-run.md) ---------------------------------------
+// `/milestone` resolves a milestone and a run SHAPE at kickoff and, before this,
+// forgot both the moment it printed the goal. This file is that memory: the one
+// thing no other file on disk records. Gitignored and ephemeral, exactly like
+// `.claude/sweap-board.md`, and ABSENT is a normal state — a run started before
+// this shipped, or work driven by hand. The card then derives the milestone from
+// what is in flight and says which of the two it did, so an inference is never
+// mistaken for a fact. Same flat-frontmatter contract as every other sweap file.
+export function readRunFile(projectDir) {
+  let text;
+  try { text = readFileSync(join(projectDir, ".claude", "sweap-run.md"), "utf8"); } catch { return null; }
+  const { fm } = parseFrontmatter(text);
+  if (!fm || !fm.milestone) return null;
+  const turns = Number(fm.turns);
+  return {
+    milestone: fm.milestone,
+    shape: fm.shape || null,
+    scope: parseList(fm.scope),
+    turns: Number.isFinite(turns) && turns > 0 ? turns : null,
+    started: fm.started || null,
+    deferredHandoffs: parseList(fm.deferred_handoffs),
   };
 }
 
@@ -205,6 +261,167 @@ export function deriveBacklog(items) {
   return { frontier, attended, blocked, backlog, edges };
 }
 
+// --- the running-milestone card -------------------------------------------------
+// The board could always answer "which items are moving"; it could never answer
+// "which MILESTONE is moving, and what stands between it and done". Nothing on
+// disk recorded that, so nothing could show it. This derives it.
+//
+// Which milestone is running, in order of authority:
+//   1. `.claude/sweap-run.md` — what /milestone actually resolved (exact: it
+//      knows the run SHAPE, which no amount of item-file reading can recover).
+//      Ignored once that milestone has no unfinished items: the run ended and
+//      the file is just litter.
+//   2. otherwise the milestone of the earliest IN-FLIGHT item that is not an
+//      audit follow-up — a follow-up belongs to the milestone that was audited,
+//      not to the one being run, so leading with it would name the wrong one.
+//   3. otherwise the next runnable milestone — the same rule /milestone
+//      resolves by: first in index order holding a todo item whose deps are all
+//      satisfied. This is a guess about the future, so `state` says "next".
+// `source` rides along on every card: an inference must never be readable as a
+// fact, which is the whole reason the run file exists at all.
+export function buildMilestoneCard({ items, index = [], runFile = null, inFlight = [], frontier = [], attended = [], blocked = [], audit = null }) {
+  if (!items.length) return null;
+  const byId = new Map(items.map((i) => [i.id, i]));
+  const byMilestone = new Map();
+  for (const i of items) { const m = milestoneOf(i.id); if (!byMilestone.has(m)) byMilestone.set(m, []); byMilestone.get(m).push(i); }
+
+  // Priority order is the INDEX's order — that is the human's stated order, and
+  // it is not always numeric. Milestones the index never lists sort after it.
+  const rank = new Map(index.map((m, n) => [m.id, n]));
+  const order = (m) => (rank.has(m) ? rank.get(m) : Number.MAX_SAFE_INTEGER);
+  const compareMs = (a, b) => (order(a) - order(b)) || compareItems({ id: a + ".0", followupOf: null }, { id: b + ".0", followupOf: null });
+
+  // An audit-follow-up FAMILY is not a milestone. `FN.3` groups under "FN", but
+  // FN is a family keyed by `followup_of: F11` — consumer A's config says so in as
+  // many words, and its backlog holds 13 such families against 15 real
+  // milestones. A group with no non-follow-up item in it has never been a
+  // milestone, so the card must never name one; that is exactly the wrong
+  // answer inference reaches for when a run is draining debt.
+  const isMilestone = (m) => (byMilestone.get(m) || []).some((i) => !i.followupOf);
+  const incomplete = [...byMilestone.keys()]
+    .filter((m) => isMilestone(m) && byMilestone.get(m).some((i) => i.status !== "done"))
+    .sort(compareMs);
+  // Follow-ups are excluded here for the same reason they are excluded from
+  // `lead` below: debt is the scope `D` that runs AHEAD of a milestone, not the
+  // milestone's own work. A milestone whose only ready item is a follow-up is
+  // not the milestone being run — its debt is.
+  const readyIds = new Set(frontier.filter((i) => !i.followupOf).map((i) => i.id));
+  const nextRunnable = incomplete.find((m) => byMilestone.get(m).some((i) => readyIds.has(i.id))) || null;
+  // ...and a milestone whose every item is GATED — the hand-offs-outstanding
+  // shape — is still the milestone being run. It is the shape /milestone models
+  // explicitly, and it is the state consumer A sat in for this whole run: DS.5's
+  // nine todo items all wait on DS.5.3, an attended hand-off. Requiring a READY
+  // item here is what made the card render nothing at all on the one project
+  // actually running a milestone.
+  const nextGated = incomplete.find((m) => byMilestone.get(m).some((i) => !i.followupOf && i.status !== "done")) || null;
+
+  const flight = inFlight.map((f) => byId.get(f.id)).filter(Boolean);
+  const lead = flight.filter((i) => !i.followupOf).sort(compareItems)[0] || null;
+
+  let id = null, source = null;
+  if (runFile && incomplete.includes(runFile.milestone)) { id = runFile.milestone; source = "run-file"; }
+  else if (lead) { id = milestoneOf(lead.id); source = "in-flight"; }
+  else if (nextRunnable) { id = nextRunnable; source = "derived"; }
+  else if (nextGated) { id = nextGated; source = "gated"; }
+  if (!id) return null;
+
+  const mine = byMilestone.get(id) || [];
+  const counts = { total: mine.length, done: 0, todo: 0, blocked: 0, attended: 0, deferred: 0, other: 0 };
+  for (const i of mine) { if (Object.prototype.hasOwnProperty.call(counts, i.status) && i.status !== "total") counts[i.status]++; else counts.other++; }
+
+  const inScope = (itemId) => milestoneOf(itemId) === id;
+  const inFlightIds = new Set(inFlight.map((f) => f.id));
+  // Every in-flight item shows, tagged by where it sits in the run's scope: the
+  // run is `D` then `M` (debt-first), so a follow-up moving right now is this
+  // run's work even though it belongs to an older milestone's numbering.
+  const flightRows = inFlight.map((f) => {
+    const it = byId.get(f.id);
+    return { ...f, scope: it && it.followupOf ? "debt" : inScope(f.id) ? "milestone" : "other" };
+  });
+  const ready = frontier
+    .filter((i) => inScope(i.id) && !inFlightIds.has(i.id))
+    .map((i) => ({ id: i.id, title: i.title, lane: i.lane }));
+  // Audit debt `D` — every follow-up that is todo AND unblocked, anywhere. The
+  // frontier already holds them; the card names them as the scope PREFIX
+  // instead, because that is what debt-first means for this run's shape.
+  const debt = frontier.filter((i) => i.followupOf).map((i) => ({ id: i.id, title: i.title, followupOf: i.followupOf }));
+
+  const handoffs = attended.filter((a) => inScope(a.id));
+  const blockedHere = blocked.filter((b) => inScope(b.id));
+
+  // Audit, most-specific first. "blocked-by-debt" is deliberately loud even
+  // though the debt is ANOTHER milestone's: while it stands, no backlog-
+  // advancing PR merges at all, so it is this run's problem too.
+  let state = "unknown", detail = null;
+  const notDue = handoffs.length
+    ? `${handoffs.length} open hand-off${handoffs.length > 1 ? "s keep" : " keeps"} ${id} incomplete, so its audit is not due this run`
+    : null;
+  if (audit && audit.unknown) {
+    // The gate failing outranks "not due": not-due is about THIS milestone's
+    // hand-offs, and says nothing about whether an older milestone's missing
+    // record is about to deny every merge. Claiming the smaller answer here
+    // would read as the whole one.
+    detail = "audit-gate --check did not run here" + (notDue ? ` · ${notDue}` : "");
+  } else if (audit) {
+    if (audit.debt.includes(id)) { state = "debt"; detail = `${id} is complete but has no valid audit record — run /milestone-audit ${id}`; }
+    else if (audit.deferred.includes(id)) { state = "deferred"; detail = `${id} completes in the state under review, so its audit cannot have run yet — land it, then run /milestone-audit ${id}`; }
+    else if (audit.debt.length) { state = "blocked-by-debt"; detail = `audit debt on ${audit.debt.join(", ")} — no backlog-advancing PR merges until it is discharged`; }
+    else if (notDue) { state = "not-due"; detail = notDue; }
+    else state = "clean";
+  } else if (notDue) { state = "not-due"; detail = notDue; }
+
+  const entry = index.find((m) => m.id === id) || null;
+  return {
+    id,
+    goal: entry ? entry.goal : null,
+    sketch: entry ? entry.sketch : false,
+    state: flight.length ? "running" : "next",
+    source,
+    shape: runFile ? runFile.shape : null,
+    turns: runFile ? runFile.turns : null,
+    started: runFile ? runFile.started : null,
+    deferredHandoffs: runFile ? runFile.deferredHandoffs : [],
+    counts,
+    inFlight: flightRows,
+    ready,
+    debt,
+    handoffs,
+    blocked: blockedHere,
+    audit: {
+      state,
+      detail,
+      debtMilestones: audit ? audit.debt : [],
+      integrity: audit ? audit.integrity : [],
+      stale: audit ? audit.stale : [],
+    },
+  };
+}
+
+// audit-gate.sh --check speaks in line prefixes (its own header documents the
+// contract): FAIL: milestone/record = audit debt, FAIL: hand-off = a backlog-
+// integrity violation no audit discharges, DEFERRED: = not debt yet, STALE: =
+// an old record format that never blocks, AGING: = informational.
+export function classifyAudit(stdout, code) {
+  const res = { debt: [], deferred: [], stale: [], integrity: [], unknown: false };
+  let recognized = 0;
+  for (const l of String(stdout || "").split("\n")) {
+    let m;
+    if ((m = l.match(/^FAIL: milestone (\S+)/))) { res.debt.push(m[1]); recognized++; }
+    else if ((m = l.match(/^FAIL: record (\S+?):/))) { res.debt.push(basename(m[1], ".md")); recognized++; }
+    else if ((m = l.match(/^FAIL: hand-off (\S+?):/))) { res.integrity.push(m[1]); recognized++; }
+    else if ((m = l.match(/^DEFERRED: milestone (\S+)/))) { res.deferred.push(m[1]); recognized++; }
+    else if ((m = l.match(/^STALE: record (\S+?)\s/))) { res.stale.push(basename(m[1], ".md")); recognized++; }
+    else if (/^(AGING|FAIL):/.test(l)) recognized++;
+  }
+  // A non-zero exit we cannot read a single known line out of means the gate did
+  // not run here (no git, no anchor, wrong cwd) — report unknown rather than a
+  // clean bill of health the gate never actually gave.
+  if (code !== 0 && recognized === 0) res.unknown = true;
+  res.debt = [...new Set(res.debt)];
+  res.deferred = [...new Set(res.deferred)];
+  return res;
+}
+
 export function parseWorktrees(stdout) {
   const out = [];
   let cur = null;
@@ -216,18 +433,36 @@ export function parseWorktrees(stdout) {
   return out;
 }
 
+// A cell holding only dashes (`-`, `—`, `–`) is the markdown idiom for "nothing
+// here", not a value. Reading one as a blocked question is how every row of a
+// real table acquires a phantom question.
+const BLANK_CELL = /^[-—–\s]*$/;
+// Markdown emphasis and code ticks around an id are formatting, not part of it.
+const cleanId = (s) => String(s).replace(/^[-*#\s>]+/, "").replace(/[`*_]/g, "").trim();
+
 export function parseBoard(text) {
   const ann = { steps: {}, prByItem: {}, wtByItem: {}, questions: {} };
   if (!text) return ann;
   for (const raw of String(text).split("\n")) {
-    const parts = raw.split("|").map((s) => s.trim());
+    let parts = raw.split("|").map((s) => s.trim());
     if (parts.length < 2) continue;
-    const id = parts[0].replace(/^[-*#\s>]+/, "").trim();
-    if (!/^[A-Za-z]+\d/.test(id)) continue;
-    if (parts[1]) ann.steps[id] = parts[1];
+    // A real markdown table pipes its outer edges too, which lands an empty
+    // cell at each end. The board's documented one-line form does not. Accept
+    // both — consumer A writes the table, and its every row was being dropped.
+    if (parts[0] === "") parts = parts.slice(1);
+    if (parts.length && parts[parts.length - 1] === "") parts = parts.slice(0, -1);
+    if (parts.length < 2) continue;
+    if (parts.every((c) => /^:?-{2,}:?$/.test(c))) continue;          // the header rule row
+    const id = cleanId(parts[0]);
+    // Anchored on BOTH ends: an id is the whole cell, never a prefix of one.
+    // Unanchored, "FN.1 → FN.2 → FN.3" read as an item and a table of lanes
+    // became in-flight claims. Dotted ids (`FN.3`, `DS.5.1`) must pass — the
+    // old `[A-Za-z]+\d` shape silently rejected every one of them.
+    if (!/^[A-Za-z]+[0-9.]*[0-9]$/.test(id)) continue;
+    if (parts[1] && !BLANK_CELL.test(parts[1])) ann.steps[id] = parts[1];
     const wt = raw.match(/(\S+)@(\S+)/); if (wt) ann.wtByItem[id] = { worktree: wt[1], branch: wt[2] };
     const pr = raw.match(/PR\s*#?(\d+)/i); if (pr) ann.prByItem[id] = parseInt(pr[1], 10);
-    const last = parts[parts.length - 1]; if (last && last !== "-") ann.questions[id] = last;
+    const last = parts[parts.length - 1]; if (last && !BLANK_CELL.test(last)) ann.questions[id] = last;
   }
   return ann;
 }
@@ -241,11 +476,32 @@ export function ciSummary(rollup) {
 }
 
 const escId = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+// Branch names routinely drop an id's dots — consumer A ships `fn3-status-guards`
+// for FN.3 and `fn10-message-tables` for FN.10 — so a strict match finds
+// nothing and the whole live-run section reads empty during an active run.
+export const dotless = (s) => String(s).toLowerCase().replace(/\./g, "");
+// ...but only where the dotless form is UNAMBIGUOUS across the backlog: `F1.3`
+// and `F13` collapse to the same key, and a wrong link is worse than no link.
+// Returns id -> true for the ids whose dotless form nothing else claims.
+export function dotlessOwners(items) {
+  const owner = new Map();
+  for (const i of items) { const k = dotless(i.id); owner.set(k, owner.has(k) ? null : i.id); }
+  return owner;
+}
 // Match an item id inside a branch/PR ref only at a token boundary, so "F1.1"
 // does NOT match "feat-F1.10" (a different item). Case-insensitive.
 export function refMatchesId(ref, id) {
   if (!ref || !id) return false;
   return new RegExp("(^|[^0-9A-Za-z.])" + escId(id) + "(?![0-9.])", "i").test(String(ref));
+}
+
+// Strict first, then the dotless form when this id owns it outright. The token
+// boundary carries over unchanged, so `fn1` still refuses `fn10-...`.
+export function refMatchesLoosely(ref, id, owner) {
+  if (refMatchesId(ref, id)) return true;
+  const key = dotless(id);
+  if (key === String(id).toLowerCase()) return false;      // no dots: nothing new to try
+  return owner.get(key) === id && refMatchesId(ref, key);
 }
 
 async function readGh(gh, notes) {
@@ -256,11 +512,13 @@ async function readGh(gh, notes) {
   } catch { notes.push("PR/CI unavailable (gh not runnable)"); return null; }
 }
 
-export async function buildState(projectDir, { git, gh, now }) {
+export async function buildState(projectDir, { git, gh, audit = null, now }) {
   const notes = [];
-  const { backlogDir } = readConfig(projectDir);
+  const { backlogFile, backlogDir } = readConfig(projectDir);
   const items = loadItems(projectDir, backlogDir);
   const ideas = loadIdeas(projectDir, backlogDir);
+  const index = readMilestoneIndex(projectDir, backlogFile);
+  const runFile = readRunFile(projectDir);
   if (items.some((i) => i.malformed)) notes.push("one or more item files are malformed (shown flagged)");
   if (items.length === 0) notes.push(`no backlog items found under ${backlogDir}`);
   const { frontier, attended, blocked, backlog, edges } = deriveBacklog(items);
@@ -279,14 +537,19 @@ export async function buildState(projectDir, { git, gh, now }) {
   const ann = parseBoard(boardText);
 
   const prByRef = new Map((prs || []).map((p) => [p.headRefName, p]));
+  const owner = dotlessOwners(items);
   const linkPr = (item) => {
     if (ann.prByItem[item.id] != null) return (prs || []).find((p) => p.number === ann.prByItem[item.id]) || { number: ann.prByItem[item.id] };
     const wt = ann.wtByItem[item.id];
     if (wt && prByRef.has(wt.branch)) return prByRef.get(wt.branch);
-    for (const p of prs || []) if (refMatchesId(p.headRefName, item.id)) return p;
+    for (const p of prs || []) if (refMatchesLoosely(p.headRefName, item.id, owner)) return p;
+    // The TITLE is the last resort and stays STRICT. Convention puts the id in
+    // it ("fix(reminders): FN.3 — ..."), which rescues an item whose branch name
+    // resembles nothing; loosening it too would let prose claim an item.
+    for (const p of prs || []) if (refMatchesId(p.title, item.id)) return p;
     return null;
   };
-  const linkWt = (item) => ann.wtByItem[item.id] || worktrees.find((w) => refMatchesId(w.branch, item.id)) || null;
+  const linkWt = (item) => ann.wtByItem[item.id] || worktrees.find((w) => refMatchesLoosely(w.branch, item.id, owner)) || null;
 
   const inFlight = items
     .filter((i) => i.status !== "done" && i.status !== "blocked" && i.status !== "attended" && (ann.wtByItem[i.id] || ann.prByItem[i.id] != null || linkWt(i) || linkPr(i)))
@@ -302,5 +565,19 @@ export async function buildState(projectDir, { git, gh, now }) {
   const active = boardText.trim().length > 0 || inFlight.length > 0;
   if (!active) notes.push("no run in flight");
 
-  return { generatedAt: now, project: basename(projectDir), run: { active, prsAvailable }, frontier: frontier.filter((i) => !inFlightIds.has(i.id)).map((i) => ({ id: i.id, title: i.title, lane: i.lane, reviewDimensions: i.reviewDimensions })), inFlight, mergeQueue, attended, blocked, ideas, backlog: backlog.map((g) => ({ milestone: g.milestone, items: g.items.map((i) => ({ id: i.id, title: i.title, status: i.status, dependsOn: i.dependsOn, malformed: i.malformed })) })), edges, notes };
+  // The audit verdict is the one thing the card cannot derive from item files:
+  // "is a record missing" is a git-provenance question, and audit-gate.sh is the
+  // single answer to it (a second reading of that rule here is how the two would
+  // drift apart). --check is read-only — its only write is a mktemp dir it
+  // removes — so shelling out keeps the board's read-only mandate intact.
+  let auditRes = null;
+  if (audit) {
+    try { const a = await audit(); auditRes = classifyAudit(a.stdout, a.code); }
+    catch { auditRes = { debt: [], deferred: [], stale: [], integrity: [], unknown: true }; }
+    if (auditRes.unknown) notes.push("audit status unavailable (audit-gate --check did not run here)");
+    for (const bad of auditRes.integrity) notes.push(`backlog integrity: hand-off ${bad} was transitioned into, not authored — no audit discharges this`);
+  }
+  const milestone = buildMilestoneCard({ items, index, runFile, inFlight, frontier, attended, blocked, audit: auditRes });
+
+  return { generatedAt: now, project: basename(projectDir), run: { active, prsAvailable }, milestone, frontier: frontier.filter((i) => !inFlightIds.has(i.id)).map((i) => ({ id: i.id, title: i.title, lane: i.lane, reviewDimensions: i.reviewDimensions })), inFlight, mergeQueue, attended, blocked, ideas, backlog: backlog.map((g) => ({ milestone: g.milestone, items: g.items.map((i) => ({ id: i.id, title: i.title, status: i.status, dependsOn: i.dependsOn, malformed: i.malformed })) })), edges, notes };
 }

@@ -494,3 +494,336 @@ test("renderPage includes the Ideas capture form and list", () => {
   assert.match(html, /fetch\("\/ideas"/);       // the form posts to the endpoint
   assert.ok(!/https?:\/\//.test(html.replace(/https?:\/\/[^"']*w3\.org[^"']*/g, "")), "still no external asset URLs");
 });
+
+// --- the running-milestone card -------------------------------------------------
+import { parseMilestoneIndex, readMilestoneIndex, readRunFile, classifyAudit, buildMilestoneCard } from "./sweap-board.lib.mjs";
+
+test("parseMilestoneIndex reads goals under a milestones heading, tags the sketch section", () => {
+  const idx = parseMilestoneIndex([
+    "# ROADMAP (index)",
+    "",
+    "Direction-level view only — items live one file each under `roadmap/`.",
+    "- this bullet is prose, not a milestone",
+    "",
+    "## Milestones (priority order)",
+    "",
+    "- F1 — merge-queue hardening",
+    "* DS.2: the data layer",
+    "- F1 — a duplicate that must not win",
+    "",
+    "## Later milestones (sketch, not yet specced)",
+    "- F9 – someday",
+  ].join("\n"));
+  assert.deepEqual(idx, [
+    { id: "F1", goal: "merge-queue hardening", sketch: false },
+    { id: "DS.2", goal: "the data layer", sketch: false },
+    { id: "F9", goal: "someday", sketch: true },
+  ]);
+});
+
+test("parseMilestoneIndex: index order is the PRIORITY order, not the id order", () => {
+  const idx = parseMilestoneIndex("## Milestones\n- F7 — urgent\n- F2 — later\n");
+  assert.deepEqual(idx.map((m) => m.id), ["F7", "F2"]);
+});
+
+test("readMilestoneIndex reads backlog.file; a missing index is empty, never fatal", () => {
+  const dir = fixture({ "ROADMAP.md": "## Milestones\n- F1 — login\n" });
+  assert.deepEqual(readMilestoneIndex(dir, "ROADMAP.md"), [{ id: "F1", goal: "login", sketch: false }]);
+  assert.deepEqual(readMilestoneIndex(dir, "NOPE.md"), []);
+  rmSync(dir, { recursive: true });
+});
+
+test("readRunFile parses .claude/sweap-run.md; absent or milestone-less reads as null", () => {
+  const dir = fixture({
+    ".claude/sweap-run.md": "---\nmilestone: F4\nshape: milestone+debt\nscope: [F3.9, F3.11]\nturns: 160\nstarted: 2026-08-20T09:14:00Z\ndeferred_handoffs: [F4.8]\n---\n",
+  });
+  assert.deepEqual(readRunFile(dir), {
+    milestone: "F4", shape: "milestone+debt", scope: ["F3.9", "F3.11"],
+    turns: 160, started: "2026-08-20T09:14:00Z", deferredHandoffs: ["F4.8"],
+  });
+  const none = fixture({ ".claude/sweap-run.md": "---\nturns: 160\n---\n" });
+  assert.equal(readRunFile(none), null);
+  const missing = fixture({ "CLAUDE.md": "x" });
+  assert.equal(readRunFile(missing), null);
+  rmSync(dir, { recursive: true }); rmSync(none, { recursive: true }); rmSync(missing, { recursive: true });
+});
+
+test("readRunFile: a junk turns: value reads as null, never NaN on the card", () => {
+  const dir = fixture({ ".claude/sweap-run.md": "---\nmilestone: F4\nturns: soon\n---\n" });
+  assert.equal(readRunFile(dir).turns, null);
+  rmSync(dir, { recursive: true });
+});
+
+test("classifyAudit sorts audit-gate --check lines by their documented prefixes", () => {
+  const out = [
+    "FAIL: milestone F3 is complete but has no audit record (roadmap/audits/F3.md) — run /milestone-audit for it",
+    "FAIL: record roadmap/audits/F2.md: raw (3) != refuted (1) + confirmed (1)",
+    "FAIL: hand-off F4.8: status: attended was introduced by abc123 but the item file was added by def456 — ...",
+    "DEFERRED: milestone F5 becomes complete in the state under review, so its audit cannot have run yet ...",
+    "STALE: record roadmap/audits/F1.md predates the sweap_format 1 record contract ...",
+    "AGING: blocked F4.3 — carried 2 milestone boundaries: \"which db?…\"",
+  ].join("\n");
+  const c = classifyAudit(out, 1);
+  assert.deepEqual(c.debt, ["F3", "F2"]);
+  assert.deepEqual(c.deferred, ["F5"]);
+  assert.deepEqual(c.integrity, ["F4.8"]);
+  assert.deepEqual(c.stale, ["F1"]);
+  assert.equal(c.unknown, false);
+});
+
+test("classifyAudit: clean exit is clean; an unreadable non-zero exit is unknown, never clean", () => {
+  const ok = classifyAudit("", 0);
+  assert.deepEqual([ok.debt, ok.deferred, ok.unknown], [[], [], false]);
+  assert.equal(classifyAudit("usage: audit-gate.sh --check | --files <path>...", 2).unknown, true);
+  assert.equal(classifyAudit("", 1).unknown, true);
+});
+
+// Card fixtures: derive the queues exactly as buildState does, so the card is
+// tested against the same shapes it is fed in production.
+const card = (items, { index = [], runFile = null, inFlight = [], audit = null } = {}) => {
+  const d = deriveBacklog(items);
+  return buildMilestoneCard({ items, index, runFile, inFlight, frontier: d.frontier, attended: d.attended, blocked: d.blocked, audit });
+};
+
+test("buildMilestoneCard: with nothing in flight it names the NEXT runnable milestone and says so", () => {
+  const items = [mk("F1.1", "done"), mk("F2.1", "todo"), mk("F3.1", "todo", ["F2.1"])];
+  const c = card(items, { index: [{ id: "F1", goal: "a", sketch: false }, { id: "F2", goal: "merge-queue hardening", sketch: false }] });
+  assert.equal(c.id, "F2");
+  assert.equal(c.state, "next");
+  assert.equal(c.source, "derived");
+  assert.equal(c.goal, "merge-queue hardening");
+});
+
+test("buildMilestoneCard: an in-flight item makes the run RUNNING and names its milestone", () => {
+  const items = [mk("F2.1", "todo"), mk("F2.2", "todo")];
+  const c = card(items, { inFlight: [{ id: "F2.1", title: "F2.1", step: "review", pr: 31, ci: "passing" }] });
+  assert.equal(c.state, "running");
+  assert.equal(c.source, "in-flight");
+  assert.equal(c.inFlight[0].scope, "milestone");
+  assert.deepEqual(c.ready.map((r) => r.id), ["F2.2"]);   // in-flight is not also "next ready"
+});
+
+test("buildMilestoneCard: a follow-up in flight never names the milestone — the run is F4, not F3", () => {
+  const items = [
+    mk("F3.9", "todo", [], { followupOf: "F3" }),
+    mk("F4.1", "todo"),
+  ];
+  const c = card(items, { inFlight: [{ id: "F3.9", title: "F3.9", ci: "unknown" }] });
+  assert.equal(c.id, "F4");
+  assert.equal(c.state, "running");            // a debt drain IS a run
+  assert.equal(c.inFlight[0].scope, "debt");
+  assert.deepEqual(c.debt.map((d) => d.id), ["F3.9"]);
+});
+
+test("buildMilestoneCard: the run file outranks inference, and carries the shape inference cannot know", () => {
+  const items = [mk("F4.1", "todo"), mk("F5.1", "todo")];
+  const runFile = { milestone: "F5", shape: "hand-offs-outstanding", scope: [], turns: 160, started: "2026-08-20T09:14:00Z", deferredHandoffs: ["F5.2"] };
+  const c = card(items, { runFile, inFlight: [{ id: "F4.1", title: "F4.1", ci: "unknown" }] });
+  assert.equal(c.id, "F5");
+  assert.equal(c.source, "run-file");
+  assert.equal(c.shape, "hand-offs-outstanding");
+  assert.deepEqual(c.deferredHandoffs, ["F5.2"]);
+  assert.equal(c.inFlight[0].scope, "other");   // F4.1 is still shown, tagged as elsewhere
+});
+
+test("buildMilestoneCard: a run file whose milestone is finished is litter — fall back to inference", () => {
+  const items = [mk("F4.1", "done"), mk("F5.1", "todo")];
+  const runFile = { milestone: "F4", shape: "milestone+debt", scope: [], turns: null, started: null, deferredHandoffs: [] };
+  const c = card(items, { runFile });
+  assert.equal(c.id, "F5");
+  assert.equal(c.source, "derived");
+});
+
+test("buildMilestoneCard: counts, ready, hand-offs and blocked are scoped to the milestone", () => {
+  const items = [
+    mk("F2.1", "done"), mk("F2.2", "done"), mk("F2.3", "todo"),
+    mk("F2.4", "blocked", [], { blocked: "which db?", carried: 2 }),
+    mk("F2.5", "attended", [], { handoff: "rotate the deploy key" }),
+    mk("F2.6", "deferred"),
+    mk("F3.1", "todo"), mk("F3.2", "blocked", [], { blocked: "elsewhere" }),
+  ];
+  const c = card(items, { index: [{ id: "F2", goal: "g", sketch: false }, { id: "F3", goal: "h", sketch: false }] });
+  assert.equal(c.id, "F2");
+  assert.deepEqual(c.counts, { total: 6, done: 2, todo: 1, blocked: 1, attended: 1, deferred: 1, other: 0 });
+  assert.deepEqual(c.ready.map((r) => r.id), ["F2.3"]);
+  assert.deepEqual(c.handoffs.map((h) => h.id), ["F2.5"]);
+  assert.deepEqual(c.blocked.map((b) => [b.id, b.carried]), [["F2.4", 2]]);
+});
+
+test("buildMilestoneCard audit: this milestone's debt beats another's; another's still shows as blocking", () => {
+  const items = [mk("F2.1", "todo")];
+  const base = { debt: [], deferred: [], stale: [], integrity: [], unknown: false };
+  assert.equal(card(items, { audit: { ...base, debt: ["F2"] } }).audit.state, "debt");
+  const other = card(items, { audit: { ...base, debt: ["F1"] } }).audit;
+  assert.equal(other.state, "blocked-by-debt");
+  assert.match(other.detail, /F1/);
+  assert.equal(card(items, { audit: { ...base, deferred: ["F2"] } }).audit.state, "deferred");
+  assert.equal(card(items, { audit: base }).audit.state, "clean");
+  assert.equal(card(items, { audit: { ...base, unknown: true } }).audit.state, "unknown");
+  assert.equal(card(items, {}).audit.state, "unknown");   // no runner injected
+});
+
+test("buildMilestoneCard audit: an open hand-off means the audit is NOT DUE, not clean", () => {
+  const items = [mk("F2.1", "todo"), mk("F2.2", "attended", [], { handoff: "sign it" })];
+  const base = { debt: [], deferred: [], stale: [], integrity: [], unknown: false };
+  const a = card(items, { audit: base }).audit;
+  assert.equal(a.state, "not-due");
+  assert.match(a.detail, /hand-off/);
+  // ...and it holds with no gate output at all, since it is derivable from items.
+  assert.equal(card(items, {}).audit.state, "not-due");
+  // ...but a gate that FAILED outranks it: an open hand-off says nothing about
+  // whether an older milestone's missing record is about to deny every merge.
+  const dark = card(items, { audit: { ...base, unknown: true } }).audit;
+  assert.equal(dark.state, "unknown");
+  assert.match(dark.detail, /did not run here .* hand-off/);
+});
+
+test("buildMilestoneCard: no items, or nothing runnable anywhere, yields no card", () => {
+  assert.equal(card([]), null);
+  assert.equal(card([mk("F1.1", "done")]), null);
+});
+
+test("buildState: exposes the milestone card and folds the audit runner's verdict in", async () => {
+  const dir = fixture({
+    "CLAUDE.md": "## sweap config\nbacklog.dir: roadmap/\nbacklog.file: ROADMAP.md\n",
+    "ROADMAP.md": "## Milestones (priority order)\n- F1 — login and session\n",
+    "roadmap/F1.1.md": "---\nid: F1.1\ntitle: login\nstatus: todo\ndepends_on: []\n---\n",
+    ".claude/sweap-run.md": "---\nmilestone: F1\nshape: milestone+debt\nturns: 160\n---\n",
+  });
+  const git = async () => ({ stdout: "", code: 0 });
+  const gh = async () => ({ stdout: "[]", code: 0 });
+  const audit = async () => ({ stdout: "FAIL: milestone F0 is complete but has no audit record (roadmap/audits/F0.md) — run /milestone-audit for it", code: 1 });
+  const s = await buildState(dir, { git, gh, audit, now: 1 });
+  assert.equal(s.milestone.id, "F1");
+  assert.equal(s.milestone.goal, "login and session");
+  assert.equal(s.milestone.source, "run-file");
+  assert.equal(s.milestone.shape, "milestone+debt");
+  assert.equal(s.milestone.audit.state, "blocked-by-debt");
+
+  // A gate that cannot run degrades to unknown + a note, exactly like gh does.
+  const dead = await buildState(dir, { git, gh, audit: async () => { throw new Error("no bash"); }, now: 2 });
+  assert.equal(dead.milestone.audit.state, "unknown");
+  assert.ok(dead.notes.some((n) => /audit status unavailable/i.test(n)));
+
+  // No runner at all: no card audit verdict, and no note either — nothing failed.
+  const off = await buildState(dir, { git, gh, now: 3 });
+  assert.equal(off.milestone.audit.state, "unknown");
+  assert.ok(!off.notes.some((n) => /audit status/i.test(n)));
+  rmSync(dir, { recursive: true });
+});
+
+test("buildState: a hand-off provenance FAIL surfaces as a note — no audit discharges it", async () => {
+  const dir = fixture({ "CLAUDE.md": "## sweap config\n", "roadmap/F1.1.md": "---\nid: F1.1\ntitle: x\nstatus: todo\ndepends_on: []\n---\n" });
+  const s = await buildState(dir, {
+    git: async () => ({ stdout: "", code: 0 }),
+    gh: async () => ({ stdout: "[]", code: 0 }),
+    audit: async () => ({ stdout: "FAIL: hand-off F1.2: status: attended was introduced by abc but the item file was added by def — ...", code: 1 }),
+    now: 4,
+  });
+  assert.ok(s.notes.some((n) => /hand-off F1\.2 was transitioned into/.test(n)));
+  rmSync(dir, { recursive: true });
+});
+
+test("renderPage mounts the running-milestone card and can mark it in the backlog", () => {
+  const html = renderPage();
+  assert.match(html, /id="milestone"/);
+  assert.match(html, /Running milestone/);
+  assert.match(html, /milestoneCard\(s\.milestone\)/);
+  assert.match(html, /ms\.running/);
+});
+
+// --- what the consumer A run exposed (2026-08-20) -----------------------------------
+// Run live against consumer A mid-milestone, the card rendered NOTHING. Three
+// separate defects, two of them older than the card; each test below is one of
+// them, written against the shapes that repo actually produces.
+import { parseBoard, dotless, dotlessOwners, refMatchesLoosely } from "./sweap-board.lib.mjs";
+
+test("parseBoard reads a real markdown table — pipe-edged rows, dotted ids, dash cells", () => {
+  const ann = parseBoard([
+    "| item | status | worktree@branch | PR | blocked question |",
+    "|---|---|---|---|---|",
+    "| DS.5.1 | **MERGED #163** (891933a) | — | #163 | — |",
+    "| FN.3 | worker active | `fn3-status-guards` | — | — |",
+    "| FJ.7+FJ.8 | PR open, CI running | `fj7-fj8-focus` | — | — |",
+    "| track A (`communications`) | track B (everything else) |",
+    "| FN.1 → FN.2 → FN.3 | DS.5.1 → FJ.6 |",
+  ].join("\n"));
+  // Dotted ids parse at all — `[A-Za-z]+\d` rejected every one of consumer A's ids.
+  assert.deepEqual(Object.keys(ann.steps), ["DS.5.1", "FN.3"]);
+  assert.equal(ann.steps["FN.3"], "worker active");
+  // An em-dash cell is markdown for "nothing", not a blocked question.
+  assert.deepEqual(ann.questions, {});
+  // The header, the rule row, a lane table and a multi-id cell are all not items.
+  assert.ok(!("item" in ann.steps));
+  assert.ok(!Object.keys(ann.steps).some((k) => /\+|→/.test(k)));
+});
+
+test("parseBoard still reads the documented one-line form", () => {
+  const ann = parseBoard("F1.1 | review | wt-a@feat-F1.1 | PR #31 | which db?\n");
+  assert.equal(ann.steps["F1.1"], "review");
+  assert.equal(ann.prByItem["F1.1"], 31);
+  assert.deepEqual(ann.wtByItem["F1.1"], { worktree: "wt-a", branch: "feat-F1.1" });
+  assert.equal(ann.questions["F1.1"], "which db?");
+});
+
+test("refMatchesLoosely matches a dotless branch, but only for an id that owns the key", () => {
+  const owner = dotlessOwners([mk("FN.1", "todo"), mk("FN.3", "todo"), mk("FN.10", "todo")]);
+  assert.equal(dotless("FN.3"), "fn3");
+  assert.equal(refMatchesLoosely("fn3-status-guards", "FN.3", owner), true);
+  assert.equal(refMatchesLoosely("fn10-message-tables", "FN.10", owner), true);
+  assert.equal(refMatchesLoosely("fn10-message-tables", "FN.1", owner), false);  // token boundary holds
+  // F1.3 and F13 collapse to the same dotless key — a wrong link is worse than none.
+  const ambiguous = dotlessOwners([mk("F1.3", "todo"), mk("F13.1", "todo"), mk("F13", "todo")]);
+  assert.equal(refMatchesLoosely("f13-something", "F1.3", ambiguous), false);
+});
+
+test("buildState links an item to its PR by dotless branch, and failing that by title", async () => {
+  const dir = fixture({
+    "CLAUDE.md": "## sweap config\n",
+    "roadmap/FN.3.md": "---\nid: FN.3\ntitle: send-path claims\nstatus: todo\ndepends_on: []\nfollowup_of: F11\n---\n",
+    "roadmap/FN.9.md": "---\nid: FN.9\ntitle: table shape\nstatus: todo\ndepends_on: []\nfollowup_of: F11\n---\n",
+  });
+  const git = async () => ({ stdout: "worktree /w\nbranch refs/heads/fn3-status-guards\n\n", code: 0 });
+  const gh = async () => ({ stdout: JSON.stringify([
+    { number: 170, title: "fix(reminders): FN.3 — every send-path write takes a claim", headRefName: "fn3-status-guards", state: "OPEN", statusCheckRollup: [{ conclusion: "SUCCESS" }] },
+    { number: 172, title: "FN.9 — one shape for the two message tables", headRefName: "message-table-shape", state: "OPEN", statusCheckRollup: [{ status: "IN_PROGRESS" }] },
+  ]), code: 0 });
+  const s = await buildState(dir, { git, gh, now: 1 });
+  const by = new Map(s.inFlight.map((i) => [i.id, i]));
+  assert.equal(by.get("FN.3").pr, 170);                  // dotless branch match
+  assert.equal(by.get("FN.3").branch, "fn3-status-guards");
+  assert.equal(by.get("FN.9").pr, 172);                  // title match, branch resembles nothing
+  rmSync(dir, { recursive: true });
+});
+
+test("buildMilestoneCard: an audit-follow-up FAMILY is never named as the milestone", () => {
+  // FN groups 12 items under "FN", but FN is a family keyed by followup_of: F11.
+  const items = [
+    mk("FN.3", "todo", [], { followupOf: "F11" }),
+    mk("FN.10", "todo", [], { followupOf: "F11" }),
+    mk("F11.1", "done"),
+    mk("DS.5.1", "done"), mk("DS.5.3", "attended", [], { handoff: "sign off the conventions" }),
+    mk("DS.5.4", "todo", ["DS.5.3"]), mk("DS.5.5", "todo", ["DS.5.3"]),
+  ];
+  const c = card(items, {
+    index: [{ id: "F11", goal: "communications", sketch: false }, { id: "DS.5", goal: "screen standardization", sketch: false }],
+    inFlight: [{ id: "FN.3", title: "x", ci: "passing" }, { id: "FN.10", title: "y", ci: "pending" }],
+  });
+  assert.equal(c.id, "DS.5");            // never "FN"
+  assert.equal(c.goal, "screen standardization");
+  assert.equal(c.state, "running");      // a debt drain IS a run
+  assert.equal(c.source, "gated");       // every DS.5 item waits on DS.5.3
+  assert.deepEqual(c.inFlight.map((i) => i.scope), ["debt", "debt"]);
+  assert.deepEqual(c.ready, []);
+  assert.deepEqual(c.handoffs.map((h) => h.id), ["DS.5.3"]);
+  assert.deepEqual(c.debt.map((d) => d.id), ["FN.3", "FN.10"]);
+});
+
+test("buildMilestoneCard: a milestone gated entirely by a hand-off still runs — nothing ready is not nothing to show", () => {
+  const items = [mk("F2.1", "attended", [], { handoff: "rotate the key" }), mk("F2.2", "todo", ["F2.1"])];
+  const c = card(items);
+  assert.equal(c.id, "F2");
+  assert.equal(c.source, "gated");
+  assert.equal(c.state, "next");         // nothing in flight, so it is not claimed as running
+  assert.equal(c.audit.state, "not-due");
+});

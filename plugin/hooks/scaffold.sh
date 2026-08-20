@@ -21,7 +21,8 @@
 #   2. Only scaffold a real project (has a `.git`) — never a random dir.
 #   3. Gitignore self-heal — runs on EVERY session start, BEFORE the
 #      fast-guard: ensure `.gitignore` excludes sweap's runtime files
-#      (`.claude/main-red-*.flag`, `.claude/sweap-board.md`, `.claude/audit-debt-*.flag`), appending only the
+#      (`.claude/main-red-*.flag`, `.claude/sweap-board.md`, `.claude/sweap-run.md`,
+#      `.claude/audit-debt-*.flag`), appending only the
 #      lines that are missing (never duplicating, never overwriting), creating
 #      `.gitignore` if absent. Because this precedes the fast-guard, projects
 #      scaffolded before a rule existed still gain it on their next session.
@@ -82,7 +83,7 @@ fi
 # the full-scaffold path; on the fast-guard path this heals quietly and exits 0).
 gitignore_action="unchanged"
 gi="$proj/.gitignore"
-for gitignore_line in '.claude/main-red-*.flag' '.claude/sweap-board.md' '.claude/audit-debt-*.flag'; do
+for gitignore_line in '.claude/main-red-*.flag' '.claude/sweap-board.md' '.claude/sweap-run.md' '.claude/audit-debt-*.flag'; do
   if [ -f "$gi" ]; then
     if ! grep -qF "$gitignore_line" "$gi" 2>/dev/null; then
       printf '%s\n' "$gitignore_line" >> "$gi" 2>/dev/null && gitignore_action="appended"
@@ -205,7 +206,7 @@ if [ "$merged_claude_md" = "1" ]; then
   msg="$msg Merged sweap config + playbook pointer into your existing CLAUDE.md."
 fi
 if [ "$gitignore_action" != "unchanged" ]; then
-  msg="$msg .gitignore: $gitignore_action sweap runtime ignore rules (.claude/main-red-*.flag, .claude/sweap-board.md)."
+  msg="$msg .gitignore: $gitignore_action sweap runtime ignore rules (.claude/main-red-*.flag, .claude/sweap-board.md, .claude/sweap-run.md)."
 fi
 
 if [ "${#healed_workflows[@]}" -gt 0 ]; then

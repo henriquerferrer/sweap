@@ -174,6 +174,32 @@ item: `bash ${CLAUDE_PLUGIN_ROOT}/hooks/roadmap-lint.sh <backlog.dir>/<ID>.md`
 — a failing todo item is not runnable (fix mechanically or escalate), per the
 playbook's "Backlog format (file-per-item)" section.
 
+Record the run. Write `.claude/sweap-run.md` (gitignored; the scaffold adds the
+rule) with exactly the resolution above — this is the only place the run's
+*shape* is ever written down, and without it the board's running-milestone card
+can do no better than infer a milestone from whatever happens to be in flight:
+
+```
+---
+milestone: <M>
+shape: milestone+debt | hand-offs-outstanding | debt-only
+scope: [<every item id in D, in drain order>]
+turns: <TURNS>
+started: <ISO-8601 UTC, e.g. 2026-08-20T09:14:00Z>
+deferred_handoffs: [<ids the human deferred at the fork, if any>]
+---
+
+<the goal line printed below, verbatim, for reference>
+```
+
+Flat single-line keys and inline lists, the same format contract as every other
+sweap file. Write it **only on the paths that actually print a goal** — not
+when the hand-off fork holds the goal ("do them now"), and not when there is
+nothing to run. Overwrite any existing file: one run at a time. Nothing in the
+loop reads this to decide anything (status truth stays the item files), so a
+failed write is worth one line of "couldn't record the run" and nothing more —
+never let it block the kickoff.
+
 Then **print** the exact goal line, filled in, for the user to paste — do NOT
 try to set `/goal` yourself (only the user can invoke it). Pick the template by
 run shape from "Resolve the run" above.

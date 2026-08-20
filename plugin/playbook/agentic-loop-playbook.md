@@ -98,6 +98,16 @@ hazard.
   agents override two thirds of the time is the defect.
 - **`.claude/sweap-board.md`** (gitignored) stays the *ephemeral* layer —
   in-flight claims and merge order only (see Parallel runs).
+- **`.claude/sweap-run.md`** (gitignored) is the other ephemeral file: which
+  milestone `/milestone` resolved for THIS run, and the shape it resolved to.
+  It exists because that resolution is the one fact no item file records —
+  "debt-first", "debt-only", "hand-offs outstanding" and the deferred hand-offs
+  behind them are decisions made at kickoff, and before this they were spoken
+  once into a printed goal line and then lost. `/milestone` writes it (see that
+  command); End-of-run hygiene deletes it. Nothing in the loop READS it to
+  decide anything — status truth is still the item files — so a stale or
+  missing one degrades a display, never a control. The board viewer is its only
+  consumer today, for the running-milestone card.
 
 Item file schema. Frontmatter keys are single-line and `depends_on` is an
 inline `[a, b]` list — keep it flat so `roadmap-lint.sh` and plain greps stay
@@ -344,6 +354,13 @@ may ADD dimensions it judges necessary; it may not remove tagged ones.
   this rule is what catches everything else. An ideas-only PR is never
   backlog-advancing — `audit-gate.sh` classifies `<backlog.dir>ideas/` as a
   non-item subdir — so it lands even during audit debt.)
+- **Delete `.claude/sweap-run.md`** when the goal ends, met or stopped. It
+  describes THIS run; left behind it makes the board's card claim a run that is
+  over. It is gitignored, so this is a plain `rm -f`, never a commit. (The card
+  already ignores a run file whose milestone has no unfinished items, so the
+  worst a missed delete causes is a stale shape line — but do not lean on that
+  backstop for a run that stopped mid-milestone, which is exactly the case it
+  cannot detect.)
 - **Never commit to the local `main` checkout — not even docs.** Every commit
   happens in a worktree and reaches `main` only through a PR. (This keeps the
   primary checkout from diverging; auto-mode cannot hard-reset it later.)
