@@ -72,6 +72,19 @@ check against —
    dependencies that were avoidable: those serialize the whole run behind one
    person instead of being startable on day one.
 
+10. **Cross-screen invariants (UI-heavy milestones only).** If the milestone
+    touches multiple product-visible screens: is there a decided **surface
+    contract** — the invariants every screen shares (page shell, width system,
+    control-height scale, sticky regions, overlay-vs-route navigation model,
+    breakpoints, state coverage) — or is each screen's composition left to
+    whoever implements it? And is the work **cut by invariant or by screen**? A
+    per-screen cut is the specific failure this lens exists to catch: each item
+    passes its own review and the screens still do not match each other, because
+    every UI gate judges one screen at a time. Flag, too, when no item builds the
+    enforcing mechanism — a contract whose clauses are checked by a diff-scoped
+    lint rather than by a test enumerating the route inventory will not survive
+    the next milestone. (See `docs/research/2026-08-19-cross-screen-consistency.md`.)
+
 ## Output
 
 A compact list of **net-new** findings only — do not restate what the brainstorm

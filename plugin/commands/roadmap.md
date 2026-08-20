@@ -122,6 +122,29 @@ review is asked for:
    excludes work *because it needs a human* must name the attended item it moved
    to. Give hand-offs as few dependencies as possible so they are startable on
    day one instead of serializing the run behind one person.
+   **If the milestone is UI-heavy, lock the surface contract here** — the
+   cross-screen invariants every screen must share (page shell, container/card
+   width system, control-height scale, sticky regions, the overlay-vs-route
+   navigation model, breakpoints, required state coverage), plus its named
+   exceptions. See the `ui-design` skill §2. This is direction-loop work by
+   construction: it is a taste call with app-wide reach, and settling it
+   item-by-item means whichever item merges first becomes the de facto standard.
+   Two consequences for the drafting that follows, both load-bearing:
+   - **Cut the milestone by invariant, not by screen.** One item per invariant
+     applied across the whole route inventory — shell, width system, control
+     conventions, navigation model, sticky frame, responsive pass — so each
+     item's acceptance criterion is a cross-screen assertion rather than a
+     screenshot. One-item-per-screen re-applies the same per-screen unit that
+     let the screens drift apart in the first place. "Mobile friendly" and
+     "feels high end" are dimensions applied to everything, never screens.
+   - **One item builds the mechanism.** The contract's deterministic clauses
+     need checks that ENUMERATE the route inventory (a table-driven test over
+     the route manifest), not a diff-scoped lint — otherwise the next milestone
+     drifts again, since a lint only ever sees screens someone touched. Author
+     that item explicitly; it is what the milestone leaves behind.
+   The UI spot-check itself is a taste call like any other: author it as its own
+   `status: attended` item, dependency-free, whose *Done when* is that each
+   finding has become a contract clause plus its check — not a prose write-up.
 2. **Cross-check** — dispatch a fresh-context critic via the
    `milestone-cross-check` skill. Report ONLY the net-new forks the brainstorm
    missed, each with a recommended default. Flag; never rewrite or expand scope.

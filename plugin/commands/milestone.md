@@ -188,7 +188,8 @@ one), the audit-and-triage clause is part of the definition of done, not
 optional. For a UI-heavy milestone (its `review.dimensions` tags include `ui`)
 the audit clause covers **both** the `/milestone-audit` code pass **and** the
 Tier-2 UI audit (see the playbook's "Milestone audit" section and the
-`ui-design` skill §7). Two run shapes carry no audit clause, and both are
+`ui-design` skill §8) — whose scope is every route carrying surface-contract
+debt, not only the screens this milestone touched. Two run shapes carry no audit clause, and both are
 principled rather than a loophole: the **debt-only** run (you don't audit a
 debt-drain), and the **hand-offs-outstanding** run (the milestone provably
 cannot complete while a hand-off is open, so its audit is not yet owed — that

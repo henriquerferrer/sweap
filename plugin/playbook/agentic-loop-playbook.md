@@ -292,8 +292,9 @@ Each item file carries `review-dimensions: [...]` frontmatter, drawn from the pr
   the **ui-design** skill, which orchestrates the project's UI process and
   composes the aesthetic-craft sub-skills. Two things carry teeth:
   - **Hard gate (blocks the PR):** the deterministic checks — axe a11y, keyboard/
-    focus + required empty/loading/error states, and the "no arbitrary values"
-    token/primitive-reuse lint (raw hex / arbitrary utility values fail). The
+    focus + required empty/loading/error states, the "no arbitrary values"
+    token/primitive-reuse lint (raw hex / arbitrary utility values fail), and the
+    **surface-contract structural checks**. The
     token-reuse lint **activates once the project's design system has shipped** —
     once the design system exists, new UI that bypasses it cannot merge; UI
     already in flight before the design system landed is not retroactively blocked
@@ -306,10 +307,24 @@ Each item file carries `review-dimensions: [...]` frontmatter, drawn from the pr
     fixed becomes a deterministic Playwright/axe test.
   For net-new or redesign/composition UI work the implementer MUST consult Mobbin
   when available and record the archetype + reference app(s) (or a `Mobbin
-  unavailable: <reason>` note) in the PR; behavior-preserving retrofits are exempt.
+  unavailable: <reason>` note) in the PR. A behavior-preserving retrofit is
+  exempt **only when the composition it inherits was itself ever approved** — a
+  recorded brief or the designated exemplar, pointed at in the PR. Retrofitting
+  onto scaffolded composition inherits nothing; the exemption is evidence-gated
+  rather than self-classified, because the exempt path is the cheap path and an
+  exemption an agent grants itself becomes the default route.
   All product-visible UI builds on the project's declared design system (tokens +
-  primitives; see the ui-design skill); the human remains the spot-check on
-  visual polish.
+  primitives) **and on its surface contract** — the committed cross-screen
+  invariants (page shell, width system, control-height scale, sticky regions,
+  overlay-vs-route navigation model, breakpoints). Tokens make a screen correct;
+  they do not make two screens match, and every other UI control judges one
+  screen at a time, so without the contract a token-clean app still drifts
+  screen by screen (`docs/research/2026-08-19-cross-screen-consistency.md`). The
+  contract's deterministic clauses are enforced by checks that **enumerate the
+  route inventory, not the diff** — a diff-scoped lint only ever sees the screens
+  someone touched. The contract is authored in `/roadmap`'s decide phase, never
+  by an implementer mid-item; the human remains the spot-check on
+  visual polish, authored as an `attended` hand-off (see the ui-design skill).
 - **`migration`** — any schema change beyond a new table: reviewer checks
   reversibility, data backfill, and access-control continuity.
 
@@ -700,6 +715,15 @@ shape as the audit.
    recommended default. It flags; it never rewrites or expands scope. (Distilled
    from the product-management `write-spec` lens so we own it with no plugin
    dependency.)
+   For a **UI-heavy milestone**, this phase also locks the **surface contract**
+   — the cross-screen invariants every screen will share (`ui-design` §2). It
+   belongs here and nowhere else: a contract settled item-by-item is not a
+   contract, because whichever item merges first silently becomes the standard.
+   Cut the work by that contract too — **one item per invariant applied across
+   the whole inventory**, not one item per screen. Per-screen items re-apply the
+   very unit that let the screens drift apart, and yield N individually-plausible
+   screens that still disagree; "responsive" and "feels high-end" are dimensions,
+   never screens.
 3. **Reconcile** (brief, interactive) — the human answers the net-new forks; then
    one item file per drafted item is written under `backlog.dir` (plus the
    index's milestone-list update), each linted by `roadmap-lint.sh`, and it all

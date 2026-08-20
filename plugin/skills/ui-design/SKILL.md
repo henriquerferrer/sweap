@@ -1,6 +1,6 @@
 ---
 name: ui-design
-description: Use when building, editing, or reviewing any product-visible UI (routes, components, screens, forms, tables, dashboards). Orchestrates the project's UI process — the project's declared design system (tokens + primitives), a preferred Mobbin archetype seed, a bounded render→critique→fix loop, the a11y + token-reuse hard gate, and the per-milestone UI audit. Composes frontend-design and ui-ux-pro-max for aesthetic craft; do not duplicate them.
+description: Use when building, editing, or reviewing any product-visible UI (routes, components, screens, forms, tables, dashboards). Orchestrates the project's UI process — the project's declared design system (tokens + primitives), the surface contract of cross-screen invariants, a preferred Mobbin archetype seed, a bounded render→critique→fix loop, the a11y + token-reuse + structural hard gates, and the per-milestone UI audit. Composes frontend-design and ui-ux-pro-max for aesthetic craft; do not duplicate them.
 ---
 
 # UI design process
@@ -11,10 +11,10 @@ The `ui` review-dimension composes the `frontend-design` and `ui-ux-pro-max`
 skills for aesthetic craft, and the Mobbin MCP (`mcp__mobbin__*` tools) for
 archetype seeding and comparative reference, when those are available in the
 consuming project/session. None of them are shipped or required by this
-plugin. If they are absent, this skill **degrades gracefully**: the a11y and
-interaction-state HARD gates (§5) still run in full — only the comparative
-aesthetic ratchet (§4/§7's ensemble critique against references) is reduced to
-whatever internal exemplar comparison remains possible.
+plugin. If they are absent, this skill **degrades gracefully**: the a11y,
+structural and interaction-state HARD gates (§6) still run in full — only the
+comparative aesthetic ratchet (§5/§8's ensemble critique against references) is
+reduced to whatever internal exemplar comparison remains possible.
 
 The repeatable process for producing high-quality UI. It exists because,
 undirected, coding agents converge on a generic "AI-slop" aesthetic and invent
@@ -46,7 +46,60 @@ in flight is not blocked: build with the loop + a11y below, keep values
 consistent and easy to migrate, and adopt tokens/primitives once the design
 system ships. Do not treat a not-yet-existing design system as a reason to stop.
 
-## 2. Mobbin archetype seed — REQUIRED when available
+## 2. The surface contract — what every screen shares
+
+Tokens and primitives make a screen *correct*. They do not make two screens
+*match*, and nothing else in this skill used to check that either: every gate
+below judges one screen at a time, so a set of screens that each pass every gate
+can still be visibly inconsistent with each other. That is not a hypothetical —
+it is what a token-gate-only project produces, screen by screen
+(`docs/research/2026-08-19-cross-screen-consistency.md`).
+
+The **surface contract** is the project's committed statement of the invariants
+that hold across *all* product-visible screens. Typical clauses:
+
+- the shared page shell (header, title, actions slot) every route mounts;
+- the container/card width system and grid;
+- the control-height scale, and which control types are permitted (a text link
+  is not a button);
+- sticky regions — app frame, sidenav, toolbars;
+- the **navigation model**: which interactions open an overlay/sheet and which
+  navigate to a route;
+- responsive breakpoints and the expected behaviour at each;
+- required state coverage across screens (empty / loading / error).
+
+Three rules govern it:
+
+- **It is decided in the direction loop, never by an implementer mid-item.** The
+  contract is authored with the human during `/roadmap`'s decide phase, before
+  any screen work in the milestone. A contract settled item-by-item is not a
+  contract — whichever item merges first becomes the de facto standard.
+- **Every deterministic clause is enforced by a check that ENUMERATES THE ROUTE
+  INVENTORY, not the diff.** This is the property that makes the convention
+  hold. A lint inspects changed files, so it only ever sees screens someone
+  happened to touch; a table-driven test that reads the route manifest and
+  asserts *every* route satisfies the clause fails the moment a non-compliant
+  route is added — no one has to remember the rule, and no reviewer has to
+  notice. A diff-scoped check is not an acceptable implementation of a contract
+  clause.
+- **Push clauses into token shape wherever they fit.** Control heights, page
+  width and card grid expressed as named tokens are already covered by §1's
+  no-arbitrary-values lint at no extra cost. Reach for a new structural test
+  only for what tokens genuinely cannot express (shell mounting, nav model,
+  sticky behaviour, viewport behaviour).
+
+**Exceptions are named, never judged.** A screen that legitimately departs from
+the contract (a full-bleed calendar grid, a sign-in page) is listed as an
+explicit exception in the contract itself. An agent deciding at build time that
+its screen is special is not an exception — it is drift.
+
+**Versioning and debt.** The contract carries a version, and the project records
+which screens have passed under it. A new route, or a contract revision,
+therefore produces *visible* debt rather than silent staleness — the same shape
+`audit-gate.sh` already uses for audit debt. Screens carrying contract debt are
+the Tier-2 audit's scope (§8).
+
+## 3. Mobbin archetype seed — REQUIRED when available
 
 **Mobbin is REQUIRED whenever it is available.** For any net-new screen OR a
 redesign/composition pass, you MUST query Mobbin for the screen's archetype and
@@ -54,11 +107,20 @@ extract a structural brief (information architecture, layout, what-appears-where
 controls, state coverage) BEFORE building. The ONLY permitted skip is when Mobbin
 is genuinely unavailable/unauthed (e.g. a fresh cloud/headless run) — and then you
 MUST record `Mobbin unavailable: <reason>` in the UI report/PR. Silence is not
-acceptable. A purely **behavior-preserving retrofit** (re-skinning existing markup
-onto tokens/primitives without changing composition) is exempt — it inherits the
-already-proven existing composition. Every UI PR for net-new/redesign work states
-either the Mobbin archetype(s) + reference apps consulted (with mobbin.com links),
-or the unavailable-note.
+acceptable. Every UI PR for net-new/redesign work states either the Mobbin
+archetype(s) + reference apps consulted (with mobbin.com links), or the
+unavailable-note.
+
+**The retrofit exemption is evidence-gated.** A purely behavior-preserving
+retrofit (re-skinning existing markup onto tokens/primitives without changing
+composition) may skip the brief **only when the composition it inherits was
+itself ever approved** — i.e. that screen has a recorded Mobbin brief, or it is
+the project's designated internal exemplar. Point at that record in the PR.
+Retrofitting onto scaffolded composition inherits nothing, so it is a redesign
+and needs a brief like any other. This predicate is deliberately checkable
+rather than self-classified: the exempt path is the cheap path, and an
+exemption an agent grants itself becomes the default route, not the edge case
+(see `docs/research/2026-08-19-cross-screen-consistency.md` §3).
 
 Query Mobbin by **UI archetype**, not by domain ("the app's industry"). Map the
 feature to the best-in-class example of that archetype anywhere, and extract a
@@ -78,17 +140,18 @@ Mobbin's `search_flows` / `search_screens` / `search_sections` map onto this.
 The only permitted skip remains the unavailable/unauthed case above — record the
 `Mobbin unavailable: <reason>` note and continue.
 
-## 3. Tier-1 build loop (every UI item, bounded ~2–3 cycles)
+## 4. Tier-1 build loop (every UI item, bounded ~2–3 cycles)
 
-1. Build the screen on tokens + primitives, informed by the structural brief.
+1. Build the screen on tokens + primitives and the surface contract, informed by
+   the structural brief.
 2. **Render the real running screen** and screenshot it (claude-in-chrome or the
    Playwright/webapp-testing tools) — visual grounding is mandatory; never
    self-critique from the code alone.
-3. Critique the screenshot against the multi-dimensional rubric (§4).
+3. Critique the screenshot against the multi-dimensional rubric (§5).
 4. Fix and re-render. Stop after ~2–3 cycles (diminishing returns) or when the
    rubric dimensions are clean.
 
-## 4. Multi-dimensional rubric
+## 5. Multi-dimensional rubric
 
 Score each dimension separately — do not collapse to a single number (single
 scores align poorly with human judgment):
@@ -101,9 +164,14 @@ scores align poorly with human judgment):
 - **Interaction & state coverage** — empty, loading, error states present;
   keyboard and focus order correct.
 - **Design-system consistency** — tokens + primitives reused, no drift.
+- **Cross-screen consistency** — does this screen compose like the others?
+  Judged over a **set** of screens, never one alone (§8), and reported as a
+  ranking of deviants rather than a per-screen score: VLM judges order reliably
+  but do not assign reliable absolute scores
+  ([arXiv 2604.25235](https://arxiv.org/abs/2604.25235)).
 - **Accessibility** — labels, roles, contrast, focus management.
 
-## 5. Deterministic hard gate (blocks the PR)
+## 6. Deterministic hard gate (blocks the PR)
 
 These are objective and DO block:
 
@@ -115,25 +183,38 @@ These are objective and DO block:
   system exists, there is nothing to enforce reuse against, so this specific
   check does not apply and UI work already in flight is not retroactively
   blocked; the a11y and interaction checks above still apply.
+- **The structural contract checks (§2)** — the inventory-enumerating assertions
+  for the contract's deterministic clauses, plus the per-route viewport pass
+  (no horizontal scroll and a clean axe run at the project's smallest declared
+  breakpoint). These activate once the surface contract has shipped, on the same
+  terms as the token lint. A UI-heavy milestone that ships screens without
+  installing the contract's checks is a **gate failure**, not a style note: the
+  plugin cannot hold cross-screen conventions on the consuming project's behalf,
+  so requiring the mechanism to exist is the only leverage it has.
 
 Anything the exploratory Tier-1 loop finds that should stay fixed becomes a new
 deterministic Playwright/axe test.
 
-## 6. Enforcement split
+## 7. Enforcement split
 
-- **Gate (blocks):** the deterministic checks in §5.
-- **Ratchet (advisory, mandatory to RUN):** the §4 aesthetic/rubric verdict.
+- **Gate (blocks):** the deterministic checks in §6.
+- **Ratchet (advisory, mandatory to RUN):** the §5 aesthetic/rubric verdict.
   Findings are address-or-justify → roadmap follow-up, never an auto-block (the
   VLM judge is only ~69.5% human-aligned and can mode-collapse).
-- **Mobbin brief presence (mandatory):** the Mobbin brief (or the `Mobbin
-  unavailable:` note per §2) must appear in every net-new/redesign UI PR; the
-  reviewer checks for its presence.
+- **Mobbin brief presence (mandatory):** the Mobbin brief, the recorded
+  exemption evidence, or the `Mobbin unavailable:` note per §3 must appear in
+  every net-new/redesign UI PR; the reviewer checks for its presence.
 
-## 7. Tier-2 UI audit (per UI-heavy milestone boundary)
+## 8. Tier-2 UI audit (per UI-heavy milestone boundary)
 
 Runs once at a UI-heavy milestone boundary, alongside the code `milestone-audit`
 — see the playbook's "Review dimensions" and "Milestone audit" sections. Structure:
 
+- **Scoped to the inventory, not the milestone's diff.** The audit's subject is
+  every product-visible route carrying contract debt (§2) — screens never passed
+  under the current contract version, not merely the screens this milestone
+  touched. Auditing only the diff is what lets an untouched screen drift
+  indefinitely.
 - **Independent, anonymized critics** — one per rubric lens — run independently
   with no cross-talk. This is an ensemble, NOT a debate: do not have critics try
   to persuade each other (consensus-seeking debate degrades accuracy).
@@ -141,14 +222,33 @@ Runs once at a UI-heavy milestone boundary, alongside the code `milestone-audit`
   built screen *against* references — the project's committed **internal exemplar
   first**, Mobbin references second when available. The distinctiveness lens
   judges against the project's own aesthetic, not the reference.
+- **The cross-screen lens is dispatched over a set**, receiving many of the
+  project's own screens at once and ranking which deviate from the majority and
+  the exemplar. Never ask it for per-screen scores.
 - **Independent refutation, majority-survives** — each finding faces an
   independent skeptic; only majority-surviving findings are confirmed.
 - **Triage → auto-fold:** confirmed findings sort into the three buckets and
   become `FX.*` items that auto-fold into the next `/milestone` run. Aesthetic
   findings = ratchet/roadmap; a11y findings carry gate weight.
 
-## 8. Human spot-check
+## 9. Human spot-check
 
 Automated judges are a ratchet, not ground truth — visual excellence is still
 human-judged. The human remains the final spot-check on visual polish; flag
 notable aesthetic calls for them rather than assuming the VLM verdict is final.
+
+**Author it as work, not as a hope.** A UI-heavy milestone's spot-check is a
+taste call, so it is authored during `/roadmap`'s decide phase as its own
+`status: attended` item with a `handoff:` task (the playbook's "Attended
+items"), dependency-free so it runs concurrently with the agents' drain. A
+spot-check nobody scheduled is the failure mode `attended` exists to prevent.
+
+**Its output is contract clauses and tests, not prose.** Criteria cannot be
+fully specified before someone looks at real output — this is a measured
+phenomenon, not a drafting failure ([Shankar et al., UIST
+2024](https://people.eecs.berkeley.edu/~bjoern/papers/shankar-validators-uist2024.pdf)),
+so the walkthrough is the only thing that can produce some of these criteria.
+Each finding converts **once** into a contract clause plus its
+inventory-enumerating check, after which no human re-checks it. Findings left as
+prose in an idea file teach the pipeline nothing and will be rediscovered by
+hand next milestone.
