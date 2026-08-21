@@ -540,6 +540,7 @@ test("readRunFile parses .claude/sweap-run.md; absent or milestone-less reads as
   assert.deepEqual(readRunFile(dir), {
     milestone: "F4", shape: "milestone+debt", scope: ["F3.9", "F3.11"],
     turns: 160, started: "2026-08-20T09:14:00Z", deferredHandoffs: ["F4.8"],
+    ended: null, reason: null, needs: [], whyNotAgent: {},
   });
   const none = fixture({ ".claude/sweap-run.md": "---\nturns: 160\n---\n" });
   assert.equal(readRunFile(none), null);
@@ -826,4 +827,186 @@ test("buildMilestoneCard: a milestone gated entirely by a hand-off still runs �
   assert.equal(c.source, "gated");
   assert.equal(c.state, "next");         // nothing in flight, so it is not claimed as running
   assert.equal(c.audit.state, "not-due");
+});
+
+// --- the run's account of why it stopped, verified ------------------------------
+// The whole point of these: a run reporting on itself is least reliable at the
+// moment it stops. Every claim below is re-derived from the backlog, and a claim
+// that CONTRADICTS the backlog must be worse than no claim, never better.
+import { verifyEnd } from "./sweap-board.lib.mjs";
+
+const runFile = (extra) => ({ milestone: "F2", shape: null, scope: [], turns: null, started: null, deferredHandoffs: [], ended: "2026-08-21T10:00:00Z", reason: null, needs: [], ...extra });
+
+test("verifyEnd: no claim at all reads as null — nothing to verify", () => {
+  assert.equal(verifyEnd(null, {}), null);
+  assert.equal(verifyEnd(runFile({ ended: null, reason: "frontier-empty" }), {}), null);
+});
+
+test("verifyEnd: 'frontier-empty' is confirmed only when the frontier really is empty", () => {
+  const ok = verifyEnd(runFile({ reason: "frontier-empty" }), { frontier: [], items: [] });
+  assert.equal(ok.verdict, "confirmed");
+  // The case that matters: the run says it is done, the backlog says otherwise.
+  const lie = verifyEnd(runFile({ reason: "frontier-empty" }), { frontier: [mk("F2.1", "todo"), mk("F2.2", "todo")], items: [] });
+  assert.equal(lie.verdict, "contradicted");
+  assert.match(lie.detail, /2 items are runnable: F2\.1, F2\.2/);
+  assert.equal(lie.runnable, 2);
+});
+
+test("verifyEnd: 'awaiting-human' must name what it waits on, and those must still be open", () => {
+  const items = [mk("DS.5.3", "attended", [], { handoff: "sign off" }), mk("FM.10", "blocked", [], { blocked: "tabs?" })];
+  const ok = verifyEnd(runFile({ reason: "awaiting-human", needs: ["DS.5.3", "FM.10"] }), { frontier: [], items });
+  assert.equal(ok.verdict, "confirmed");
+  assert.match(ok.detail, /waiting on DS\.5\.3, FM\.10/);
+  // An unfalsifiable wait is not a wait.
+  const vague = verifyEnd(runFile({ reason: "awaiting-human" }), { frontier: [], items });
+  assert.equal(vague.verdict, "contradicted");
+  assert.match(vague.detail, /names nothing/);
+  // ...and a wait must not outlive its cause.
+  const stale = verifyEnd(runFile({ reason: "awaiting-human", needs: ["DS.5.3"] }), { frontier: [], items: [mk("DS.5.3", "done")] });
+  assert.equal(stale.verdict, "contradicted");
+  assert.match(stale.detail, /already resolved — this run file is stale/);
+});
+
+test("verifyEnd: 'turns-exhausted' stays confirmed WITH work left — that is what it means", () => {
+  const v = verifyEnd(runFile({ reason: "turns-exhausted" }), { frontier: [mk("F2.1", "todo")], items: [] });
+  assert.equal(v.verdict, "confirmed");
+  assert.match(v.detail, /1 item\(s\) still runnable/);
+});
+
+test("verifyEnd: 'goal-met' with runnable work left is contradicted; an unknown reason is unverifiable, not confirmed", () => {
+  assert.equal(verifyEnd(runFile({ reason: "goal-met" }), { frontier: [], items: [] }).verdict, "confirmed");
+  assert.equal(verifyEnd(runFile({ reason: "goal-met" }), { frontier: [mk("F2.1", "todo")], items: [] }).verdict, "contradicted");
+  const weird = verifyEnd(runFile({ reason: "felt like it" }), { frontier: [], items: [] });
+  assert.equal(weird.verdict, "unverifiable");   // never "confirmed" by default
+});
+
+test("buildMilestoneCard: derives the end state when the run recorded nothing", () => {
+  // The failure being fixed IS a run that forgets to write anything down, so the
+  // board must reach the same conclusion without it.
+  const items = [mk("F2.1", "attended", [], { handoff: "sign it" }), mk("F2.2", "todo", ["F2.1"])];
+  const c = card(items);
+  assert.equal(c.end.reason, "frontier-empty");
+  assert.equal(c.end.verdict, "derived");
+  assert.equal(c.end.source, "derived");
+  assert.equal(c.idle, null);            // no runnable work, so this is an END, not idling
+});
+
+test("buildMilestoneCard: idle is work-available-and-nobody-on-it, which is NOT an ended run", () => {
+  const items = [mk("F2.1", "todo"), mk("F2.2", "todo")];
+  const c = card(items);
+  assert.equal(c.end, null);
+  assert.equal(c.idle.runnable, 2);
+  // ...and it clears the moment anything is in flight.
+  const busy = card(items, { inFlight: [{ id: "F2.1", title: "x", ci: "passing" }] });
+  assert.equal(busy.idle, null);
+});
+
+test("buildMilestoneCard: a run file's claim outranks derivation, and a false claim is surfaced as false", () => {
+  const items = [mk("F2.1", "todo"), mk("F2.2", "todo")];
+  const rf = runFile({ milestone: "F2", reason: "frontier-empty" });
+  const c = card(items, { runFile: rf });
+  assert.equal(c.end.source, "run-file");
+  assert.equal(c.end.verdict, "contradicted");   // the board does not repeat the claim
+  assert.match(c.end.detail, /2 items are runnable/);
+});
+
+// --- the resume plan: what the human must do, derived not replayed -------------
+import { resumePlan, upwardRank, reverseDeps, milestoneOf as msOf } from "./sweap-board.lib.mjs";
+
+const revOf = (items) => {
+  const byId = new Map(items.map((i) => [i.id, i]));
+  const byMs = new Map();
+  for (const i of items) { const m = msOf(i.id); if (!byMs.has(m)) byMs.set(m, []); byMs.get(m).push(i); }
+  return { rev: reverseDeps(items, byId, byMs), byId };
+};
+
+test("upwardRank measures the longest downstream CHAIN, not the count of dependents", () => {
+  // A gates a 3-deep chain; B gates 3 items abreast. Counting dependents ties
+  // them at 3 — which is exactly the misranking DS.5.3 would suffer.
+  const items = [
+    mk("F1.1", "attended"), mk("F1.2", "todo", ["F1.1"]), mk("F1.3", "todo", ["F1.2"]), mk("F1.4", "todo", ["F1.3"]),
+    mk("F2.1", "attended"), mk("F2.2", "todo", ["F2.1"]), mk("F2.3", "todo", ["F2.1"]), mk("F2.4", "todo", ["F2.1"]),
+  ];
+  const { rev, byId } = revOf(items);
+  assert.equal(upwardRank("F1.1", rev, byId), 3);
+  assert.equal(upwardRank("F2.1", rev, byId), 1);
+  const plan = resumePlan(items, ["F2.1", "F1.1"]);
+  assert.deepEqual(plan.steps.map((s) => s.id), ["F1.1", "F2.1"]);   // deep chain first
+});
+
+test("upwardRank terminates on a dependency cycle instead of recursing forever", () => {
+  const items = [mk("F1.1", "todo", ["F1.2"]), mk("F1.2", "todo", ["F1.1"])];
+  const { rev, byId } = revOf(items);
+  assert.ok(Number.isFinite(upwardRank("F1.1", rev, byId)));
+});
+
+test("resumePlan builds the command from the item's STATUS, and only for human-owned ones", () => {
+  const items = [
+    mk("DS.5.3", "attended", [], { handoff: "sign off the conventions" }),
+    mk("FM.10", "blocked", [], { blocked: "keep tab panels mounted?" }),
+  ];
+  const { steps } = resumePlan(items, ["DS.5.3", "FM.10"]);
+  const by = new Map(steps.map((s) => [s.id, s]));
+  assert.equal(by.get("DS.5.3").command, "/handoff DS.5.3");
+  assert.equal(by.get("DS.5.3").kind, "handoff");
+  assert.match(by.get("DS.5.3").doneWhen, /status: done/);
+  assert.equal(by.get("FM.10").command, "/unblock FM.10");
+  assert.match(by.get("FM.10").doneWhen, /> ANSWER:/);
+});
+
+test("resumePlan DROPS a step that is stale, unknown, or not a human's to close", () => {
+  const items = [mk("F1.1", "done"), mk("F1.2", "todo"), mk("F1.3", "attended", [], { handoff: "x" })];
+  const { steps, dropped } = resumePlan(items, ["F1.1", "F1.2", "F9.9", "F1.3"]);
+  assert.deepEqual(steps.map((s) => s.id), ["F1.3"]);
+  const why = new Map(dropped.map((d) => [d.id, d.why]));
+  assert.match(why.get("F1.1"), /already done — this step is stale/);
+  assert.match(why.get("F1.2"), /status is todo/);
+  assert.match(why.get("F9.9"), /no such item/);
+});
+
+test("resumePlan refuses to build a command from anything that is not a plain item id", () => {
+  // A suggested command is an execution vector (MITRE T1204.004). The only
+  // variable is an id, and a hostile one never reaches the command string.
+  const items = [mk("F1.1", "attended", [], { handoff: "x" })];
+  const { steps, dropped } = resumePlan(items, ["F1.1; rm -rf /", "$(whoami)", "../../etc/passwd"]);
+  assert.equal(steps.length, 0);
+  assert.equal(dropped.length, 3);
+  for (const d of dropped) assert.match(d.why, /refusing to build a command/);
+});
+
+test("resumePlan marks a step whose own dependencies are unmet as not-yet-runnable", () => {
+  const items = [mk("F1.1", "todo"), mk("F1.2", "attended", ["F1.1"], { handoff: "later" }), mk("F1.3", "attended", [], { handoff: "now" })];
+  const by = new Map(resumePlan(items, ["F1.2", "F1.3"]).steps.map((s) => [s.id, s]));
+  assert.equal(by.get("F1.3").applicability, "machine-applicable");
+  assert.equal(by.get("F1.2").applicability, "has-placeholders");   // cannot be run yet
+});
+
+test("resumePlan flags a step that an agent should arguably have done itself", () => {
+  // Fully runnable + no stated reason a human is required = a bug in the run,
+  // not a hand-off. Enforceable, rather than asserted in prose.
+  const items = [mk("F1.1", "attended", [], { handoff: "restart the box" })];
+  const lint = { lintWhyNotAgent: true };
+  assert.deepEqual(resumePlan(items, ["F1.1"], lint).suspect, ["F1.1"]);
+  assert.deepEqual(resumePlan(items, ["F1.1"], { ...lint, whyNotAgent: { "F1.1": "authority" } }).suspect, []);
+  assert.equal(resumePlan(items, ["F1.1"], { whyNotAgent: { "F1.1": "authority" } }).steps[0].whyNotAgent, "authority");
+  // ...but a run that recorded NOTHING is not accused: there was no claim to lint.
+  assert.deepEqual(resumePlan(items, ["F1.1"]).suspect, []);
+});
+
+test("readRunFile parses why_not_agent as per-id reasons", () => {
+  const dir = fixture({ ".claude/sweap-run.md": "---\nmilestone: DS.5\nreason: awaiting-human\nneeds: [DS.5.3, FM.10]\nwhy_not_agent: [DS.5.3=taste, FM.10=taste]\n---\n" });
+  assert.deepEqual(readRunFile(dir).whyNotAgent, { "DS.5.3": "taste", "FM.10": "taste" });
+  rmSync(dir, { recursive: true });
+});
+
+test("buildMilestoneCard: derives the plan even when the run recorded NOTHING", () => {
+  const items = [
+    mk("DS.5.3", "attended", [], { handoff: "sign off" }),
+    mk("DS.5.4", "todo", ["DS.5.3"]), mk("DS.5.5", "todo", ["DS.5.4"]),
+    mk("FM.10", "blocked", [], { blocked: "tabs?" }),
+  ];
+  const c = card(items);
+  assert.equal(c.end.verdict, "derived");
+  assert.deepEqual(c.end.plan.steps.map((s) => s.command), ["/handoff DS.5.3", "/unblock FM.10"]);
+  assert.equal(c.end.plan.steps[0].rank, 2);           // DS.5.4 -> DS.5.5
 });

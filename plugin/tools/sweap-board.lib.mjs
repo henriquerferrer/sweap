@@ -98,7 +98,141 @@ export function readRunFile(projectDir) {
     turns: Number.isFinite(turns) && turns > 0 ? turns : null,
     started: fm.started || null,
     deferredHandoffs: parseList(fm.deferred_handoffs),
+    // How the run ENDED, written by the run itself. Every field here is a
+    // CLAIM: verifyEnd() re-derives whether it holds and the board renders the
+    // verdict, never the claim alone. A run that stops is the one moment it is
+    // least able to report on itself reliably, so nothing here is taken on trust.
+    ended: fm.ended || null,
+    reason: fm.reason || null,
+    needs: parseList(fm.needs),
+    // `why_not_agent: DS.5.3=taste, FM.10=taste` — per-id, flat, same contract
+    // as every other key. This is the ONE thing a run knows that the board
+    // cannot derive: why a person is required rather than another turn.
+    whyNotAgent: Object.fromEntries(parseList(fm.why_not_agent)
+      .map((p) => p.split("=").map((x) => x.trim()))
+      .filter(([k, v]) => k && v)),
   };
+}
+
+// Longest chain of not-yet-done work hanging off an item. This is the DAG
+// scheduler's "upward rank" (HEFT / critical path), and it is the right way to
+// order competing hand-offs: counting DEPENDENTS under-ranks a single blocker
+// sitting at the head of a nine-deep chain against one that releases nine
+// parallel items. DS.5.3 is exactly the former — six levels, not nine abreast.
+export function upwardRank(id, rev, byId, memo = new Map()) {
+  if (memo.has(id)) return memo.get(id);
+  memo.set(id, 0);                                    // cycle guard: an id in progress ranks 0
+  let best = 0;
+  for (const d of rev.get(id) || []) {
+    const it = byId.get(d);
+    if (!it || it.status === "done") continue;
+    best = Math.max(best, 1 + upwardRank(d, rev, byId, memo));
+  }
+  memo.set(id, best);
+  return best;
+}
+
+// The action plan: what the human must do, in the order worth doing it.
+//
+// DERIVED, never replayed. The run file records only what a run can legitimately
+// know — which ids it waited on, and WHY a human is required. Everything a
+// reader acts on (the command, what it unblocks, whether it is still needed) is
+// recomputed here at render time, so a plan cannot outlive its cause. Terraform
+// refuses a saved plan whose state serial moved; Kubernetes stamps
+// observedGeneration. Same problem, same answer.
+//
+// Commands are BUILT, not interpolated: the only variable is an item id, and an
+// id that does not match the strict shape below is dropped rather than pasted
+// into a command string. Titles, questions and vendor errors never reach a
+// command line (MITRE T1204.004 — a suggested command is an execution vector).
+const SAFE_ID = /^[A-Za-z][A-Za-z0-9.]{0,62}$/;
+
+export function resumePlan(items, needs = [], { whyNotAgent = {}, lintWhyNotAgent = false } = {}) {
+  const byId = new Map(items.map((i) => [i.id, i]));
+  const byMilestone = new Map();
+  for (const i of items) { const m = milestoneOf(i.id); if (!byMilestone.has(m)) byMilestone.set(m, []); byMilestone.get(m).push(i); }
+  const rev = reverseDeps(items, byId, byMilestone);
+  const memo = new Map();
+
+  const steps = [], dropped = [];
+  for (const id of needs) {
+    const it = byId.get(id);
+    if (!SAFE_ID.test(String(id))) { dropped.push({ id, why: "id is not a plain item id — refusing to build a command from it" }); continue; }
+    if (!it) { dropped.push({ id, why: "no such item" }); continue; }
+    if (it.status === "done") { dropped.push({ id, why: "already done — this step is stale" }); continue; }
+    // Only the two AUTHORED human states have a drain command. Anything else is
+    // not a thing a human resumes, and inventing a command for it would be the
+    // failure this is meant to prevent.
+    const kind = it.status === "attended" ? "handoff" : it.status === "blocked" ? "blocked" : null;
+    if (!kind) { dropped.push({ id, why: `status is ${it.status}, which is not a human's to close` }); continue; }
+    const ready = isUnblocked(it, byId, byMilestone);
+    steps.push({
+      id, kind,
+      subject: it.title,
+      ask: (kind === "handoff" ? it.handoff : it.blocked) || null,
+      command: kind === "handoff" ? `/handoff ${id}` : `/unblock ${id}`,
+      purpose: kind === "handoff" ? "do the work only you can do, and close it" : "answer the question the run could not",
+      // rustc's Applicability, and for the same reason: a step whose own
+      // dependencies are unmet cannot be run yet, so it must not be offered as
+      // if it could. Only machine-applicable steps earn a copy-button.
+      applicability: ready ? "machine-applicable" : "has-placeholders",
+      doneWhen: kind === "handoff" ? `${it.file} reads status: done` : `${it.file} carries a > ANSWER: line and leaves status: blocked`,
+      gates: gatedItems(id, rev, byId),
+      rank: upwardRank(id, rev, byId, memo),
+      // The SRE objection made answerable: if a step is fully machine-applicable
+      // and nothing says why an agent may not do it, that is a bug in the run,
+      // not a hand-off. Enforced rather than asserted.
+      whyNotAgent: whyNotAgent[id] || null,
+    });
+  }
+  // Longest downstream chain first, then breadth, then id for stability.
+  steps.sort((a, b) => b.rank - a.rank || b.gates.length - a.gates.length || compareItems(byId.get(a.id), byId.get(b.id)));
+  // Only lint a run that actually made a claim. On the DERIVED path the run
+  // recorded nothing, so there is no `why_not_agent` to be missing — accusing it
+  // of a bug it was never given the chance to avoid is how a good check earns
+  // its way into being ignored.
+  const suspect = lintWhyNotAgent
+    ? steps.filter((s) => s.applicability === "machine-applicable" && !s.whyNotAgent).map((s) => s.id)
+    : [];
+  return { steps, dropped, suspect };
+}
+
+// Verify a run's own account of why it stopped against the backlog itself.
+// This is audit-gate.sh's discipline applied to run state: do not trust that
+// the run ended well, check that the condition it names actually holds. The
+// three outcomes are deliberate — a claim that CONTRADICTS the backlog is worse
+// than no claim at all, because it reads authoritative.
+export function verifyEnd(runFile, { frontier = [], items = [] } = {}) {
+  if (!runFile || !runFile.ended) return null;
+  const byId = new Map(items.map((i) => [i.id, i]));
+  const open = (id) => byId.has(id) && byId.get(id).status !== "done";
+  const runnable = frontier.length;
+  const reason = runFile.reason || "(none given)";
+  const disagree = (detail) => ({ reason, verdict: "contradicted", detail, runnable });
+  switch (runFile.reason) {
+    case "frontier-empty":
+      return runnable === 0
+        ? { reason, verdict: "confirmed", detail: "nothing is runnable — the frontier is empty", runnable }
+        : disagree(`claims the frontier is empty, but ${runnable} item${runnable > 1 ? "s are" : " is"} runnable: ${frontier.slice(0, 6).map((i) => i.id).join(", ")}`);
+    case "awaiting-human": {
+      // A run waiting on a person must NAME who/what it waits for, and those
+      // items must still be open. Otherwise "waiting on you" outlives the wait.
+      if (!runFile.needs.length) return disagree("claims it is waiting on a human but names nothing — say which item, or the wait is unfalsifiable");
+      const settled = runFile.needs.filter((id) => !open(id));
+      return settled.length
+        ? disagree(`waits on ${settled.join(", ")}, which ${settled.length > 1 ? "are" : "is"} already resolved — this run file is stale`)
+        : { reason, verdict: "confirmed", detail: `waiting on ${runFile.needs.join(", ")}`, runnable };
+    }
+    case "turns-exhausted":
+      // Legitimate with work still runnable — that IS what running out means.
+      return { reason, verdict: "confirmed", detail: `turn budget spent${runnable ? `; ${runnable} item(s) still runnable` : ""}`, runnable };
+    case "goal-met":
+      return runnable === 0
+        ? { reason, verdict: "confirmed", detail: "nothing runnable remains", runnable }
+        : disagree(`claims the goal is met, but ${runnable} item(s) are still runnable`);
+    default:
+      return { reason, verdict: "unverifiable", detail: "no recognised reason: — the board cannot check this claim", runnable };
+  }
 }
 
 // Idea inbox: the board's ONLY write capability. Create-only — new uniquely
@@ -370,9 +504,39 @@ export function buildMilestoneCard({ items, index = [], runFile = null, inFlight
     else state = "clean";
   } else if (notDue) { state = "not-due"; detail = notDue; }
 
+  // How the run ended, and whether its own account survives checking. Derived
+  // when it made no claim — which is the case that matters, since a run that
+  // stops badly is exactly the one that forgets to write anything down. The
+  // board must never be blind just because an agent did not remember.
+  let end = verifyEnd(runFile, { frontier, items });
+  if (end) {
+    end = { ...end, source: "run-file", at: runFile.ended };
+    // What the human must actually DO. Derived here rather than read from the
+    // file, so it cannot be stale, and so a run cannot hand out a command for
+    // work that is already closed.
+    end.plan = resumePlan(items, runFile.needs, { whyNotAgent: runFile.whyNotAgent, lintWhyNotAgent: runFile.reason === "awaiting-human" });
+  }
+  else if (!frontier.length && !inFlight.length) {
+    end = { reason: "frontier-empty", verdict: "derived", source: "derived", at: null, runnable: 0,
+            detail: "nothing is runnable and nothing is in flight — the run has no legal work left, whether or not it said so" };
+    // Nothing was recorded, so derive the needs too: every open human-owned item
+    // gating unfinished work. A run that forgets to say what it needs must not
+    // cost the human the answer.
+    const owed = items.filter((i) => (i.status === "attended" || i.status === "blocked"));
+    end.plan = resumePlan(items, owed.map((i) => i.id));
+  }
+  // Distinct from `end`: there IS work and nobody is on it. This is the state
+  // consumer A sat in for 7h on 2026-08-21 while looking, from every tool, like
+  // silence. Cheap to compute and it needs no cooperation from the run.
+  const idle = frontier.length && !inFlight.length
+    ? { runnable: frontier.length, detail: `${frontier.length} item${frontier.length > 1 ? "s are" : " is"} runnable and nothing is in flight` }
+    : null;
+
   const entry = index.find((m) => m.id === id) || null;
   return {
     id,
+    end,
+    idle,
     goal: entry ? entry.goal : null,
     sketch: entry ? entry.sketch : false,
     state: flight.length ? "running" : "next",

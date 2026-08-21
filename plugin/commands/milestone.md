@@ -122,18 +122,38 @@ nowhere else. Show, compactly:
                   You'd close the hand-offs afterwards and re-run /milestone.
 ```
 
-Then ask which to do now (all / a subset / none). Order them **most-gating
-first** — that is the one that unlocks the most work.
+Then **walk the most-gating one immediately** — do not print a goal first, and
+do not offer "later" as an equal option. Run `/handoff <id>` inline, here, in
+this session: brief the human, take the steps, and close it on their
+confirmation exactly as that command specifies. Then re-resolve from the top
+(the deferred, debt and hand-off scans are all stateless, so re-running them is
+free) and print the goal that now applies.
 
-- **Now** → print `/handoff <id>` for the first one and **hold the goal line**.
-  Do not print a goal in the same breath; the run shape depends on the outcome.
-  `/handoff` closes the loop and this command is re-run afterwards.
-- **Later (or a subset deferred)** → print the **hand-offs-outstanding** goal
-  template below, with the cost restated in one line.
+**Why this is not a fork any more.** A hand-off is an item *of* the milestone,
+so while it is open the milestone cannot complete, so its audit is not due —
+which means "later" never yields the ordinary goal, only the degraded one. Consumer A
+ran the whole of 2026-08-20 on a goal whose audit clause was unsatisfiable from
+the minute it was printed, because `DS.5.3` was authored `attended` in the very
+commit that created the milestone. The run then had no legal way to finish or to
+stop, correctly worked out that the goal was unreachable, and had to invent an
+exit by asking the human in chat — where no tool could see it. Handing out a
+goal that cannot be met is worse than spending ten minutes closing the hand-off
+that blocks it.
 
-Never ask this in a non-interactive context — `/loop-schedule` and any headless
-driver skip the fork entirely and use the hand-offs-outstanding template
-directly, naming the skipped hand-offs in their notification.
+The gated items become runnable when the hand-off's PR lands; a run in flight
+recomputes its frontier after every merge and picks them up with nothing
+further needed, so the goal can be printed as soon as the answer is recorded.
+
+Two exits from this, both narrow:
+- **The human declines** (they want the run started anyway, or the hand-off
+  genuinely cannot be done now — a third party has to verify, hardware is in the
+  post). Then print the **hand-offs-outstanding** template, with the cost
+  restated in one line. `/handoff` step 5 covers recording a started-but-unfinished
+  hand-off.
+- **Non-interactive** — `/loop-schedule` and any headless driver. `/handoff`
+  requires a human in the session and must never run unattended, so these skip
+  it entirely and use the hand-offs-outstanding template directly, naming the
+  skipped hand-offs in their notification.
 
 Environment pre-flight (parity — see the playbook's "Environment parity"
 section). Do this **yourself** — the user should never bring up services by
@@ -200,6 +220,60 @@ loop reads this to decide anything (status truth stays the item files), so a
 failed write is worth one line of "couldn't record the run" and nothing more —
 never let it block the kickoff.
 
+**Record the end of the run.** When the goal ends — met, stopped, or out of
+turns — append to `.claude/sweap-run.md`:
+
+```
+ended: <ISO-8601 UTC>
+reason: frontier-empty | awaiting-human | turns-exhausted | goal-met
+needs: [<ids you are waiting on a human for, if reason is awaiting-human>]
+why_not_agent: [<id>=identity|money|terms|taste|authority, ...]
+```
+
+**Record only what you legitimately know.** `needs:` is the ids; `why_not_agent:`
+is the one judgment no tool can derive — *why a person is required rather than
+another turn*. Do NOT write the commands the human should run: the board derives
+those from each item's current status at render time, so they cannot go stale,
+cannot advertise a hand-off that has since closed, and cannot be built out of a
+title or a vendor error string. The only variable in a derived command is an
+item id, and an id that is not a plain item id is dropped rather than pasted.
+
+`why_not_agent:` is load-bearing rather than decorative. A step that is fully
+runnable and carries no reason a human is needed is flagged on the board as
+**likely a bug in the run, not a hand-off** — the SRE rule that an escalation
+must name an action "the system is unable to take itself", made checkable. If
+you cannot name why it is theirs, do it yourself.
+
+`reason:` must be one of those four. This is what gives a stuck run a legitimate
+way OUT: before it existed the only exit from an unsatisfiable goal was to ask
+the human in chat, where no tool could see it, which is why consumer A looked
+silent for seven hours on 2026-08-21 while it was in fact politely waiting for
+an answer.
+
+**Every field here is a claim, and the board checks it rather than repeating
+it** (`verifyEnd`, the same discipline `audit-gate.sh` applies to audit
+records — do not trust that it happened, check that it holds). `frontier-empty`
+is re-derived from the item files; `awaiting-human` must NAME what it waits on
+and those items must still be open, so a wait cannot outlive its cause or be
+unfalsifiable; `turns-exhausted` stays valid with work left, because that is
+what running out means. A claim that contradicts the backlog is shown as
+contradicted, in red — a confident wrong answer is worse than no answer. And a
+run that records nothing at all is not invisible: the board derives the same
+verdict from the items — and derives the action plan too, from every open
+`attended`/`blocked` item — since forgetting is precisely the failure this
+exists to catch.
+
+**Then, and only in an interactive session, print the plan.** Terraform
+suppresses its "run the following command" hint under `TF_IN_AUTOMATION`, git
+puts every `advice.*` hint on stderr behind `GIT_ADVICE=0`, and `gh` prints its
+Next Steps block only to a TTY. All three separate the same two layers, and
+sweap's failure was the exact inverse: the instructions existed ONLY in the
+channel no tool could read. So the record is the source and the printed block is
+a rendering of it — never the other way round. Order by what each step releases
+(longest downstream chain first, then breadth), show at most three, and give
+each one its command, what it unblocks, and its *Done when*. `/loop-schedule`
+and headless drivers write the record and print nothing.
+
 Then **print** the exact goal line, filled in, for the user to paste — do NOT
 try to set `/goal` yourself (only the user can invoke it). Pick the template by
 run shape from "Resolve the run" above.
@@ -230,8 +304,10 @@ then every unblocked <MILESTONE> item is [done] per its definition of done, and
 the <MILESTONE> milestone-audit (plus the Tier-2 UI audit for a UI-heavy
 milestone) has run and been triaged. Stop when the only [todo] items left are
 audit follow-ups carrying followup_of: <MILESTONE> (those are the next run's
-debt, not this run's work), and everything else remaining is [blocked] or
-[attended] — or after <TURNS> turns.
+debt, not this run's work), or when NOTHING IS RUNNABLE — every remaining [todo]
+has an unsatisfied dependency on a [blocked], [attended] or [deferred] item, so
+the frontier is empty and no agent may pick anything up. Or after <TURNS> turns.
+When you stop, record it (see "Record the end of the run" below).
 ```
 
 That stop condition names the follow-ups deliberately. A correct audit ends by CREATING work: bucket-2 triage writes
@@ -254,17 +330,41 @@ close:
 every unblocked <MILESTONE> item NOT gated by an outstanding hand-off is [done]
 per its definition of done. Hand-offs <IDS> are the human's and remain open, so
 <MILESTONE> cannot complete and its milestone-audit is NOT due this run — do not
-attempt it. Stop when only [blocked] or [attended] items remain, or after
-<TURNS> turns.
+attempt it. Stop when NOTHING IS RUNNABLE — every remaining [todo] has an
+unsatisfied dependency on a [blocked], [attended] or [deferred] item, so the
+frontier is empty — or after <TURNS> turns. When you stop, record it (see
+"Record the end of the run" below).
 ```
 
 **Debt-only** (no runnable `M`, but `D` is non-empty):
 
 ```
 /goal Every outstanding audit follow-up item in the backlog is [done] per its
-definition of done. Stop when only [blocked] or [attended] items remain, or
-after <TURNS> turns.
+definition of done. Stop when NOTHING IS RUNNABLE — every remaining [todo] has
+an unsatisfied dependency on a [blocked], [attended] or [deferred] item, so the
+frontier is empty — or after <TURNS> turns. When you stop, record it (see
+"Record the end of the run" below).
 ```
+
+**Why the stop clause names the frontier and not a set of statuses.** "Gated by
+an unsatisfied dependency" is not a status in sweap. An item waiting behind an
+attended hand-off stays `status: todo` for as long as the hand-off is open —
+`blocked` means an agent got stuck and needs an answer, `deferred` means the
+premise is not yet valid, and there is no third label for "todo, deps unmet".
+That is what the frontier computation is for. A stop clause phrased in statuses
+therefore cannot fire in exactly the situation `attended` exists to model: consumer A
+reached a state on 2026-08-21 where the frontier was provably EMPTY — nothing an
+agent was permitted to pick up — while nine `DS.5.4`–`DS.5.12` items sat at
+`todo` behind one hand-off, so every status-based clause read false. The run
+could neither win nor stop. Note the asymmetry this fixes: the
+hand-offs-outstanding template's *completion* clause already said "NOT gated by
+an outstanding hand-off" and got it right; its stop clause, one sentence later,
+did not.
+
+**"Nothing is runnable" is the whole bar, and it is not "something is blocked".**
+A run with one blocked item and eleven runnable ones must keep going. The out is
+earned only when the frontier is empty — the same computation the run already
+uses to pick its next item, now also used to decide when there is no next item.
 
 Everything else (TDD, the review dimensions, end-of-run hygiene, escalation, and
 the audit auto-launch/triage) is inherited from CLAUDE.md and the playbook, which

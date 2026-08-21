@@ -354,6 +354,12 @@ may ADD dimensions it judges necessary; it may not remove tagged ones.
   this rule is what catches everything else. An ideas-only PR is never
   backlog-advancing — `audit-gate.sh` classifies `<backlog.dir>ideas/` as a
   non-item subdir — so it lands even during audit debt.)
+- **Record how the run ended, before deleting anything.** Append `ended:`,
+  `reason:` and (for `awaiting-human`) `needs:` to `.claude/sweap-run.md` — see
+  `/milestone`, "Record the end of the run". A run that stops without recording
+  why is indistinguishable from one that died, and "I asked the human in chat"
+  is not a record: no tool can read it. Leave the file in place when the reason
+  is `awaiting-human`, so the board can show whose answer the run is waiting on.
 - **Delete `.claude/sweap-run.md`** when the goal ends, met or stopped. It
   describes THIS run; left behind it makes the board's card claim a run that is
   over. It is gitignored, so this is a plain `rm -f`, never a commit. (The card

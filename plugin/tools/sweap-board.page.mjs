@@ -56,6 +56,14 @@ export function renderPage() {
   /* Same two-colour rule the columns below use: warn is the human's OWN queue,
      red is "an agent got stuck". The card must not blur them back together. */
   .card .task { color:var(--warn); } .card .q { color:var(--bad); }
+  /* The run's own account of why it stopped, and whether it survived checking.
+     A contradicted claim is red because it reads authoritative while being
+     wrong — worse than the run having said nothing at all. */
+  .endbar { margin-top:10px; padding:7px 9px; border-radius:6px; font-size:12px; border:1px solid var(--line); }
+  .end-confirmed { border-color:var(--muted); color:var(--muted); }
+  .end-derived { border-color:var(--warn); color:var(--warn); }
+  .end-contradicted, .end-unverifiable { border-color:var(--bad); color:var(--bad); }
+  .end-idle { border-color:var(--warn); color:var(--warn); }
   .audit { margin-top:11px; padding-top:8px; border-top:1px solid var(--line); font-size:12px; }
   .a-clean { color:var(--ok); } .a-debt { color:var(--bad); }
   .a-deferred, .a-not-due, .a-blocked-by-debt { color:var(--warn); } .a-unknown { color:var(--muted); }
@@ -129,6 +137,15 @@ function milestoneCard(m) {
     + esc(b.question) + (b.carried ? ' · carried '+b.carried+' boundar'+(b.carried>1?'ies':'y') : '') + ' · /unblock '+esc(b.id)+'</div></div>';
   const stops = m.handoffs.map(stopRow).concat(m.blocked.map(blockRow));
 
+  // Never render the claim alone — always the claim AND the verdict on it.
+  const VERDICT = { confirmed: "checked", derived: "derived by the board — the run recorded nothing",
+                    contradicted: "✗ CONTRADICTED BY THE BACKLOG", unverifiable: "? cannot be checked" };
+  let endbar = "";
+  if (m.end) endbar = '<div class="endbar end-'+esc(m.end.verdict)+'"><b>run ended</b> · '+esc(m.end.reason)
+    + ' — ' + esc(m.end.detail) + ' <span class="meta">(' + esc(VERDICT[m.end.verdict] || m.end.verdict) + ')</span>' + planBlock(m.end.plan) + '</div>';
+  else if (m.idle) endbar = '<div class="endbar end-idle"><b>idle</b> — '+esc(m.idle.detail)
+    + '. The run is not ended; it just is not working.</div>';
+
   const col = (title, rows, msg) => '<div><h4>'+title+'</h4>'+(rows.length ? rows.join("") : '<div class="empty">'+esc(msg)+'</div>')+'</div>';
   el.innerHTML =
     '<div class="card-head"><span class="chip '+(running?"running":"next")+'">'+(running?"running":"next up")+'</span>'
@@ -143,6 +160,7 @@ function milestoneCard(m) {
     +   col("Next ready", m.ready.map(readyRow), "nothing ready in " + m.id)
     +   col("Blocking completion", stops, c.todo ? "nothing in the way — " + plural(c.todo, "item") + " to go" : "nothing in the way")
     + '</div>'
+    + endbar
     + '<div class="audit a-'+esc(m.audit.state)+'">'+(AUDIT_ICON[m.audit.state]||"")+' audit: '+esc(m.audit.state)
     +   (m.audit.detail ? ' — '+esc(m.audit.detail) : '')
     +   (m.audit.stale.length ? ' · stale record(s): '+m.audit.stale.map(esc).join(", ") : '')
