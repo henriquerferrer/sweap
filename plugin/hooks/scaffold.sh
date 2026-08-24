@@ -147,6 +147,10 @@ if [ -d "$proj/.github/workflows" ] && [ -n "$plugin_root" ] && [ -d "$tmpl" ]; 
   sync_managed "$tmpl/.github/workflows/audit-gate.yml" ".github/workflows/audit-gate.yml"
   sync_managed "${plugin_root%/}/hooks/audit-gate.sh"   ".github/scripts/audit-gate.sh"
   sync_managed "${plugin_root%/}/hooks/roadmap-lint.sh" ".github/scripts/roadmap-lint.sh"
+  # The roadmap-only lane classifier: ci.yml's `changes` job runs this vendored
+  # copy, pre-merge-gate.sh runs the plugin's — one script, so the lane CI took
+  # and the lane the gate accepts are the same rule (see hooks/ci-lane.sh).
+  sync_managed "${plugin_root%/}/hooks/ci-lane.sh"      ".github/scripts/ci-lane.sh"
 fi
 
 # --- 4. Idempotency fast-guard ----------------------------------------------
@@ -156,7 +160,7 @@ if [ -f "$proj/CLAUDE.md" ] && grep -qF '## sweap config' "$proj/CLAUDE.md" 2>/d
   # a new required check appearing unannounced is worse than no check at all,
   # because nobody knows to make it required in the ruleset.
   if [ "${#healed_workflows[@]}" -gt 0 ]; then
-    heal_msg="sweap: installed/updated the audit-gate control in this repo — $(printf '%s, ' "${healed_workflows[@]}" | sed 's/, $//'). These are sweap-managed (vendored so CI needs no cross-repo access) and are kept byte-identical to the plugin's copies, so this fires both on first install and whenever the plugin's version changes. ACTION NEEDED: review the diff and commit it. Enforcement then depends on your GitHub plan: on a PRIVATE FREE repo, rulesets/branch protection are unavailable (the API 403s), and the enforcement is pre-merge-gate.sh, which already refuses any 'gh pr merge' whose check rollup is not fully green — audit-gate included — so no further setup is possible or needed; note a merge from the GitHub web UI bypasses that hook and is caught only after the fact by post-merge-auditcheck.sh. On a public/org/Pro repo, additionally make 'audit-gate' a REQUIRED check pinned to the GitHub Actions app (id 15368), never 'any source'. See the playbook's 'Enforcing the audit gate in CI' section."
+    heal_msg="sweap: installed/updated sweap-managed CI controls in this repo — $(printf '%s, ' "${healed_workflows[@]}" | sed 's/, $//'). These are sweap-managed (vendored so CI needs no cross-repo access) and are kept byte-identical to the plugin's copies, so this fires both on first install and whenever the plugin's version changes. ACTION NEEDED: review the diff and commit it. If .github/scripts/ci-lane.sh is among them and your ci.yml predates the roadmap-only lane, add the template's 'changes' job and gate ONLY e2e on it (templates/.github/workflows/ci.yml) — never lint/typecheck/test/audit-gate. Enforcement then depends on your GitHub plan: on a PRIVATE FREE repo, rulesets/branch protection are unavailable (the API 403s), and the enforcement is pre-merge-gate.sh, which already refuses any 'gh pr merge' whose check rollup is not fully green — audit-gate included — so no further setup is possible or needed; note a merge from the GitHub web UI bypasses that hook and is caught only after the fact by post-merge-auditcheck.sh. On a public/org/Pro repo, additionally make 'audit-gate' a REQUIRED check pinned to the GitHub Actions app (id 15368), never 'any source'. See the playbook's 'Enforcing the audit gate in CI' section."
     if [ "$have_jq" = "1" ]; then
       jq -n --arg ctx "$heal_msg" '{hookSpecificOutput:{hookEventName:"SessionStart",additionalContext:$ctx}}' 2>/dev/null || printf '%s\n' "$heal_msg"
     else

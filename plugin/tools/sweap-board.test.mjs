@@ -1010,3 +1010,111 @@ test("buildMilestoneCard: derives the plan even when the run recorded NOTHING", 
   assert.deepEqual(c.end.plan.steps.map((s) => s.command), ["/handoff DS.5.3", "/unblock FM.10"]);
   assert.equal(c.end.plan.steps[0].rank, 2);           // DS.5.4 -> DS.5.5
 });
+
+// --- the discovered inbox -------------------------------------------------------
+import { writeDiscovered, loadDiscovered, promotionTarget, nextItemId, archiveDiscovered, parseStranded, DISCOVERED_KINDS } from "./sweap-board.lib.mjs";
+
+test("writeDiscovered: hash-suffixed, create-only, kind/why required, same title twice never collides", () => {
+  const dir = fixture({ "CLAUDE.md": "## sweap config\n" });
+  const a = writeDiscovered(dir, "roadmap/", { title: "Pager strands focus", kind: "gap", why: "the org log pager loses focus on page 2", from: "FN.9", by: "feat/FN.9", now: 1785736000000 });
+  assert.match(a.file, /^roadmap\/discovered\/pager-strands-focus-[0-9a-f]{6}\.md$/);
+  const text = readFileSync(join(dir, a.file), "utf8");
+  assert.match(text, /^---\ntitle: Pager strands focus\nkind: gap\ndiscovered_from: FN\.9\ndiscovered_by: feat\/FN\.9\nmilestone_hint: \ncreated: 2026-08-03T/);
+  assert.match(text, /\n---\n\nthe org log pager loses focus on page 2\n$/);
+  // Same title, different moment/branch -> different hash, both files exist.
+  const b = writeDiscovered(dir, "roadmap/", { title: "Pager strands focus", kind: "direction", why: "should the pager exist at all?", from: "FN.13", now: 1785736000001 });
+  assert.notEqual(a.file, b.file);
+  assert.ok(existsSync(join(dir, a.file)) && existsSync(join(dir, b.file)));
+  // Identical inputs -> identical name -> the create-only write refuses.
+  assert.throws(() => writeDiscovered(dir, "roadmap/", { title: "Pager strands focus", kind: "gap", why: "x", from: "FN.9", by: "feat/FN.9", now: 1785736000000 }), /EEXIST/);
+  assert.throws(() => writeDiscovered(dir, "roadmap/", { title: "x", kind: "bug", why: "y", now: 1 }), /kind must be gap or direction/);
+  assert.throws(() => writeDiscovered(dir, "roadmap/", { title: "x", kind: "gap", why: "  ", now: 1 }), /why required/);
+  assert.throws(() => writeDiscovered(dir, "roadmap/", { title: "///", kind: "gap", why: "y", now: 1 }), /title required/);
+  assert.deepEqual(DISCOVERED_KINDS, ["gap", "direction"]);
+  rmSync(dir, { recursive: true });
+});
+
+test("loadDiscovered reads the inbox newest first, ignores archive/, tolerates junk; promotionTarget resolves hint > from-item > null", () => {
+  const dir = fixture({
+    "roadmap/discovered/old-abc123.md": "---\ntitle: Old\nkind: gap\ndiscovered_from: F1.2\ndiscovered_by: \nmilestone_hint: \ncreated: 2026-08-01T10:00:00.000Z\n---\n\nwhy old\n",
+    "roadmap/discovered/new-def456.md": "---\ntitle: New\nkind: direction\ndiscovered_from: PR #181\ndiscovered_by: feat/x\nmilestone_hint: F3\ncreated: 2026-08-03T10:00:00.000Z\n---\n\nwhy new\n",
+    "roadmap/discovered/weird-000000.md": "---\ntitle: Weird\nkind: nope\ncreated: 2026-08-02T10:00:00.000Z\n---\n",
+    "roadmap/discovered/archive/done-111111.md": "---\ntitle: Done\nkind: gap\ncreated: 2026-07-01T10:00:00.000Z\npromoted_to: F1.9\n---\n",
+    "roadmap/discovered/junk.md": "no frontmatter\n",
+  });
+  const d = loadDiscovered(dir, "roadmap/");
+  assert.deepEqual(d.map((x) => x.file), ["new-def456.md", "weird-000000.md", "old-abc123.md", "junk.md"]);
+  assert.equal(d[0].kind, "direction"); assert.equal(d[0].why, "why new"); assert.equal(d[0].milestoneHint, "F3");
+  assert.equal(d[1].kind, "unknown", "an unknown kind is surfaced as unknown, never coerced");
+  assert.equal(d[3].title, "junk"); assert.equal(d[3].kind, "unknown");
+  assert.ok(!d.some((x) => x.file === "done-111111.md"), "archive/ must be invisible");
+  assert.equal(promotionTarget(d[0]), "F3", "explicit hint wins");
+  assert.equal(promotionTarget(d[2]), "F1", "else the milestone of the item it came from");
+  assert.equal(promotionTarget({ from: "PR #181" }), null, "a PR is not a milestone");
+  assert.equal(promotionTarget({ from: "DS.2.4" }), "DS.2", "dot-depth agnostic");
+  assert.deepEqual(loadDiscovered(fixture({ "x": "" }), "roadmap/"), []);
+  rmSync(dir, { recursive: true });
+});
+
+test("nextItemId mints numerically and never reuses an archived id", () => {
+  const dir = fixture({
+    "roadmap/F1.1.md": "---\nid: F1.1\nstatus: done\n---\n",
+    "roadmap/F1.9.md": "---\nid: F1.9\nstatus: todo\n---\n",
+    "roadmap/F10.3.md": "---\nid: F10.3\nstatus: todo\n---\n",
+    "roadmap/archive/F1.12.md": "---\nid: F1.12\nstatus: dropped\n---\n",
+    "roadmap/DS.2.1.md": "---\nid: DS.2.1\nstatus: todo\n---\n",
+  });
+  assert.equal(nextItemId(dir, "roadmap/", "F1"), "F1.13", "F1.10 would follow F1.9 numerically, but archive/ holds F1.12");
+  assert.equal(nextItemId(dir, "roadmap/", "F10"), "F10.4");
+  assert.equal(nextItemId(dir, "roadmap/", "DS.2"), "DS.2.2");
+  assert.equal(nextItemId(dir, "roadmap/", "F7"), "F7.1", "a milestone with no items starts at .1");
+  assert.throws(() => nextItemId(dir, "roadmap/", ""), /milestone required/);
+  rmSync(dir, { recursive: true });
+});
+
+test("archiveDiscovered moves the note with its provenance appended; create-only at the destination", () => {
+  const dir = fixture({ "roadmap/discovered/gap-abc123.md": "---\ntitle: Gap\nkind: gap\ncreated: 2026-08-01T10:00:00.000Z\n---\n\nwhy\n" });
+  const r = archiveDiscovered(dir, "roadmap/", "roadmap/discovered/gap-abc123.md", { promotedTo: "F1.13" });
+  assert.equal(r.file, join("roadmap/", "discovered", "archive", "gap-abc123.md"));
+  assert.ok(!existsSync(join(dir, "roadmap/discovered/gap-abc123.md")));
+  assert.equal(readFileSync(join(dir, r.file), "utf8"), "---\ntitle: Gap\nkind: gap\ncreated: 2026-08-01T10:00:00.000Z\npromoted_to: F1.13\n---\n\nwhy\n");
+  writeFileSync(join(dir, "roadmap/discovered/gap-abc123.md"), "---\ntitle: Gap\n---\n");
+  assert.throws(() => archiveDiscovered(dir, "roadmap/", "gap-abc123.md", { promotedTo: "F1.14" }), /EEXIST/, "never clobbers a prior archive record");
+  assert.throws(() => archiveDiscovered(dir, "roadmap/", "gap-abc123.md", {}), /promotedTo or declined required/);
+  rmSync(dir, { recursive: true });
+});
+
+test("parseStranded: closed/none are stranded, open is a rider, unknown is neither", () => {
+  const s = parseStranded("feat/FN.13\topen\t1\troadmap/FN.15.md,roadmap/FH.7.md\nold/x\tclosed\t9\troadmap/discovered/a-000000.md\n\n  \nlocal/y\tnone\t0\troadmap/ideas/z.md\nweird\t??\tx\t\n");
+  assert.deepEqual(s.map((x) => [x.branch, x.pr, x.ageDays, x.paths.length, x.stranded]), [
+    ["feat/FN.13", "open", 1, 2, false], ["old/x", "closed", 9, 1, true], ["local/y", "none", 0, 1, true], ["weird", "unknown", null, 0, false],
+  ]);
+  assert.deepEqual(parseStranded(""), []);
+});
+
+test("buildState exposes discovered and stranded; neither leaks into the backlog; stranded notes name only truly stranded branches", async () => {
+  const dir = fixture({
+    "CLAUDE.md": "## sweap config\n",
+    "roadmap/F1.1.md": "---\nid: F1.1\ntitle: x\nstatus: todo\ndepends_on: []\n---\n",
+    "roadmap/discovered/gap-abc123.md": "---\ntitle: A gap\nkind: gap\ndiscovered_from: F1.1\ncreated: 2026-08-03T10:00:00.000Z\n---\n\nwhy\n",
+  });
+  const stranded = async () => ({ stdout: "feat/a\topen\t0\troadmap/F1.2.md\nold/b\tclosed\t4\troadmap/discovered/x-111111.md\n", code: 0 });
+  const s = await buildState(dir, { git: async () => ({ stdout: "", code: 0 }), gh: async () => ({ stdout: "[]", code: 0 }), stranded, now: 3 });
+  assert.deepEqual(s.discovered.map((d) => [d.title, d.kind]), [["A gap", "gap"]]);
+  assert.deepEqual(s.stranded.map((b) => [b.branch, b.stranded]), [["feat/a", false], ["old/b", true]]);
+  assert.deepEqual(s.backlog.flatMap((g) => g.items.map((i) => i.id)), ["F1.1"]);
+  assert.ok(s.notes.some((n) => /stranded backlog: old\/b carries 1 roadmap file/.test(n)));
+  assert.ok(!s.notes.some((n) => /feat\/a/.test(n)), "a rider on an open PR is shown, not alarmed about");
+  // No runner injected (older callers) -> empty, no note.
+  const s2 = await buildState(dir, { git: async () => ({ stdout: "", code: 0 }), gh: async () => ({ stdout: "[]", code: 0 }), now: 3 });
+  assert.deepEqual(s2.stranded, []);
+  const s3 = await buildState(dir, { git: async () => ({ stdout: "", code: 0 }), gh: async () => ({ stdout: "[]", code: 0 }), stranded: async () => ({ stdout: "", code: 1 }), now: 3 });
+  assert.ok(s3.notes.some((n) => /stranded-roadmap scan unavailable/.test(n)));
+  rmSync(dir, { recursive: true });
+});
+
+test("the page renders the discovered and stranded sections", () => {
+  const html = renderPage();
+  assert.match(html, /id="discovered"/); assert.match(html, /id="stranded"/);
+  assert.match(html, /nothing discovered/); assert.match(html, /nothing on branches/);
+});

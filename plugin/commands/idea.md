@@ -33,12 +33,13 @@ decided later by `/roadmap` at triage.
    it is exposed: `git clean`, a re-clone or a dead disk loses it, and no other
    machine can see it. So the inbox goes to `origin` like everything else.
    - **If nothing else is in flight**, flush it yourself: worktree, commit
-     EVERY pending file under `<backlog.dir>ideas/` (not just the one you just
-     wrote — one PR drains the whole inbox, including anything the board's
-     Ideas form left there), open `chore(ideas): capture <n> idea(s)`, merge on
-     green, run end-of-run hygiene. This PR is never backlog-advancing —
-     `audit-gate.sh` classifies `<backlog.dir>ideas/` as a non-item subdir — so
-     it lands even during audit debt.
+     EVERY pending file under `<backlog.dir>ideas/` AND `<backlog.dir>discovered/`
+     (not just the one you just wrote — one PR drains both inboxes, including
+     anything the board's Ideas form or a stopped session left there), open
+     `chore(backlog): capture <n> idea(s) / note(s)`, merge on green, run
+     end-of-run hygiene. This PR is never backlog-advancing — `audit-gate.sh`
+     classifies both inbox subdirs as non-item — so it lands even during audit
+     debt, and it rides the roadmap-only CI lane, so it is cheap.
    - **If you are mid-feature**, do NOT interrupt that work with a second PR.
      Leave the file and say so plainly: the next gated PR this session opens
      carries it (the playbook's sweep rule, End-of-run hygiene).

@@ -110,6 +110,12 @@ review is asked for:
    Likewise surface the **idea inbox** (`<backlog.dir>ideas/*.md`, if any) as
    read-only context — ideas captured from the board awaiting triage. Fold the
    relevant ones into the brainstorm; do not copy them into items verbatim.
+   And the **discovered inbox** (`<backlog.dir>discovered/*.md`): every
+   `kind: direction` note is THIS command's to decide — it is a scope question
+   a worker correctly refused to answer alone mid-run — and any `kind: gap`
+   note `/milestone` could not place (no resolvable milestone) waits here too.
+   Each becomes an item, a line in an item's spec, or a `declined:` — never
+   silently nothing.
    **Ask, explicitly, what in this milestone is NOT an agent's to do** —
    credentials, an account, hardware, a legal identity, a third-party approval,
    a taste call. Every answer becomes its own `status: attended` item file with
@@ -155,6 +161,11 @@ review is asked for:
    ideas stay put, and any that are still UNTRACKED get committed where they sit:
    this PR is the backstop for ideas captured by the board's Ideas form, which
    writes over HTTP with no session and so can never open a PR of its own),
+   archive every triaged discovered note through the lib —
+   `archiveDiscovered(projectDir, backlogDir, <file>, { promotedTo: <id> })` for
+   one that became an item, `{ declined: <reason> }` for one that did not — so
+   the note carries where it went (untriaged notes stay put; untracked ones
+   get committed where they sit, same backstop),
    update the index's milestone list (move the
    milestone out of "Later milestones"), and run
    `bash ${CLAUDE_PLUGIN_ROOT}/hooks/roadmap-lint.sh <file>` on every new item

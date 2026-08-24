@@ -85,6 +85,46 @@ it for the human to re-decide (re-spec or drop) — do not promote on a stale or
 uncheckable premise. Report any you found. The scan is stateless (just re-reads
 current statuses), so running it here every time is safe and idempotent.
 
+Discovered-items promotion (see the playbook's "Backlog format" and
+"Discovered work — the three-lane rule"). Before the audit-debt scan, read the
+discovered inbox — `<backlog.dir>discovered/*.md` (the `loadDiscovered` /
+`promotionTarget` helpers in `${CLAUDE_PLUGIN_ROOT}/tools/sweap-board.lib.mjs`,
+or a frontmatter scan). For every note with `kind: gap` whose target milestone
+resolves (`milestone_hint:`, else the milestone of `discovered_from:` when that
+is an item id):
+
+1. **Mint the id against main** with `nextItemId(projectDir, backlogDir,
+   <milestone>)` from the lib — never by hand. It counts `archive/` too, so a
+   dropped id is never reused, and minting here rather than at capture is the
+   whole reason a note carries no id (two sessions cannot collide on main).
+2. **Author the item file**: `status: todo`, `followup_of: <milestone>`,
+   `discovered_from: <the note's>`, `depends_on: []`, `review-dimensions:` as
+   the surface warrants, and a real `## Spec` (Surface / Interfaces / Out of
+   scope) + `## Acceptance (e2e)` written from the note's *why* — a note is a
+   lead, the item is the spec. `followup_of:` is what keeps the milestone's
+   completeness (and any landed audit record) untouched while putting the item
+   at the front of the frontier: it drains as debt, first.
+3. `bash ${CLAUDE_PLUGIN_ROOT}/hooks/roadmap-lint.sh <file>` — fix before the
+   PR opens, same spec gate as `/roadmap`.
+4. **Archive the note with its provenance**: `archiveDiscovered(projectDir,
+   backlogDir, <file>, { promotedTo: <id> })` — the note moves to
+   `discovered/archive/` with `promoted_to:` appended, create-only, so a re-run
+   can never clobber the record.
+
+Notes with no resolvable target, and every `kind: direction` note, are NOT
+promoted here — list them alongside the hand-offs and blocked questions so the
+human sees them at kickoff, and leave them for `/roadmap` (direction is that
+command's loop, not this one's). Land the promotions as ONE PR,
+`chore(backlog): promote <n> discovered item(s)`, through the gate, in a
+worktree like any other: it IS backlog-advancing, so during record-debt it is
+correctly denied — skip promotion, say so, and let the record land first. Merge
+on green (it rides the roadmap-only CI lane, so this is a `checks` run, not an
+e2e cycle), run end-of-run hygiene, then continue: the audit-debt scan below
+picks the promoted items up as `D`. Stateless and idempotent — a re-run finds
+the notes archived and nothing to do. In a non-interactive kickoff
+(`/loop-schedule`, headless drivers) this step runs exactly the same way; it
+needs no human.
+
 Audit-debt scan (see the playbook's "Milestone audit" section). Collect the
 debt set `D`: every item file with `followup_of:` set — for ANY configured
 prefix — that is `status: todo` AND unblocked (all `depends_on` satisfied;

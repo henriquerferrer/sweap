@@ -87,7 +87,7 @@ case "$BACKLOG_DIR" in */) : ;; *) BACKLOG_DIR="$BACKLOG_DIR/" ;; esac
 BASELINE="$(cfg_get 'audit\.baseline' | tr -d '[]' | tr ',' ' ')"
 in_baseline() { local m; for m in $BASELINE; do [ "$m" = "$1" ] && return 0; done; return 1; }
 
-# --- enumerate item files (TOP-LEVEL only — audits/, ideas/, archive/ are not
+# --- enumerate item files (TOP-LEVEL only — audits/, ideas/, discovered/, archive/ are not
 # item files) and compute complete milestones: milestone = id minus last dot
 # segment (parity with sweap-board.lib.mjs#milestoneOf); complete = every item
 # under the prefix is done. awk aggregation keeps this bash-3.2 safe.
@@ -527,7 +527,7 @@ for f in "$@"; do
 $DEBT
 DEBT_EOF
       ;;
-    "${BACKLOG_DIR}"*/*) : ;;              # other subdirs (ideas/, archive/) — not item files
+    "${BACKLOG_DIR}"*/*) : ;;              # other subdirs (ideas/, discovered/, archive/) — not item files; a discovered note is gate-exempt BY THIS ARM (playbook "Discovered work")
     "${BACKLOG_DIR}"*.md) touches_items=1 ;;
   esac
 done

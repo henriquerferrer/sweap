@@ -38,7 +38,15 @@ export function auditRunner(projectDir, sh = run("bash", projectDir, { timeout: 
   ]);
 }
 
-export function createServer({ projectDir, git = run("git", projectDir), gh = run("gh", projectDir), audit = auditRunner(projectDir), ghCacheMs = 15000, auditCacheMs = 15000 }) {
+// Roadmap changes stranded on branches. One implementation for three readers
+// (this board, post-merge-cleanup.sh, the stop path): hooks/stranded-roadmap.sh.
+// Read-only against the repo — it fetches nothing and only diffs refs that are
+// already local. Same timeout reasoning as the audit runner.
+export function strandedRunner(projectDir, sh = run("bash", projectDir, { timeout: 10000 })) {
+  return () => sh([fileURLToPath(new URL("../hooks/stranded-roadmap.sh", import.meta.url))]);
+}
+
+export function createServer({ projectDir, git = run("git", projectDir), gh = run("gh", projectDir), audit = auditRunner(projectDir), stranded = strandedRunner(projectDir), ghCacheMs = 15000, auditCacheMs = 15000 }) {
   let ghCache = { key: null, at: 0, promise: null };
   const cachedGh = (args) => {
     const key = JSON.stringify(args); const now = Date.now();
@@ -52,6 +60,12 @@ export function createServer({ projectDir, git = run("git", projectDir), gh = ru
     const now = Date.now();
     if (!auditCache.promise || now - auditCache.at > auditCacheMs) auditCache = { at: now, promise: Promise.resolve().then(audit) };
     return auditCache.promise;
+  };
+  let strandedCache = { at: 0, promise: null };
+  const cachedStranded = () => {
+    const now = Date.now();
+    if (!strandedCache.promise || now - strandedCache.at > auditCacheMs) strandedCache = { at: now, promise: Promise.resolve().then(stranded) };
+    return strandedCache.promise;
   };
   const PAGE = renderPage();
   return http.createServer(async (req, res) => {
@@ -86,7 +100,7 @@ export function createServer({ projectDir, git = run("git", projectDir), gh = ru
     try {
       if (req.url === "/" || req.url.startsWith("/index")) { res.writeHead(200, { "content-type": "text/html; charset=utf-8" }); return res.end(PAGE); }
       if (req.url.startsWith("/state.json")) {
-        const state = await buildState(projectDir, { git, gh: cachedGh, audit: cachedAudit, now: Date.now() });
+        const state = await buildState(projectDir, { git, gh: cachedGh, audit: cachedAudit, stranded: cachedStranded, now: Date.now() });
         res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
         return res.end(JSON.stringify(state));
       }

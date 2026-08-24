@@ -217,10 +217,22 @@ bounded_run() {
 # verify_pr <n>: query one PR's rollup (bounded by an internal timeout) and, if it
 # is not green or greenness can't be determined, emit a deny and return 1. Green
 # ⇒ return 0 silently.
-# A CheckRun is green only when COMPLETED with conclusion SUCCESS (SKIPPED/NEUTRAL
-# are non-blocking — a legitimately skipped check must not permanently wedge a
-# merge, and the rollup cannot tell "should-run-but-skipped" apart). A
-# StatusContext is green only when state==SUCCESS. Everything else (PENDING /
+# A CheckRun is green only when COMPLETED with conclusion SUCCESS. SKIPPED/NEUTRAL
+# are non-blocking for checks the pipeline does not know (a legitimately skipped
+# optional check must not permanently wedge a merge), with two exceptions for
+# the checks that ARE the gate — the job names the CI template fixes as its
+# contract (lint, typecheck, test, e2e, review, audit-gate, ci-status):
+#   - `e2e` SKIPPED is green ONLY when hooks/ci-lane.sh classifies the PR's own
+#     file list as `roadmap-only` — the roadmap-only fast lane (the CI template
+#     skips e2e for a backlog/docs-only change; see the playbook). The gate
+#     re-derives the lane from the files rather than trusting the skip, so a
+#     mis-globbed workflow can never make "e2e skipped" mean "e2e passed" on a
+#     PR that touches code. A PR with no file list is not roadmap-only.
+#   - any OTHER contract check SKIPPED is never green: nothing in the pipeline
+#     may skip lint, typecheck, test, the review verdict or the audit gate, so a
+#     skip there is a misconfiguration (a job-level `if:` reports SUCCESS and
+#     satisfies a required check — audit-gate.yml's first hard rule).
+# A StatusContext is green only when state==SUCCESS. Everything else (PENDING /
 # QUEUED / IN_PROGRESS / FAILURE / ERROR / CANCELLED / TIMED_OUT / ACTION_REQUIRED)
 # is not-green.
 verify_pr() {
@@ -270,6 +282,30 @@ verify_pr() {
     emit_deny "merge-gate: PR #$pr is NOT green — refusing to merge. Not-green checks: $offenders. Wait for them to pass (or fix a failure) and re-run; the gate is the control, not a prompt."
     return 1
   fi
+  # Skipped CONTRACT checks (see the note above verify_pr). e2e skipped is
+  # decided later, against the PR's file list; anything else skipped is a deny.
+  local skipped_hard skipped_e2e=0
+  skipped_hard="$(printf '%s' "$json" | jq -r '
+    def norm:
+      if (.__typename // "") == "CheckRun"
+      then (if (.status // "") != "COMPLETED" then (.status // "PENDING") else (.conclusion // "PENDING") end)
+      else (.state // "PENDING") end;
+    (.statusCheckRollup // [])
+    | map(select((norm | ascii_upcase) == "SKIPPED") | (.name // .context // ""))
+    | map(select(. == "lint" or . == "typecheck" or . == "test" or . == "review" or . == "audit-gate" or . == "ci-status"))
+    | unique | join(", ")
+  ' 2>/dev/null)"
+  if [ -n "$skipped_hard" ]; then
+    emit_deny "merge-gate: PR #$pr has gate check(s) SKIPPED: $skipped_hard. Only e2e may skip (roadmap-only lane); a skipped lint/typecheck/test/review/audit-gate means the workflow is misconfigured (a job skipped by an if: reports success). Fix the workflow so the check runs, then re-run the merge."
+    return 1
+  fi
+  printf '%s' "$json" | jq -e '
+    def norm:
+      if (.__typename // "") == "CheckRun"
+      then (if (.status // "") != "COMPLETED" then (.status // "PENDING") else (.conclusion // "PENDING") end)
+      else (.state // "PENDING") end;
+    any((.statusCheckRollup // [])[]; (.name // .context // "") == "e2e" and (norm | ascii_upcase) == "SKIPPED")
+  ' >/dev/null 2>&1 && skipped_e2e=1
   # Base-freshness gate: green checks that ran against an OLD base are not
   # evidence about the COMBINED state that would actually land (a "real conflict"
   # is invisible per-branch). Enforced PROTECTION-INDEPENDENTLY:
@@ -332,6 +368,10 @@ verify_pr() {
     emit_deny "merge-gate: PR #$pr reports $fcount changed files — gh may truncate the list at 100, so the audit gate cannot classify this PR. Failing CLOSED. Split the PR (or land the audit record first)."
     return 1
   fi
+  if [ "$skipped_e2e" = 1 ] && [ "$fcount" -eq 0 ]; then
+    emit_deny "merge-gate: PR #$pr's e2e check was SKIPPED but the PR reports no changed files, so the roadmap-only lane cannot be confirmed. Failing CLOSED — re-run once gh reports the file list, or re-run CI so e2e executes."
+    return 1
+  fi
   if [ "$fcount" -gt 0 ]; then
     # NUL-delimited extraction: a newline-delimited read would let a crafted
     # filename containing a literal newline (e.g. "notes\nroadmap/audits/F1.md")
@@ -343,6 +383,20 @@ verify_pr() {
     if [ "${#fpaths[@]}" -eq 0 ]; then
       emit_deny "merge-gate: could not extract PR #$pr's changed-file paths for the audit gate. Denying (recoverable) — re-run the merge."
       return 1
+    fi
+
+    # Roadmap-only lane: a SKIPPED e2e is accepted only if the gate's OWN
+    # classification of the PR's files says nothing under test changed. Same
+    # script the CI template runs (vendored as .github/scripts/ci-lane.sh), so
+    # the two cannot disagree about what the lane is; the plugin's copy is used
+    # here because the hook runs from the plugin, not the repo.
+    if [ "$skipped_e2e" = 1 ]; then
+      local lane
+      lane="$(bash "$(dirname "${BASH_SOURCE[0]}")/ci-lane.sh" --files "${fpaths[@]}" 2>/dev/null)"
+      if [ "$lane" != "roadmap-only" ]; then
+        emit_deny "merge-gate: PR #$pr's e2e check was SKIPPED but the PR is not roadmap-only (it touches code, config or .github/), so the skip is not a pass. Re-run CI so e2e executes (or split the backlog files into their own PR), then re-run the merge."
+        return 1
+      fi
     fi
 
     remaining=$(( deadline - $(date +%s) ))

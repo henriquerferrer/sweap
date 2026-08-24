@@ -306,6 +306,13 @@ check "wrong-milestone record does not discharge" 1
 # T21: subdir files (ideas/) are not item files -> pass
 run_gate "$R" --files roadmap/ideas/some-idea.md
 check "ideas/ files do not trigger the gate" 0
+# T21b: the discovered inbox is exempt the same way — this exemption is what
+# makes a mid-run discovered note safe to carry on ANY PR during audit debt,
+# where an item file would be denied (playbook "Discovered work").
+run_gate "$R" --files roadmap/discovered/pager-strands-focus-0a1b2c.md roadmap/discovered/archive/old-111111.md src/a.ts
+check "discovered/ notes (and their archive) do not trigger the gate" 0
+run_gate "$R" --files roadmap/discovered/pager-strands-focus-0a1b2c.md roadmap/F2.2.md
+check "...but a promoted item file riding with a note still does" 1
 
 # T22-T24: invalid record (unresolvable range_head, T7 fixture shape) must join
 # the debt set SILENTLY in merge mode, not deny outright. Regression: every

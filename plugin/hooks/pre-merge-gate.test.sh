@@ -75,6 +75,19 @@ case "$mode" in
       {"__typename":"CheckRun","name":"lint","status":"COMPLETED","conclusion":"SUCCESS"},
       {"__typename":"CheckRun","name":"optional","status":"COMPLETED","conclusion":"SKIPPED"}
     ],"mergeStateStatus":"CLEAN","baseRefName":"main","headRefOid":"deadbeef","mergeCommit":{"oid":"deadbeef"}}' ;;
+  e2eskipped)  # roadmap-only lane shape: e2e SKIPPED by the workflow's lane job; files from GH_FILES_JSON
+    printf '{"statusCheckRollup":[
+      {"__typename":"CheckRun","name":"lint","status":"COMPLETED","conclusion":"SUCCESS"},
+      {"__typename":"CheckRun","name":"e2e","status":"COMPLETED","conclusion":"SKIPPED"},
+      {"__typename":"CheckRun","name":"review","status":"COMPLETED","conclusion":"SUCCESS"},
+      {"__typename":"CheckRun","name":"audit-gate","status":"COMPLETED","conclusion":"SUCCESS"}
+    ],"mergeStateStatus":"CLEAN","baseRefName":"main","headRefOid":"deadbeef","mergeCommit":{"oid":"deadbeef"},"files":%s}\n' "${GH_FILES_JSON:-[]}" ;;
+  gateskipped)  # a gate check that may NEVER skip reports SKIPPED (misconfigured workflow)
+    printf '{"statusCheckRollup":[
+      {"__typename":"CheckRun","name":"lint","status":"COMPLETED","conclusion":"SUCCESS"},
+      {"__typename":"CheckRun","name":"e2e","status":"COMPLETED","conclusion":"SUCCESS"},
+      {"__typename":"CheckRun","name":"audit-gate","status":"COMPLETED","conclusion":"SKIPPED"}
+    ],"mergeStateStatus":"CLEAN","baseRefName":"main","headRefOid":"deadbeef","mergeCommit":{"oid":"deadbeef"},"files":%s}\n' "${GH_FILES_JSON:-[]}" ;;
   failure)
     echo '{"statusCheckRollup":[
       {"__typename":"CheckRun","name":"lint","status":"COMPLETED","conclusion":"SUCCESS"},
@@ -159,6 +172,31 @@ else bad "a) green -> allow" "unexpected stdout: $out"; fi
 out="$(run_gate skipped 'gh pr merge 42 --squash')"
 if is_deny "$out"; then bad "a2) skipped -> allow" "got deny: $(reason "$out")"
 else ok "a2) skipped check treated as non-blocking -> allow"; fi
+
+# (a3) roadmap-only lane: e2e SKIPPED + every changed file is backlog/docs -> ALLOW
+out="$(GH_FILES_JSON='[{"path":"roadmap/discovered/x-0a1b2c.md"},{"path":"roadmap/F1.2.md"},{"path":"docs/research/m.md"}]' run_gate e2eskipped 'gh pr merge 42 --squash')"
+if is_deny "$out"; then bad "a3) e2e skipped + roadmap-only files -> allow" "got deny: $(reason "$out")"
+else ok "a3) e2e skipped on a roadmap-only PR -> allow (the fast lane)"; fi
+
+# (a4) e2e SKIPPED but the PR touches code -> DENY (a skip is not a pass)
+out="$(GH_FILES_JSON='[{"path":"roadmap/F1.2.md"},{"path":"src/a.ts"}]' run_gate e2eskipped 'gh pr merge 42 --squash')"
+if is_deny "$out" && reason "$out" | grep -q "not roadmap-only"; then ok "a4) e2e skipped + code file -> deny (skip != pass)"
+else bad "a4) e2e skipped + code -> deny" "got: $out"; fi
+
+# (a5) e2e SKIPPED and a workflow edit -> DENY (.github/ is code)
+out="$(GH_FILES_JSON='[{"path":".github/workflows/ci.yml"}]' run_gate e2eskipped 'gh pr merge 42 --squash')"
+if is_deny "$out" && reason "$out" | grep -q "not roadmap-only"; then ok "a5) e2e skipped + workflow edit -> deny"
+else bad "a5) e2e skipped + workflow edit -> deny" "got: $out"; fi
+
+# (a6) e2e SKIPPED with no file list -> DENY (cannot confirm the lane)
+out="$(GH_FILES_JSON='[]' run_gate e2eskipped 'gh pr merge 42 --squash')"
+if is_deny "$out" && reason "$out" | grep -q "no changed files"; then ok "a6) e2e skipped + no files -> deny (fail closed)"
+else bad "a6) e2e skipped + no files -> deny" "got: $out"; fi
+
+# (a7) a gate check that may never skip (audit-gate) reports SKIPPED -> DENY
+out="$(run_gate gateskipped 'gh pr merge 42 --squash')"
+if is_deny "$out" && reason "$out" | grep -q "SKIPPED: audit-gate"; then ok "a7) audit-gate skipped -> deny (misconfigured workflow)"
+else bad "a7) audit-gate skipped -> deny" "got: $out"; fi
 
 # (b) a FAILURE -> DENY naming the check
 out="$(run_gate failure 'gh pr merge 42 --squash')"

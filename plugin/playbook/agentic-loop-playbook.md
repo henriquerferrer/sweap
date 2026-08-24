@@ -96,6 +96,23 @@ hazard.
   sessions, following their own judgment, committed untriaged ones into
   unrelated PRs anyway (2 of the 3 times an idea ever reached git). A rule the
   agents override two thirds of the time is the defect.
+- **`roadmap/discovered/`** — the **discovered inbox**: work an agent noticed
+  while on something else, written at the moment of discovery as a *note* —
+  no id, no status, no spec; frontmatter `title:`, `kind:`, `discovered_from:`,
+  `discovered_by:`, `milestone_hint:`, `created:`; body = *why*, written so a
+  fresh session can act on it after the branch it was found on is gone.
+  `kind: gap` = the spec promised it (a bug, a race, infra the spec assumed):
+  agent work, promoted mechanically by the next `/milestone` into a
+  `followup_of:` item. `kind: direction` = not in the spec: a human's call,
+  surfaced by `/roadmap` like an idea. Invisible to lint, dep resolution and
+  the frontier until promoted; promotion moves the note to
+  `roadmap/discovered/archive/` with `promoted_to:` (or `declined:`) appended,
+  the only edit a note ever receives. Gate-exempt by path, like `ideas/`
+  (`audit-gate.sh`'s "other subdirs" arm), which is what makes it safe to
+  carry on any PR during audit debt. Filenames carry a hash suffix so two
+  sessions capturing the same title from two branches never collide. **The one
+  thing a discovered note is not is an item file on a feature branch** — see
+  "Discovered work" under the per-feature loop for why.
 - **`.claude/sweap-board.md`** (gitignored) stays the *ephemeral* layer —
   in-flight claims and merge order only (see Parallel runs).
 - **`.claude/sweap-run.md`** (gitignored) is the other ephemeral file: which
@@ -239,6 +256,81 @@ the item is scoped too big — split it.
    frontmatter — see below): run each required extra reviewer before the PR.
 5. **Merge, clean up (see End-of-run hygiene), next item.**
 
+**Discovered work — the three-lane rule.** Work you notice mid-item that is
+*not* the item goes in exactly one of three places, chosen by what kind of
+change it is. Nothing else is sanctioned:
+
+1. **A new item → a discovered note.** Write it the moment you notice it, then
+   go back to the item. Never build it; never author an item file for it:
+
+   ```bash
+   node --input-type=module -e '
+   const lib = await import("file://" + process.argv[6]);
+   const { backlogDir } = lib.readConfig(process.cwd());
+   console.log(lib.writeDiscovered(process.cwd(), backlogDir, { title: process.argv[1], kind: process.argv[2], from: process.argv[3], why: process.argv[4], by: process.argv[5], now: Date.now() }).file);
+   ' "<title>" gap|direction "<item id you are on, or PR #n>" "<why: what is wrong or missing, and what done looks like>" "$(git branch --show-current)" "${CLAUDE_PLUGIN_ROOT}/tools/sweap-board.lib.mjs"
+   ```
+
+   `kind` is the one judgment you make, on the line the milestone audit's
+   triage already draws: failed-the-spec (a bug, a race, infra the spec
+   assumed) is a `gap`; not-in-the-spec (the feature *should* do something it
+   never promised) is `direction`. When unsure, `direction` — a human
+   un-deciding a gap costs a minute, an agent deciding direction costs a
+   milestone. Commit the note on the branch you are on and carry on: the sweep
+   rule (End-of-run hygiene) lands it with the PR you are opening anyway, the
+   next `/milestone` promotes every `gap` (debt-first, as a `followup_of:`
+   item with a real spec), and `/roadmap` triages every `direction`.
+2. **A status flip → the item's own PR.** Unchanged: the `status:` line in
+   `roadmap/<ID>.md` travels with *that* item's PR — conflict-free by
+   construction — never with someone else's.
+3. **An index or direction edit — a retitle, a milestone reorder, a new
+   milestone — → `/roadmap`, never mid-run.** The index is a direction-level
+   document; it changes at milestone boundaries with the human present.
+
+**Why a note and not an item file.** An item file authored mid-run on a feature
+branch has three defects the research memo
+(`docs/research/2026-08-22-mid-run-discovered-items.md`) documents: it is
+backlog-advancing for `audit-gate.sh --files`, so a code PR that would have
+passed can be denied for the rider it carries; its id was minted against a
+branch, not main, so two sessions can mint the same one; and it dies with the
+branch if the PR is abandoned. Consumer A #181 carried three such files and an
+index retitle, guarded only by a session diff-checking them after every
+rebase. A note is gate-exempt by path, has no id to collide, and is one file a
+rescue PR can carry. The rule is framed as protocol rather than prohibition
+because the evidence (METR 2025, Karpathy 2026, and this playbook's own
+untracked-ideas lesson above) is that agents route around an expensive rule —
+so the sanctioned path is also the cheap one: the roadmap-only CI lane (next
+section) makes the PR that lands a note cost one `checks` run, not two e2e
+runs.
+
+## Roadmap-only CI lane (why landing a backlog file is cheap)
+
+A PR that changes only backlog files (`<backlog.dir>**`), `docs/**` and
+markdown cannot change what e2e tests, so the scaffolded `ci.yml` skips its
+`e2e` job for it: a `changes` job classifies the diff with the VENDORED
+`.github/scripts/ci-lane.sh` — an allowlist; an empty or uncomputable diff is
+`code`; `.github/**` is always code — and `e2e` runs unless the lane is
+`roadmap-only`. `lint`, `typecheck`, `test`, `audit-gate` and the review never
+skip: a job skipped by an `if:` reports SUCCESS and satisfies a required check,
+which is exactly why `audit-gate.yml` forbids it for the gate.
+
+The merge hook does not trust the skip. `pre-merge-gate.sh` accepts an `e2e`
+check in state SKIPPED only when the plugin's own copy of `ci-lane.sh`, run on
+the PR's file list, also says `roadmap-only`; a PR whose `e2e` was skipped but
+which touches code, or reports no files, is denied, and any *other* gate check
+in state SKIPPED is denied outright as a misconfiguration. One script, two
+readers: the lane CI took and the lane the gate accepts cannot disagree.
+
+Why this is load-bearing rather than an optimisation: on consumer A every extra PR
+cost TWO e2e runs (the PR, then the `push` to main) on a runner that shares the
+agents' CPU — a docs-only PR measured 24.8 minutes — and that price is what
+pushed agents to bundle backlog files onto unrelated feature branches. The
+discovered-note rule above holds only while the sanctioned path is the cheap
+one; this lane is what makes it so. A consumer that adopted sweap before the
+lane existed gets `ci-lane.sh` vendored by the scaffold's self-heal and adds
+the `changes` job from the template by hand — the scaffold never overwrites a
+project-owned `ci.yml`.
+
 ## Environment parity (local machine vs. Claude Code web / cloud)
 
 The loop runs identically in any environment because **CI is the authoritative
@@ -343,17 +435,34 @@ may ADD dimensions it judges necessary; it may not remove tagged ones.
 
 ## End-of-run hygiene (mandatory)
 
-- **Sweep the idea inbox into whatever PR you are already opening.** Before
-  committing, `git status` the `<backlog.dir>ideas/` directory; any untracked
-  idea file rides along in this PR. It costs one line in the diff and it is the
+- **Sweep both inboxes into whatever PR you are already opening.** Before
+  committing, `git status` the `<backlog.dir>ideas/` and
+  `<backlog.dir>discovered/` directories; any untracked idea file or discovered
+  note rides along in this PR. It costs one line in the diff and it is the
   only mechanism that covers ideas captured from the board's Ideas form, which
   writes over HTTP with no session behind it and can never open a PR itself. Do
   not open a separate PR for them mid-feature, and do not hold them back for
   `/roadmap` — an idea sitting untracked is one `git clean` from gone, and the
-  human wrote it. (`/idea` flushes the inbox itself when nothing is in flight;
-  this rule is what catches everything else. An ideas-only PR is never
-  backlog-advancing — `audit-gate.sh` classifies `<backlog.dir>ideas/` as a
-  non-item subdir — so it lands even during audit debt.)
+  human wrote it. (`/idea` flushes both inboxes itself when nothing is in
+  flight; this rule is what catches everything else. An inbox-only PR is never
+  backlog-advancing — `audit-gate.sh` classifies `<backlog.dir>ideas/` and
+  `<backlog.dir>discovered/` as non-item subdirs — so it lands even during
+  audit debt, and it rides the roadmap-only CI lane, so it is cheap.)
+- **Before you abandon a branch, or stop on one, check it is not carrying
+  backlog files.** Run `bash ${CLAUDE_PLUGIN_ROOT}/hooks/stranded-roadmap.sh`:
+  one line per not-merged branch whose `<backlog.dir>` differs from main, with
+  its PR state. `open` is a rider and fine; `closed` or `none` is **stranded**
+  — invisible to the frontier, the board's backlog, the gate and `/roadmap`,
+  with nothing scheduled to ever land it. Rescue inbox files (`discovered/`,
+  `ideas/`) with a docs-only PR: `git checkout -b roadmap/rescue-<6hex>
+  origin/main && git checkout <branch> -- <paths>`, commit, open the PR (it
+  rides the roadmap-only lane). Stranded top-level item files or index edits
+  are listed for the human, not relayed blindly — they need `/roadmap`
+  judgement and may be gate-denied. The `post-merge-cleanup` hook runs the same
+  scan after every merge and reports stranded branches to the session, and the
+  board shows them, so a stranded file cannot go quietly — but the scan is a
+  detector; the rescue is yours to do. Then delete the dead branch so it stops
+  firing.
 - **Record how the run ended, before deleting anything.** Append `ended:`,
   `reason:` and (for `awaiting-human`) `needs:` to `.claude/sweap-run.md` — see
   `/milestone`, "Record the end of the run". A run that stops without recording
@@ -1302,6 +1411,10 @@ an in-flight branch at width 1 too, and a Free-plan repo never reports BEHIND.
   addressed.
 - When blocked: write the question down, notify, move on. A stalled item must
   never stall the loop; a guess must never resolve ambiguity.
+- **Work you discover is filed, not built, and filed as a discovered note —
+  never as an item file on your branch, never as an index edit.** (The
+  three-lane rule under the per-feature loop. Notes are gate-exempt and
+  collision-free; item files on a feature branch are neither.)
 - **Never create an `[attended]` item, and never transition one into it.** Work
   an agent cannot finish is `[blocked]` with the question — never re-labelled as
   the human's own work. Hand-offs are authored with the human present, in

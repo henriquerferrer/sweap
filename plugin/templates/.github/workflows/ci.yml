@@ -26,6 +26,51 @@ env:
   CI: "true"
 
 jobs:
+  # Which lane is this change in? `roadmap-only` (backlog files, docs, markdown —
+  # nothing e2e tests) lets the e2e job skip; anything else, and any uncertainty,
+  # is `code` and runs everything. Classified by the VENDORED
+  # .github/scripts/ci-lane.sh — the same script pre-merge-gate.sh runs on the
+  # PR's own file list before it accepts a skipped e2e as green, so the lane CI
+  # took and the lane the merge gate accepts cannot drift apart. Allowlist and
+  # fail-closed by construction (see the script's header).
+  #
+  # WHY: a captured backlog item that costs two e2e runs (PR + post-merge push)
+  # is what drives agents to bundle backlog files onto unrelated feature
+  # branches. The playbook's rule against that holds only while the sanctioned
+  # path is the cheap one. (Research memo, 2026-08-22.)
+  #
+  # NEVER gate lint, typecheck, test or audit-gate on this output — a job
+  # skipped by an `if:` reports SUCCESS, and the merge gate denies a PR where
+  # any of those is SKIPPED. Only e2e is allowed to skip, and only on this lane.
+  changes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      lane: ${{ steps.lane.outputs.lane }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0 # the lane is a diff against the base; a shallow clone can't compute it
+      - id: lane
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          LANE=.github/scripts/ci-lane.sh
+          if [ ! -f "$LANE" ]; then
+            echo "::warning::$LANE is missing (sweap's scaffold vendors it) — running the full lane"
+            echo "lane=code" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if [ -n "${BASE_REF:-}" ]; then
+            git fetch -q --no-tags origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+            lane="$(bash "$LANE" --base "origin/${BASE_REF}")"
+          else
+            # push to main: the landed commit's own change (a squash merge is one commit)
+            lane="$(bash "$LANE" --base HEAD^)"
+          fi
+          echo "lane: $lane"
+          echo "lane=$lane" >> "$GITHUB_OUTPUT"
+
   lint:
     runs-on: ${{ vars.RUNNER_LABEL || 'ubuntu-24.04' }}
     timeout-minutes: 10
@@ -81,6 +126,11 @@ jobs:
         run: bash .github/scripts/ci-status.sh test ${{ job.status }} >> "$GITHUB_STEP_SUMMARY"
 
   e2e:
+    needs: [changes]
+    # Skips ONLY on the roadmap-only lane (see `changes`). `!cancelled()` rather
+    # than the implicit success() so a failed `changes` job (empty output) still
+    # runs e2e — uncertainty runs the suite, never skips it.
+    if: ${{ !cancelled() && needs.changes.outputs.lane != 'roadmap-only' }}
     runs-on: ${{ vars.RUNNER_LABEL || 'ubuntu-24.04' }}
     timeout-minutes: 30
     # <fill in for your stack>: add a `services:` block here if e2e needs
@@ -112,6 +162,7 @@ jobs:
 
   ci-status:
     needs: [lint, typecheck, test, e2e]
+    # `skipped` is not a failure here: e2e skips on the roadmap-only lane by design.
     if: always()
     runs-on: ${{ vars.RUNNER_LABEL || 'ubuntu-24.04' }}
     timeout-minutes: 5

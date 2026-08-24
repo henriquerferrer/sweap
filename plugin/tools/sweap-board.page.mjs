@@ -93,6 +93,12 @@ export function renderPage() {
     </form>
     <div class="col" id="ideas"></div>
   </section>
+  <section><h2>Discovered (captured mid-run — <code>gap</code> promotes at the next /milestone, <code>direction</code> waits for /roadmap)</h2>
+    <div class="col" id="discovered"></div>
+  </section>
+  <section><h2>Roadmap changes on branches, not on main</h2>
+    <div class="col" id="stranded"></div>
+  </section>
   <section><h2>Dependencies</h2><div id="graph"></div></section>
 </main>
 <script>
@@ -180,6 +186,8 @@ function draw(s) {
   const runningMs = s.milestone ? s.milestone.id : null;
   document.getElementById("backlog").innerHTML = (s.backlog||[]).map(g => '<div class="ms'+(g.milestone===runningMs?' running':'')+'"><h3>'+esc(g.milestone)+(g.milestone===runningMs?' <span class="chip '+(s.milestone.state==="running"?"running":"next")+'">'+(s.milestone.state==="running"?"running":"next up")+'</span>':'')+'</h3>'+g.items.map(i => '<div class="item'+(i.malformed?' malformed':'')+'"><span class="st-'+esc(i.status)+'">●</span> <b>'+esc(i.id)+'</b> '+esc(i.title)+' <span class="meta">'+esc(i.status)+(i.dependsOn&&i.dependsOn.length?' · deps: '+i.dependsOn.map(esc).join(", "):'')+'</span></div>').join("")+'</div>').join("") || '<div class="empty">no items</div>';
   renderList(document.getElementById("ideas"), s.ideas, i => '<div class="item"><b>'+esc(i.title)+'</b> <span class="meta">'+esc(i.file)+(i.created?' · '+esc(i.created.slice(0,10)):'')+'</span></div>', "inbox empty");
+  renderList(document.getElementById("discovered"), s.discovered, d => '<div class="item"><b>'+esc(d.title)+'</b> <span class="badge kind-'+esc(d.kind)+'">'+esc(d.kind)+'</span><div class="meta">'+esc(d.file)+(d.from?' · from '+esc(d.from):'')+(d.milestoneHint?' · → '+esc(d.milestoneHint):'')+(d.created?' · '+esc(d.created.slice(0,10)):'')+'</div></div>', "nothing discovered");
+  renderList(document.getElementById("stranded"), s.stranded, b => '<div class="item'+(b.stranded?' malformed':'')+'"><b>'+esc(b.branch)+'</b> <span class="badge">'+(b.pr==="open"?"riding an open PR":b.pr==="closed"?"PR closed, not merged":b.pr==="none"?"no PR":"unknown")+'</span>'+(b.ageDays!=null?' <span class="meta">'+b.ageDays+'d old</span>':'')+'<div class="meta">'+b.paths.map(esc).join(", ")+'</div></div>', "nothing on branches");
   document.getElementById("graph").innerHTML = graphSvg(s);
 }
 function graphSvg(s) {

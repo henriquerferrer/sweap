@@ -1,12 +1,17 @@
 // sweap-board.lib.mjs — pure, testable core for the board viewer.
-// No process/network side effects, with one exception: writeIdea() is a
-// create-only fs-write helper (new files under <backlogDir>ideas/ only).
-// buildState() itself takes injected git/gh/audit runners and touches no fs beyond reads.
+// No process/network side effects, with three exceptions, all scoped to the
+// two capture inboxes under <backlogDir>: writeIdea() and writeDiscovered() are
+// create-only fs-write helpers (new files under ideas/ and discovered/), and
+// archiveDiscovered() is the one move a discovered note ever receives (into
+// discovered/archive/, with its promotion provenance appended).
+// buildState() itself takes injected git/gh/audit/stranded runners and touches
+// no fs beyond reads.
 // Reads item files with the same flat-frontmatter contract roadmap-lint enforces.
-import { readFileSync, readdirSync, writeFileSync, mkdirSync } from "node:fs";
+import { readFileSync, readdirSync, writeFileSync, mkdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { existsSync } from "node:fs";
 import { basename } from "node:path";
+import { createHash } from "node:crypto";
 
 export function parseFrontmatter(text) {
   const norm = String(text).replace(/\r\n?/g, "\n");
@@ -269,6 +274,116 @@ export function loadIdeas(projectDir, backlogDir) {
       return { file: f, title: (fm && fm.title) || f.replace(/\.md$/, ""), created: (fm && fm.created) || null };
     })
     .sort((a, b) => String(b.created || "").localeCompare(String(a.created || "")) || a.file.localeCompare(b.file));
+}
+
+// --- the discovered inbox (work an agent notices while on something else) ----
+// A discovered note is deliberately NOT an item: no id (ids are minted at
+// promotion, against main, so two parallel sessions can never collide), no
+// status, no spec. It is the transactional-outbox row of the pipeline: written
+// at discovery time to a place whose fate is independent of the feature branch
+// that might die, gate-exempt by path (audit-gate.sh's "other subdirs" arm),
+// and relayed later by a promotion step that is idempotent on the filename.
+// `kind:` is the ONE judgment the capturing session makes, on the line the
+// playbook's audit triage already draws: `gap` = the spec promised it (a bug, a
+// race, infra) — agent work, promoted mechanically by the next /milestone;
+// `direction` = not in the spec — a human's call, surfaced by /roadmap.
+// The hash suffix is what lets the same title be captured twice from two
+// branches without the create-only write failing on the second.
+export const DISCOVERED_KINDS = ["gap", "direction"];
+
+export function writeDiscovered(projectDir, backlogDir, { title, kind, why = "", from = "", by = "", milestone = "", now }) {
+  const one = (s) => String(s || "").replace(/\s+/g, " ").trim();
+  const t = one(title);
+  let slug = slugify(t);
+  if (!t || !slug) throw new Error("title required");
+  if (!DISCOVERED_KINDS.includes(kind)) throw new Error("kind must be gap or direction");
+  const w = String(why || "").trim();
+  if (!w) throw new Error("why required (a fresh session must be able to act on this note after the branch it was written on is gone)");
+  slug = slug.slice(0, 100).replace(/-+$/, "");
+  const hex = createHash("sha256").update(`${t}\n${now}\n${one(from)}\n${one(by)}`).digest("hex").slice(0, 6);
+  const dir = join(projectDir, backlogDir, "discovered");
+  mkdirSync(dir, { recursive: true });
+  const file = `${slug}-${hex}.md`;
+  const content = `---\ntitle: ${t}\nkind: ${kind}\ndiscovered_from: ${one(from)}\ndiscovered_by: ${one(by)}\nmilestone_hint: ${one(milestone)}\ncreated: ${new Date(now).toISOString()}\n---\n\n${w}\n`;
+  writeFileSync(join(dir, file), content, { flag: "wx" });
+  return { file: join(backlogDir, "discovered", file) };
+}
+
+export function loadDiscovered(projectDir, backlogDir) {
+  const dir = join(projectDir, backlogDir, "discovered");
+  let files;
+  try { files = readdirSync(dir).filter((f) => f.endsWith(".md")); } catch { return []; }
+  return files
+    .map((f) => {
+      let fm = null, body = "";
+      try { ({ fm, body } = parseFrontmatter(readFileSync(join(dir, f), "utf8"))); } catch { /* unreadable: fall through */ }
+      const g = (k) => (fm && fm[k]) || null;
+      const kind = DISCOVERED_KINDS.includes(g("kind")) ? g("kind") : "unknown";
+      return { file: f, title: g("title") || f.replace(/\.md$/, ""), kind, from: g("discovered_from"), by: g("discovered_by"), milestoneHint: g("milestone_hint"), created: g("created"), why: String(body || "").trim() };
+    })
+    .sort((a, b) => String(b.created || "").localeCompare(String(a.created || "")) || a.file.localeCompare(b.file));
+}
+
+// Where a note promotes to: its explicit hint, else the milestone of the item
+// it was discovered from. A note discovered from a PR number or nothing at all
+// has no target and is listed for a human instead of guessed.
+export function promotionTarget(note) {
+  const hint = String(note.milestoneHint || "").trim();
+  if (hint) return hint;
+  const from = String(note.from || "").trim();
+  return /^[A-Za-z][A-Za-z0-9]*(\.[A-Za-z0-9]+)+$/.test(from) ? milestoneOf(from) : null;
+}
+
+// Mint the next id under a milestone from what is ON DISK — top-level items AND
+// archive/ (a dropped item keeps its id; reusing it would resurrect its history).
+// Numeric last segment, so F1.9 -> F1.10, never F1.91. Run against main at
+// promotion time, never at capture time: that is the whole reason a note has
+// no id.
+export function nextItemId(projectDir, backlogDir, milestone) {
+  const m = String(milestone || "").trim();
+  if (!/^[A-Za-z][A-Za-z0-9.]*$/.test(m)) throw new Error("milestone required");
+  let max = 0;
+  for (const sub of ["", "archive"]) {
+    let files;
+    try { files = readdirSync(join(projectDir, backlogDir, sub)).filter((f) => f.endsWith(".md")); } catch { continue; }
+    for (const f of files) {
+      const id = f.replace(/\.md$/, "");
+      if (milestoneOf(id) !== m) continue;
+      const n = Number(id.slice(m.length + 1));
+      if (Number.isInteger(n) && n > max) max = n;
+    }
+  }
+  return `${m}.${max + 1}`;
+}
+
+// Promotion provenance: the note moves to discovered/archive/ with the id it
+// became (or why it was declined) appended to its frontmatter. Create-only at
+// the destination, so a re-run after a rebase cannot clobber the record.
+export function archiveDiscovered(projectDir, backlogDir, file, { promotedTo = "", declined = "" } = {}) {
+  const name = basename(file);
+  const src = join(projectDir, backlogDir, "discovered", name);
+  const key = promotedTo ? `promoted_to: ${String(promotedTo).trim()}` : declined ? `declined: ${String(declined).replace(/\s+/g, " ").trim()}` : null;
+  if (!key) throw new Error("promotedTo or declined required");
+  const text = readFileSync(src, "utf8");
+  const out = text.replace(/^---\n([\s\S]*?)\n---/, (_, fm) => `---\n${fm}\n${key}\n---`);
+  const dir = join(projectDir, backlogDir, "discovered", "archive");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, name), out, { flag: "wx" });
+  unlinkSync(src);
+  return { file: join(backlogDir, "discovered", "archive", name) };
+}
+
+// Output of hooks/stranded-roadmap.sh: one `branch<TAB>pr-state<TAB>age-days<TAB>path,path` line
+// per not-merged branch whose <backlogDir> differs from main. `open` is a
+// rider (the #181 shape — on a live PR, fine until it isn't); `closed` and
+// `none` are stranded: nothing is scheduled to ever land those files.
+export function parseStranded(stdout) {
+  return String(stdout || "").split("\n").map((l) => l.trim()).filter(Boolean).map((l) => {
+    const [branch, pr, age, paths] = l.split("\t");
+    const ageDays = Number.isFinite(Number(age)) ? Number(age) : null;
+    const state = ["open", "closed", "none"].includes(pr) ? pr : "unknown";
+    return { branch, pr: state, ageDays, paths: String(paths || "").split(",").filter(Boolean), stranded: state === "closed" || state === "none" };
+  }).filter((s) => s.branch);
 }
 
 export function loadItems(projectDir, backlogDir) {
@@ -676,11 +791,12 @@ async function readGh(gh, notes) {
   } catch { notes.push("PR/CI unavailable (gh not runnable)"); return null; }
 }
 
-export async function buildState(projectDir, { git, gh, audit = null, now }) {
+export async function buildState(projectDir, { git, gh, audit = null, stranded: strandedRun = null, now }) {
   const notes = [];
   const { backlogFile, backlogDir } = readConfig(projectDir);
   const items = loadItems(projectDir, backlogDir);
   const ideas = loadIdeas(projectDir, backlogDir);
+  const discovered = loadDiscovered(projectDir, backlogDir);
   const index = readMilestoneIndex(projectDir, backlogFile);
   const runFile = readRunFile(projectDir);
   if (items.some((i) => i.malformed)) notes.push("one or more item files are malformed (shown flagged)");
@@ -743,5 +859,16 @@ export async function buildState(projectDir, { git, gh, audit = null, now }) {
   }
   const milestone = buildMilestoneCard({ items, index, runFile, inFlight, frontier, attended, blocked, audit: auditRes });
 
-  return { generatedAt: now, project: basename(projectDir), run: { active, prsAvailable }, milestone, frontier: frontier.filter((i) => !inFlightIds.has(i.id)).map((i) => ({ id: i.id, title: i.title, lane: i.lane, reviewDimensions: i.reviewDimensions })), inFlight, mergeQueue, attended, blocked, ideas, backlog: backlog.map((g) => ({ milestone: g.milestone, items: g.items.map((i) => ({ id: i.id, title: i.title, status: i.status, dependsOn: i.dependsOn, malformed: i.malformed })) })), edges, notes };
+  // Roadmap changes sitting on branches that are not on main. The scan is a
+  // git question (which branches are not merged, what under <backlogDir> do
+  // they change), answered by hooks/stranded-roadmap.sh — the same script the
+  // post-merge hook and the stop path run — so the board never re-derives it.
+  let stranded = [];
+  if (strandedRun) {
+    try { const r = await strandedRun(); if (r.code === 0) stranded = parseStranded(r.stdout); else notes.push("stranded-roadmap scan unavailable"); }
+    catch { notes.push("stranded-roadmap scan unavailable"); }
+    for (const s of stranded) if (s.stranded) notes.push(`stranded backlog: ${s.branch} carries ${s.paths.length} roadmap file(s) that are not on main and have no open PR`);
+  }
+
+  return { generatedAt: now, project: basename(projectDir), run: { active, prsAvailable }, milestone, frontier: frontier.filter((i) => !inFlightIds.has(i.id)).map((i) => ({ id: i.id, title: i.title, lane: i.lane, reviewDimensions: i.reviewDimensions })), inFlight, mergeQueue, attended, blocked, ideas, discovered, stranded, backlog: backlog.map((g) => ({ milestone: g.milestone, items: g.items.map((i) => ({ id: i.id, title: i.title, status: i.status, dependsOn: i.dependsOn, malformed: i.malformed })) })), edges, notes };
 }
