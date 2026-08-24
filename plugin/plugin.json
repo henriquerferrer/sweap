@@ -1,6 +1,6 @@
 {
   "name": "sweap",
-  "version": "0.11.0",
+  "version": "0.11.1",
   "description": "SWE Agentic Pipeline — per-feature loop, merge-greenness gate, roadmap/milestone/audit, cron driver.",
   "author": { "name": "Henrique" },
   "hooks": {

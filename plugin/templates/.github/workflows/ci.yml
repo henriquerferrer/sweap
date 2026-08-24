@@ -43,7 +43,7 @@ jobs:
   # skipped by an `if:` reports SUCCESS, and the merge gate denies a PR where
   # any of those is SKIPPED. Only e2e is allowed to skip, and only on this lane.
   changes:
-    runs-on: ubuntu-24.04
+    runs-on: ${{ vars.RUNNER_LABEL || 'ubuntu-24.04' }}
     timeout-minutes: 5
     outputs:
       lane: ${{ steps.lane.outputs.lane }}
