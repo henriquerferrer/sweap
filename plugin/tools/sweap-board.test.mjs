@@ -27,6 +27,12 @@ test("parseFrontmatter returns null fm when absent", () => {
   assert.equal(parseFrontmatter("# no frontmatter\n").fm, null);
 });
 
+test("parseFrontmatter is first-wins on duplicate keys (matches roadmap-lint/audit-gate head -1)", () => {
+  const { fm } = parseFrontmatter("---\nid: F1\nstatus: todo\nstatus: done\n---\n");
+  assert.equal(fm.status, "todo");
+  assert.equal(fm.id, "F1");
+});
+
 test("parseList parses inline [a, b]", () => {
   assert.deepEqual(parseList("[F1.1, F3]"), ["F1.1", "F3"]);
   assert.deepEqual(parseList("[]"), []);
@@ -1117,4 +1123,139 @@ test("the page renders the discovered and stranded sections", () => {
   const html = renderPage();
   assert.match(html, /id="discovered"/); assert.match(html, /id="stranded"/);
   assert.match(html, /nothing discovered/); assert.match(html, /nothing on branches/);
+});
+
+// --- the page's inline script, actually executed ----------------------------------
+// The grep tests above prove the script is THERE; nothing above runs it. PR #23
+// shipped a call to an undefined planBlock() that way: every ended run rendered
+// as "disconnected" for four days. These boot the real script under node:vm.
+import vm from "node:vm";
+
+// Boot the page's inline script against a minimal DOM stub. The page only uses
+// getElementById + innerHTML/textContent/className/addEventListener/reset/value,
+// so a Map of plain objects is the whole DOM it needs. Built-ins (Promise, Map,
+// Date, JSON…) are already present in a vm context; only host globals are injected.
+function bootPage(initial, { fail = false } = {}) {
+  const src = renderPage().match(/<script>([\s\S]*?)<\/script>/)[1];
+  const els = new Map();
+  const el = (id) => {
+    if (!els.has(id)) els.set(id, { id, innerHTML: "", textContent: "", className: "", value: "", listeners: {}, addEventListener(t, f) { this.listeners[t] = f; }, reset() {} });
+    return els.get(id);
+  };
+  const feed = { state: initial, fail, status: 200 };            // mutable: tests flip lanes between ticks
+  const errors = [];
+  const ctx = {
+    document: { getElementById: el },
+    fetch: async () => { if (feed.fail) throw new TypeError("Failed to fetch"); return { ok: feed.status < 400, status: feed.status, json: async () => feed.state }; },
+    setInterval: () => 0, setTimeout: () => 0, console: { error: (...a) => errors.push(a), log() {} }, navigator: {},
+  };
+  vm.createContext(ctx);
+  vm.runInContext(src, ctx, { filename: "sweap-board.page.inline.js" });
+  const settle = () => new Promise((r) => setImmediate(r));
+  return { el, errors, feed, ctx, settle, tick: async () => { await ctx.tick(); await settle(); } };
+}
+
+// Built through the real buildState() so the plan shape cannot drift from
+// resumePlan()/verifyEnd() the way the page drifted from the lib.
+const endedRun = () => fixture({
+  "CLAUDE.md": "## sweap config\nbacklog.dir: roadmap/\nbacklog.file: ROADMAP.md\n",
+  "ROADMAP.md": "## Milestones (priority order)\n- DS.5 — design system\n",
+  "roadmap/DS.5.1.md": "---\nid: DS.5.1\ntitle: tokens\nstatus: done\ndepends_on: []\n---\n",
+  "roadmap/DS.5.3.md": "---\nid: DS.5.3\ntitle: pick the <img onerror=x> palette\nstatus: attended\nhandoff: choose \"quoted\" colours\ndepends_on: []\n---\n",
+  "roadmap/DS.5.9.md": "---\nid: DS.5.9\ntitle: vendor key\nstatus: blocked\nblocked: which vendor?\ndepends_on: [DS.5.3]\n---\n",
+  "roadmap/DS.5.4.md": "---\nid: DS.5.4\ntitle: buttons\nstatus: todo\ndepends_on: [DS.5.3]\n---\n",
+  ".claude/sweap-run.md": "---\nmilestone: DS.5\nturns: 100\nended: 2026-08-21T10:00:00Z\nreason: awaiting-human\nneeds: [DS.5.3, DS.5.9, DS.5.1, nope]\nwhy_not_agent: [DS.5.3=taste]\n---\n",
+});
+const quiet = { git: async () => ({ stdout: "", code: 0 }), gh: async () => ({ stdout: "[]", code: 0 }) };
+
+test("the page renders an ENDED run instead of reporting it as disconnected", async () => {
+  const dir = endedRun();
+  const s = await buildState(dir, { ...quiet, now: Date.now() });
+  // The fixture is known-good before the page sees it.
+  const plan = s.milestone.end.plan;
+  assert.deepEqual(plan.steps.map((x) => [x.id, x.applicability]), [["DS.5.3", "machine-applicable"], ["DS.5.9", "has-placeholders"]]);
+  assert.equal(plan.steps[0].whyNotAgent, "taste");
+  assert.deepEqual(plan.dropped.map((d) => d.id), ["DS.5.1", "nope"]);
+  assert.match(plan.dropped[0].why, /already done/);
+  assert.match(plan.dropped[1].why, /no such item/);
+
+  const p = bootPage(s);
+  await p.settle();
+  const u = p.el("updated");
+  assert.match(u.textContent, /^updated \d+s ago/);
+  assert.equal(u.className, "");
+  const html = p.el("milestone").innerHTML;
+  for (const needle of ["run ended", "awaiting-human", 'class="plan"', "To resume", "/handoff DS.5.3",
+                        'data-cmd="/handoff DS.5.3"', "why not an agent: taste", "done when:", "/unblock DS.5.9",
+                        "not yet", '<details class="dropped"', "already done", "no such item"]) {
+    assert.ok(html.includes(needle), `card lacks ${needle}`);
+  }
+  assert.match(html, /<button type="button" class="copy" data-cmd="\/handoff DS\.5\.3">/);
+  assert.match(html, /<code class="cmd pending">\/unblock DS\.5\.9<\/code>/);
+  assert.ok(!/data-cmd="\/unblock DS\.5\.9"/.test(html), "a has-placeholders step must not get a copy button");
+  assert.ok(html.indexOf("/handoff DS.5.3") < html.indexOf("/unblock DS.5.9"), "steps keep the lib's rank order");
+  assert.equal(p.errors.length, 0);
+  rmSync(dir, { recursive: true });
+});
+
+test("planBlock escapes every field it prints", async () => {
+  const dir = endedRun();
+  const s = await buildState(dir, { ...quiet, now: Date.now() });
+  const p = bootPage(s);
+  await p.settle();
+  const html = p.el("milestone").innerHTML;
+  assert.ok(html.includes("&lt;img onerror=x&gt;"), "title is escaped");
+  assert.ok(html.includes("&quot;quoted&quot;"), "ask is escaped");
+  assert.ok(!html.includes("<img"), "no raw tag reaches the DOM");
+  rmSync(dir, { recursive: true });
+});
+
+test("planBlock renders nothing for a null or empty plan", async () => {
+  const dir = endedRun();
+  const s = await buildState(dir, { ...quiet, now: Date.now() });
+  const withPlan = async (plan) => {
+    const p = bootPage({ ...s, milestone: { ...s.milestone, end: { ...s.milestone.end, plan } } });
+    await p.settle();
+    assert.equal(p.errors.length, 0);
+    assert.match(p.el("updated").textContent, /^updated /);
+    return p.el("milestone").innerHTML;
+  };
+  let html = await withPlan(null);
+  assert.ok(html.includes("run ended") && !html.includes('class="plan"'));
+  html = await withPlan({ steps: [], dropped: [], suspect: [] });
+  assert.ok(html.includes("run ended") && !html.includes('class="plan"'));
+  html = await withPlan({ steps: [], dropped: [{ id: "X", why: "gone" }], suspect: [] });
+  assert.ok(html.includes("<details") && html.includes("gone") && !html.includes("To resume"));
+  html = await withPlan({ ...s.milestone.end.plan, suspect: ["DS.5.3"] });
+  assert.ok(html.includes("why_not_agent"), "suspect steps get the warning");
+  rmSync(dir, { recursive: true });
+});
+
+test("tick keeps its three error lanes apart and keeps polling", async () => {
+  const dir = endedRun();
+  const s = await buildState(dir, { ...quiet, now: Date.now() });
+  const p = bootPage(s, { fail: true });
+  await p.settle();
+  assert.equal(p.el("updated").textContent, "disconnected");
+  assert.equal(p.el("updated").className, "err");
+
+  p.feed.fail = false; p.feed.status = 500;
+  await p.tick();
+  assert.equal(p.el("updated").textContent, "server error HTTP 500");
+  assert.equal(p.el("updated").className, "err");
+
+  // A state the card cannot draw is a BOARD bug, and must say so — not blame the wire.
+  p.feed.status = 200; p.feed.state = { ...s, milestone: { ...s.milestone, counts: undefined } };
+  await p.tick();
+  assert.match(p.el("updated").textContent, /^render error: /);
+  assert.ok(p.el("updated").textContent.includes("board bug"));
+  assert.equal(p.el("updated").className, "err");
+  assert.equal(p.errors.length, 1);
+
+  // The next good tick clears it: polling never stopped.
+  p.feed.state = s;
+  await p.tick();
+  assert.match(p.el("updated").textContent, /^updated /);
+  assert.equal(p.el("updated").className, "");
+  rmSync(dir, { recursive: true });
 });

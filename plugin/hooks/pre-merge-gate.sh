@@ -59,17 +59,43 @@
 #   - Current repo only: gh runs in the caller's cwd (no --repo), and --repo/-R
 #     /--admin on the merge command are rejected outright.
 #
+# PUSH GATE (same hook, second branch). The hook ALSO denies any `git push`
+# whose resolved destination is the base branch (`main`/`master`, `origin/HEAD`,
+# or SWEAP_BASE_BRANCH from the hook's env): `origin main`, `HEAD:main`,
+# `refs/heads/main`, `--delete main`, `--all`/`--mirror`, and a bare `git push`
+# while on the base or when push.default would land there. Threat model: honest
+# slips on private Free-plan repos, where rulesets/branch protection are
+# unavailable (403) so nothing server-side prevents a direct push. It is
+# PURELY LOCAL (git symbolic-ref/rev-parse in cwd — never gh, never the network,
+# each call under bounded_run) because a stalled hook does NOT block: the harness
+# treats a timed-out hook as non-blocking, i.e. fail-open. Same fail-closed shape
+# as the merge branch: greedy trip-wire + precise parse (lib-merge-parse.sh,
+# parse_push_command) must agree, or the push is denied recoverably. Accepted
+# over-blocks (re-issue the push plainly): a push wrapped in if/$()/bash -c, an
+# `echo "git push …"` mention, a `-C` path with spaces, a push after `cd`.
+# Item-branch pushes — the hot path (`git push -u origin <item>`,
+# `--force-with-lease` after a rebase, `--delete <item>`, tags, `main:<item>`)
+# — pass untouched. Override: SWEAP_PUSH_GATE=off is honoured ONLY from the
+# hook's own environment (user-level settings `env` / the launching shell) and
+# is IGNORED when the project's .claude settings define it (agent-writable); an
+# inline `VAR=… git push` prefix never reaches the hook's env.
+#
+# SELF-MODIFYING CI. A PR that touches .github/workflows/** or .github/scripts/**
+# is denied regardless of greenness (see verify_pr) — a human merges those.
+#
 # Exit: always 0. Decision is the stdout JSON (deny) or empty stdout (no-op/defer).
 
 set -uo pipefail
 
-# Shared shell-aware `gh pr merge` detector/parser (see lib-merge-parse.sh).
+# Shared shell-aware `gh pr merge` + `git push` detectors/parsers (see
+# lib-merge-parse.sh: parse_merge_command, parse_push_command).
 # shellcheck source=/dev/null
 . "$(dirname "${BASH_SOURCE[0]}")/lib-merge-parse.sh"
 
 # --- guaranteed decision channel ------------------------------------------------
 DECISION_EMITTED=0   # set when we print a deny
 IS_MERGE=0           # set once we know the command is a `gh pr merge`
+IS_PUSH=0            # set once we know the command is push-related
 CLEAN_ALLOW=0        # set right before a deliberate all-green (silent) allow
 
 emit_deny() {
@@ -92,8 +118,12 @@ emit_deny() {
 # than treating a non-zero exit as a fail-open non-blocking error.
 # shellcheck disable=SC2329  # invoked indirectly via `trap ... EXIT`
 handle_exit() {
-  if [ "$DECISION_EMITTED" != "1" ] && [ "$IS_MERGE" = "1" ] && [ "$CLEAN_ALLOW" != "1" ]; then
-    emit_deny "merge-gate hook could not complete its greenness check (internal error). Denying to stay fail-closed — re-run the merge once resolved."
+  if [ "$DECISION_EMITTED" != "1" ] && [ "$CLEAN_ALLOW" != "1" ]; then
+    if [ "$IS_MERGE" = "1" ]; then
+      emit_deny "merge-gate hook could not complete its greenness check (internal error). Denying to stay fail-closed — re-run the merge once resolved."
+    elif [ "$IS_PUSH" = "1" ]; then
+      emit_deny "push-gate hook could not complete (internal error). Denying to stay fail-closed — re-issue the push."
+    fi
   fi
   exit 0
 }
@@ -112,6 +142,10 @@ if ! command -v jq >/dev/null 2>&1; then
     IS_MERGE=1
     DECISION_EMITTED=1
     printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"merge-gate: jq is unavailable so checks cannot be verified. Denying (recoverable) — install jq and re-run the merge."}}'
+  elif printf '%s' "$input" | grep -Eq 'git[[:space:]]+push'; then
+    IS_PUSH=1
+    DECISION_EMITTED=1
+    printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"push-gate: jq is unavailable so the push destination cannot be resolved. Denying (recoverable) — install jq and re-issue the push."}}'
   fi
   exit 0
 fi
@@ -128,10 +162,13 @@ cwd="$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null)"
 # missing tool like `dirname` broke the `.` source line), do NOT proceed to an
 # undefined `parse_merge_command` — that would abort under `set -u` before we mark
 # IS_MERGE and fail OPEN. Fail CLOSED on anything merge-ish instead.
-if ! declare -F parse_merge_command >/dev/null 2>&1; then
+if ! declare -F parse_merge_command >/dev/null 2>&1 || ! declare -F parse_push_command >/dev/null 2>&1; then
   if printf '%s' "$cmd" | grep -Eq 'gh.*pr.*merge'; then
     IS_MERGE=1
     emit_deny "merge-gate: the gate's parser could not load, so this merge cannot be verified. Denying (recoverable) — retry once the environment is healthy."
+  elif printf '%s' "$cmd" | grep -Eq 'git.*push'; then
+    IS_PUSH=1
+    emit_deny "push-gate: the gate's parser could not load, so this push's destination cannot be resolved. Denying (recoverable) — retry once the environment is healthy."
   fi
   exit 0
 fi
@@ -139,16 +176,221 @@ fi
 # --- greedy-detect + fail-closed ------------------------------------------------
 # parse_merge_command sets MC_MERGE_RELATED (a structure-agnostic greedy trip-wire:
 # do the words gh->pr->merge appear in order anywhere?) plus a PRECISE parse of the
-# pristine simple form. Not merge-related → silent no-op. Merge-related but NOT a
-# pristine simple merge (wrapped in if/while/for/subshell/$()/backticks, extra or
-# missing args, a bad flag, untokenisable, or the precise parse didn't account for
-# every greedy occurrence) → fail CLOSED. Only a pristine, all-green merge ALLOWs.
+# pristine simple form. parse_push_command does the same for `git push`. A command
+# can be neither (silent no-op), either, or both (push branch runs first; a push
+# deny wins, otherwise merge verification proceeds unchanged). Merge-related but
+# NOT a pristine simple merge (wrapped in if/while/for/subshell/$()/backticks,
+# extra or missing args, a bad flag, untokenisable, or the precise parse didn't
+# account for every greedy occurrence) → fail CLOSED. Only a pristine, all-green
+# merge ALLOWs.
 parse_merge_command "$cmd"
-if [ "$MC_MERGE_RELATED" != "1" ]; then
-  exit 0   # not merge-related — silent no-op
+parse_push_command "$cmd"
+if [ "$MC_MERGE_RELATED" != "1" ] && [ "${PC_PUSH_RELATED:-0}" != "1" ]; then
+  exit 0   # neither merge- nor push-related — silent no-op
 fi
-IS_MERGE=1
+[ "$MC_MERGE_RELATED" = "1" ] && IS_MERGE=1
+[ "${PC_PUSH_RELATED:-0}" = "1" ] && IS_PUSH=1
 
+# --- run in the caller's cwd so gh/git resolve the CURRENT repo -----------------
+if [ -n "$cwd" ]; then
+  cd "$cwd" 2>/dev/null || {
+    emit_deny "merge/push-gate: could not enter the working directory to verify the command. Denying (recoverable) — re-run it."
+    exit 0
+  }
+fi
+
+# bounded_run <timeout> <cmd...>: run <cmd> under its own watchdog so it always
+# finishes within <timeout> seconds (never relying on the harness hook timeout),
+# capturing its stdout to BR_OUT and its exit status to BR_RC. Returns non-zero
+# ONLY on an infra failure (could not allocate the temp file); on a normal or
+# timed-out run it returns 0 and the caller inspects BR_RC/BR_OUT. Factored so the
+# rollup-view call and the compare call share ONE watchdog implementation instead
+# of duplicating the block (both must stay bounded — see verify_pr's budget).
+BR_OUT=""
+BR_RC=0
+bounded_run() {
+  local timeout="$1"; shift
+  local tmp brpid watcher
+  [ "$timeout" -ge 1 ] 2>/dev/null || timeout=1
+  tmp="$(mktemp 2>/dev/null)" || tmp=""
+  if [ -z "$tmp" ]; then
+    BR_OUT=""; BR_RC=1
+    return 1
+  fi
+  "$@" >"$tmp" 2>/dev/null </dev/null &
+  brpid=$!
+  # The watcher (and the `sleep` it may orphan when killed) must NOT inherit our
+  # stdout: the harness reads the hook's stdout to EOF, and an orphaned sleep
+  # holding the pipe would make every bounded call cost its FULL timeout even
+  # when the command finished instantly (measured: 3 s per git call, 5-10 s per
+  # gh call — the reason the test suite used to take minutes).
+  ( sleep "$timeout"; kill -TERM "$brpid" 2>/dev/null ) >/dev/null 2>&1 </dev/null &
+  watcher=$!
+  wait "$brpid" 2>/dev/null
+  BR_RC=$?
+  kill -TERM "$watcher" 2>/dev/null
+  wait "$watcher" 2>/dev/null
+  BR_OUT="$(cat "$tmp" 2>/dev/null)"
+  rm -f "$tmp"
+  return 0
+}
+
+# --- push gate ------------------------------------------------------------------
+# base_set: the union of every name the base branch could go by. Over-approximate
+# on purpose (only ever ADDED to; every lookup failure is ignored) — a false
+# "main" costs one plain re-issue, a missed one is a direct push to the base.
+PG_BASES=""
+_pg_add_base() { [ -n "$1" ] && PG_BASES="${PG_BASES}${PG_BASES:+ }$1"; }
+_pg_in_bases() {
+  local b
+  for b in $PG_BASES; do [ "$1" = "$b" ] && return 0; done
+  return 1
+}
+# _pg_origin_head <dir>: append the branch origin/HEAD points at in <dir>.
+_pg_origin_head() {
+  bounded_run 3 git -C "$1" symbolic-ref -q --short refs/remotes/origin/HEAD
+  if [ "$BR_RC" = "0" ] && [ -n "$BR_OUT" ]; then _pg_add_base "${BR_OUT#origin/}"; fi
+}
+# _pg_strip_remote <ref>: `refs/remotes/<remote>/<branch>` or `<remote>/<branch>`
+# → `<branch>`, using the repo's actual remote names (so a branch containing `/`
+# is not mangled). Sets PG_DST.
+_pg_strip_remote() {
+  local ref="${1#refs/remotes/}" r
+  PG_DST="$ref"
+  bounded_run 3 git remote
+  [ "$BR_RC" = "0" ] || return 0
+  for r in $BR_OUT; do
+    case "$ref" in "$r"/*) PG_DST="${ref#"$r"/}"; return 0 ;; esac
+  done
+  # No remote matched: fall back to dropping the first path component.
+  case "$ref" in */*) PG_DST="${ref#*/}" ;; esac
+}
+# _pg_current_dest <mode>: resolve where a refspec-less push (mode=push, respects
+# push.default) or an explicit HEAD refspec (mode=head) would land. Sets PG_DST;
+# returns 1 (PG_ERR = why) when it cannot be trusted → deny recoverable.
+_pg_current_dest() {
+  PG_DST=""; PG_ERR=""
+  if [ "${PC_HAS_CD:-0}" = "1" ]; then
+    PG_ERR="cwd cannot be trusted after cd/-C — name the branch: git push origin <branch>"
+    return 1
+  fi
+  if [ "$1" = "push" ]; then
+    bounded_run 3 git config --get push.default
+    if [ "$BR_OUT" = "matching" ]; then
+      PG_ERR="push.default=matching pushes EVERY matching branch, including the base — name the branch: git push origin <branch>"
+      return 1
+    fi
+    bounded_run 3 git rev-parse --symbolic-full-name '@{push}'
+    if [ "$BR_RC" = "0" ] && [ -n "$BR_OUT" ]; then
+      _pg_strip_remote "$BR_OUT"
+      return 0
+    fi
+  fi
+  bounded_run 3 git rev-parse --abbrev-ref HEAD
+  if [ "$BR_RC" != "0" ] || [ -z "$BR_OUT" ] || [ "$BR_OUT" = "HEAD" ]; then
+    PG_ERR="HEAD is detached or unreadable, so the destination cannot be resolved — name the branch explicitly: git push origin <branch>"
+    return 1
+  fi
+  PG_DST="$BR_OUT"
+  return 0
+}
+PG_DENY_TAIL="On a Free-plan private repo nothing server-side prevents this, so this hook is the control. Land the change through a PR: gh pr create → green checks → gh pr merge. If this is a deliberate maintainer chore, run it in your own terminal outside Claude Code (or set SWEAP_PUSH_GATE=off in USER settings env / the launching shell — never in the project's .claude settings, never inline)."
+_pg_deny_base() {  # $1=base name, $2=what resolved to it
+  emit_deny "push-gate: refusing 'git push' whose destination resolves to base branch '$1' ($2). $PG_DENY_TAIL${PG_OVERRIDE_NOTE:-}"
+  exit 0
+}
+_pg_deny_recoverable() {
+  emit_deny "push-gate: cannot resolve where this push would land — $1. Denying (recoverable)."
+  exit 0
+}
+
+if [ "$IS_PUSH" = "1" ]; then
+  # Override channel: only the hook's OWN environment (user settings `env` or the
+  # launching shell). A project-level settings file that defines the variable is
+  # agent-writable, so its presence there VOIDS the override (deny proceeds,
+  # with a note). An inline `SWEAP_PUSH_GATE=off git push` never reaches us.
+  PG_OVERRIDE_NOTE=""
+  if [ "${SWEAP_PUSH_GATE:-}" = "off" ]; then
+    pg_top=""
+    bounded_run 3 git rev-parse --show-toplevel
+    [ "$BR_RC" = "0" ] && pg_top="$BR_OUT"
+    [ -n "$pg_top" ] || pg_top="${CLAUDE_PROJECT_DIR:-}"
+    pg_project_defines=0
+    for pg_f in "$pg_top/.claude/settings.json" "$pg_top/.claude/settings.local.json"; do
+      [ -n "$pg_top" ] && [ -f "$pg_f" ] || continue
+      if jq -e '.env.SWEAP_PUSH_GATE != null' "$pg_f" >/dev/null 2>&1; then pg_project_defines=1; fi
+    done
+    if [ "$pg_project_defines" = "1" ]; then
+      PG_OVERRIDE_NOTE=" SWEAP_PUSH_GATE is set in the project's .claude settings, which the agent can write — the override is honoured only from user settings or the launching shell."
+    else
+      IS_PUSH=0   # the push branch stands down; the merge branch is unaffected
+      if [ "$IS_MERGE" != "1" ]; then CLEAN_ALLOW=1; exit 0; fi
+    fi
+  fi
+fi
+
+if [ "$IS_PUSH" = "1" ]; then
+  if [ "${PC_PARSE_ERR:-0}" = "1" ] \
+     || [ "${PC_PUSH_COUNT:-0}" != "${PC_RELATED_COUNT:-0}" ] \
+     || [ "${PC_PUSH_COUNT:-0}" = "0" ]; then
+    emit_deny "push-gate: this command is push-related but is not a plain 'git push <remote> <refspec>' the gate can resolve (wrapped in if/while/\$()/backticks, the words appear elsewhere, or it could not be tokenised). Failing CLOSED — re-issue each push plainly on its own line."
+    exit 0
+  fi
+
+  # Base set B.
+  _pg_add_base "${SWEAP_BASE_BRANCH:-}"
+  _pg_add_base main
+  _pg_add_base master
+  _pg_origin_head .
+  if [ -n "${PC_C_PATHS:-}" ]; then
+    while IFS= read -r pg_p; do [ -n "$pg_p" ] && _pg_origin_head "$pg_p"; done <<EOF_PATHS
+$PC_C_PATHS
+EOF_PATHS
+  fi
+
+  # shellcheck disable=SC2034  # pg_remote is positional filler (the record's remote column)
+  while IFS=$'\x1f' read -r pg_flags pg_remote pg_refspecs; do
+    case ",$pg_flags," in
+      *,all,*) _pg_deny_base "${PG_BASES%% *}" "--all/--mirror/--branches pushes every branch, including the base" ;;
+    esac
+    if [ -z "$pg_refspecs" ]; then
+      # Bare `git push` / `git push origin` / `git push --force-with-lease`.
+      _pg_current_dest push || _pg_deny_recoverable "$PG_ERR"
+      _pg_in_bases "$PG_DST" && _pg_deny_base "$PG_DST" "current branch's push destination"
+      continue
+    fi
+    for pg_rs in $pg_refspecs; do
+      pg_rs="${pg_rs#+}"
+      case ",$pg_flags," in
+        *,delete,*) pg_dst="$pg_rs" ;;
+        *) case "$pg_rs" in *:*) pg_dst="${pg_rs##*:}" ;; *) pg_dst="$pg_rs" ;; esac ;;
+      esac
+      case "$pg_dst" in
+        HEAD | @)
+          _pg_current_dest head || _pg_deny_recoverable "$PG_ERR"
+          pg_dst="$PG_DST" ;;
+      esac
+      pg_dst="${pg_dst#refs/heads/}"
+      case "$pg_dst" in
+        *"*"*) _pg_deny_recoverable "refspec '$pg_rs' contains a wildcard — push one branch at a time" ;;
+        refs/*) continue ;;   # tags/notes/refs/for/refs/sweap — not a branch
+        '') continue ;;
+      esac
+      _pg_in_bases "$pg_dst" && _pg_deny_base "$pg_dst" "refspec '$pg_rs'"
+    done
+  done <<EOF_PUSHES
+$PC_PUSHES
+EOF_PUSHES
+
+  # Every push resolved to a non-base destination. If the command is ALSO a
+  # merge, fall through to the merge verification; otherwise stay silent.
+  if [ "$IS_MERGE" != "1" ]; then
+    CLEAN_ALLOW=1
+    exit 0
+  fi
+fi
+
+# --- merge gate -----------------------------------------------------------------
 # Specific, actionable denials first (bad flags anywhere in a recognised merge).
 if [ "$MC_BAD_FLAG" = "admin" ]; then
   emit_deny "Refusing 'gh pr merge --admin': force-merging past required checks is never self-authorized (standing policy). Merge only via a green gate."
@@ -175,48 +417,10 @@ if [ "${MC_PARSE_ERR:-0}" = "1" ] \
   exit 0
 fi
 
-# --- run in the caller's cwd so gh resolves the CURRENT repo --------------------
-if [ -n "$cwd" ]; then
-  cd "$cwd" 2>/dev/null || {
-    emit_deny "merge-gate: could not enter the working directory to verify checks. Denying (recoverable) — re-run the merge."
-    exit 0
-  }
-fi
-
-# bounded_run <timeout> <cmd...>: run <cmd> under its own watchdog so it always
-# finishes within <timeout> seconds (never relying on the harness hook timeout),
-# capturing its stdout to BR_OUT and its exit status to BR_RC. Returns non-zero
-# ONLY on an infra failure (could not allocate the temp file); on a normal or
-# timed-out run it returns 0 and the caller inspects BR_RC/BR_OUT. Factored so the
-# rollup-view call and the compare call share ONE watchdog implementation instead
-# of duplicating the block (both must stay bounded — see verify_pr's budget).
-BR_OUT=""
-BR_RC=0
-bounded_run() {
-  local timeout="$1"; shift
-  local tmp brpid watcher
-  [ "$timeout" -ge 1 ] 2>/dev/null || timeout=1
-  tmp="$(mktemp 2>/dev/null)" || tmp=""
-  if [ -z "$tmp" ]; then
-    BR_OUT=""; BR_RC=1
-    return 1
-  fi
-  "$@" >"$tmp" 2>/dev/null &
-  brpid=$!
-  ( sleep "$timeout"; kill -TERM "$brpid" 2>/dev/null ) &
-  watcher=$!
-  wait "$brpid" 2>/dev/null
-  BR_RC=$?
-  kill -TERM "$watcher" 2>/dev/null
-  wait "$watcher" 2>/dev/null
-  BR_OUT="$(cat "$tmp" 2>/dev/null)"
-  rm -f "$tmp"
-  return 0
-}
-
 # verify_pr <n>: query one PR's rollup (bounded by an internal timeout) and, if it
 # is not green or greenness can't be determined, emit a deny and return 1. Green
-# ⇒ return 0 silently.
+# ⇒ return 0 silently. A PR touching .github/workflows/** or .github/scripts/**
+# is denied regardless of greenness (self-modifying CI).
 # A CheckRun is green only when COMPLETED with conclusion SUCCESS. SKIPPED/NEUTRAL
 # are non-blocking for checks the pipeline does not know (a legitimately skipped
 # optional check must not permanently wedge a merge), with two exceptions for
@@ -404,6 +608,33 @@ verify_pr() {
       < <(printf '%s' "$json" | jq -j '(.files // [])[] | .path + "\u0000"' 2>/dev/null)
     if [ "${#fpaths[@]}" -eq 0 ]; then
       emit_deny "merge-gate: could not extract PR #$pr's changed-file paths for the audit gate. Denying (recoverable) — re-run the merge."
+      return 1
+    fi
+
+    # Self-modifying CI. A `pull_request` workflow runs from the PR's MERGE
+    # commit, so a PR that edits .github/workflows/ executed its OWN copy of
+    # every check — its green rollup was produced by the thing it changed, and
+    # the review workflow explicitly withholds its verdict on such PRs. The
+    # vendored gate scripts under .github/scripts/ are the same surface (they
+    # run with CI's token). GitHub's control for this (CODEOWNERS + required
+    # code-owner review) is branch protection, which a private Free repo cannot
+    # have, so this hook is the only enforcement point: such PRs are never
+    # mergeable from a session. A human merges them outside the harness — that
+    # bypass is the intended exit, not a hole. No env override, by design.
+    # Placed here: pure string matching on data already in hand (no gh call, no
+    # budget), before the lane check and before the audit gate spends its
+    # bounded budget; the 100-file truncation deny above still runs first.
+    # Root-anchored prefix, exactly as gh reports paths (no leading ./);
+    # `*` in a case pattern also matches `/`, so nested paths match; any file
+    # type and deletions count; docs/.github/workflows/x does NOT match.
+    local protected="" fp
+    for fp in "${fpaths[@]}"; do
+      case "$fp" in
+        .github/workflows/*|.github/scripts/*) protected="${protected:+$protected, }$fp" ;;
+      esac
+    done
+    if [ -n "$protected" ]; then
+      emit_deny "merge-gate: PR #$pr edits the CI controls themselves ($protected). A PR that changes .github/workflows/ or the vendored gate scripts in .github/scripts/ runs its OWN copy of every pull_request workflow, so its green checks were produced by the thing it changed (the review job skips its verdict on exactly these PRs). This PR is never mergeable from a session, whatever its check state: a HUMAN reviews the CI diff and merges it (GitHub web UI, or 'gh pr merge $pr' from their own shell). Do not retry, do not use --admin, do not move the edit into another PR — that PR is denied the same way. Record it as a question: set the item to 'status: blocked' with 'blocked: PR #$pr changes CI controls ($protected) and needs a human merge — merge it as-is, or say what to change?', notify, and continue with other work."
       return 1
     fi
 

@@ -18,7 +18,7 @@ want() { # want <desc> <expected> <actual> [rc]
 run() { (cd "$WORK" && bash "$LANE" "$@" 2>/dev/null); }
 
 echo "ci-lane.test.sh:"
-cd "$WORK"
+cd "$WORK" || exit 1
 # --- explicit file lists, default backlog.dir ---------------------------------
 want "item file alone"                  roadmap-only "$(run --files roadmap/F1.2.md)"
 want "discovered + ideas + audits"      roadmap-only "$(run --files roadmap/discovered/a-0a1b2c.md roadmap/ideas/x.md roadmap/audits/F1.md roadmap/archive/F1.9.md)"

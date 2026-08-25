@@ -66,7 +66,7 @@ check "no items => no debt" 0
 
 # T2: milestone in progress (one item todo... uses a done+todo pair) -> pass
 R="$(new_repo t2)"
-mk_item "$R" F1.1 done
+mk_item "$R" F1.1 'done'
 mk_item "$R" F1.2 todo
 commit_all "$R"
 run_gate "$R" --check
@@ -74,8 +74,8 @@ check "incomplete milestone => no debt" 0
 
 # T3: complete milestone, no record -> FAIL naming the milestone
 R="$(new_repo t3)"
-mk_item "$R" F1.1 done
-mk_item "$R" F1.2 done
+mk_item "$R" F1.1 'done'
+mk_item "$R" F1.2 'done'
 commit_all "$R"
 run_gate "$R" --check
 check "complete milestone without record => debt" 1
@@ -83,7 +83,7 @@ check_out "debt names milestone" "FAIL: milestone F1 .*no audit record"
 
 # T4: audit.baseline exempts it
 R="$(new_repo t4)"
-mk_item "$R" F1.1 done
+mk_item "$R" F1.1 'done'
 commit_all "$R"
 printf '## sweap config\naudit.baseline: [F1, F7]\n' > "$R/CLAUDE.md"
 run_gate "$R" --check
@@ -91,7 +91,7 @@ check "baseline-listed milestone exempt" 0
 
 # T5: multi-segment milestone id (DS.2 with items DS.2.1) in debt
 R="$(new_repo t5)"
-mk_item "$R" DS.2.1 done
+mk_item "$R" DS.2.1 'done'
 commit_all "$R"
 run_gate "$R" --check
 check "multi-segment milestone => debt" 1
@@ -100,8 +100,8 @@ check_out "multi-segment milestone named" "FAIL: milestone DS\.2 "
 # T6: record file present and valid => debt cleared
 R="$(new_repo t6)"
 base="$(head_sha "$R")"
-mk_item "$R" F1.1 done
-mk_item "$R" F1.2 done
+mk_item "$R" F1.1 'done'
+mk_item "$R" F1.2 'done'
 commit_all "$R"
 mk_record "$R" F1 "$base" "$(head_sha "$R")" 0 0 0 "" "finders_reporting: 6"
 commit_all "$R" record
@@ -111,7 +111,7 @@ check "valid record clears debt" 0
 # T7: record head not an ancestor of HEAD (bogus sha) -> debt stays
 R="$(new_repo t7)"
 base="$(head_sha "$R")"
-mk_item "$R" F1.1 done
+mk_item "$R" F1.1 'done'
 commit_all "$R"
 mk_record "$R" F1 "$base" "0000000000000000000000000000000000000000" 0 0 0
 commit_all "$R" record
@@ -123,12 +123,12 @@ check_out "binding failure named" "FAIL: record .*range_head"
 # (item flips to done AFTER range_head: audit predates the milestone's last merge)
 R="$(new_repo t8)"
 base="$(head_sha "$R")"
-mk_item "$R" F1.1 done
+mk_item "$R" F1.1 'done'
 commit_all "$R"
 early="$(head_sha "$R")"
 mk_item "$R" F1.2 todo
 commit_all "$R"
-mk_item "$R" F1.2 done
+mk_item "$R" F1.2 'done'
 commit_all "$R" "flip F1.2 after the audited range"
 mk_record "$R" F1 "$base" "$early" 0 0 0
 commit_all "$R" record
@@ -139,7 +139,7 @@ check_out "names the unreached item" "FAIL: record .*F1\.2"
 # T9: record for the WRONG milestone id in the filename slot -> invalid
 R="$(new_repo t9)"
 base="$(head_sha "$R")"
-mk_item "$R" F1.1 done
+mk_item "$R" F1.1 'done'
 commit_all "$R"
 mk_record "$R" F2 "$base" "$(head_sha "$R")" 0 0 0   # file is audits/F2.md, F1 unaudited
 commit_all "$R" record
@@ -150,7 +150,7 @@ check_out "F1 still in debt" "FAIL: milestone F1 "
 # T10: uncommitted done flip (working tree only) -> fail closed
 R="$(new_repo t10)"
 base="$(head_sha "$R")"
-mk_item "$R" F1.1 done          # never committed
+mk_item "$R" F1.1 'done'          # never committed
 mk_record "$R" F1 "$base" "$base" 0 0 0
 run_gate "$R" --check
 check "uncommitted done flip => fail closed" 1
@@ -183,7 +183,7 @@ EOF_ITEM
 # T11: counts inconsistent (raw != refuted + confirmed) -> invalid
 R="$(new_repo t11)"
 base="$(head_sha "$R")"
-mk_item "$R" F1.1 done
+mk_item "$R" F1.1 'done'
 commit_all "$R"
 mk_record "$R" F1 "$base" "$(head_sha "$R")" 5 2 1
 commit_all "$R" record
@@ -193,7 +193,7 @@ check "raw != refuted+confirmed => invalid" 1
 # T12: confirmed=1 but no finding block -> invalid
 R="$(new_repo t12)"
 base="$(head_sha "$R")"
-mk_item "$R" F1.1 done
+mk_item "$R" F1.1 'done'
 commit_all "$R"
 mk_record "$R" F1 "$base" "$(head_sha "$R")" 1 0 1
 commit_all "$R" record
@@ -203,7 +203,7 @@ check "confirmed without finding block => invalid" 1
 # T13: finding block missing disposition -> invalid
 R="$(new_repo t13)"
 base="$(head_sha "$R")"
-mk_item "$R" F1.1 done
+mk_item "$R" F1.1 'done'
 commit_all "$R"
 mk_record "$R" F1 "$base" "$(head_sha "$R")" 1 0 1 '### 1. stale read
 severity: high
@@ -216,7 +216,7 @@ check "finding without disposition => invalid" 1
 # T14: dangling followup reference -> invalid
 R="$(new_repo t14)"
 base="$(head_sha "$R")"
-mk_item "$R" F1.1 done
+mk_item "$R" F1.1 'done'
 commit_all "$R"
 mk_record "$R" F1 "$base" "$(head_sha "$R")" 1 0 1 '### 1. stale read
 severity: high
@@ -231,7 +231,7 @@ check_out "names the dangling ref" "FAIL: record .*F1\.9"
 # T15: fully closed record (fix_pr + followup + blocked) -> valid
 R="$(new_repo t15)"
 base="$(head_sha "$R")"
-mk_item "$R" F1.1 done
+mk_item "$R" F1.1 'done'
 commit_all "$R"
 mk_todo_followup "$R" F1.9 F1
 mk_item "$R" F1.10 blocked 'followup_of: F1
@@ -259,7 +259,7 @@ check "fully closed record => valid" 0
 # (done-flip loop must exclude items with followup_of:, just like item_rows does)
 R="$(new_repo t15b)"
 base="$(head_sha "$R")"
-mk_item "$R" F1.1 done
+mk_item "$R" F1.1 'done'
 commit_all "$R"
 range_head="$(head_sha "$R")"
 mk_record "$R" F1 "$base" "$range_head" 0 0 0 "" "finders_reporting: 6"
@@ -285,7 +285,7 @@ check "no debt => merge mode passes" 0
 
 # T17: debt + code-only PR -> pass
 R="$(new_repo t17)"
-mk_item "$R" F1.1 done
+mk_item "$R" F1.1 'done'
 commit_all "$R"
 run_gate "$R" --files src/a.ts docs/x.md
 check "debt + code-only PR => pass" 0
@@ -321,7 +321,7 @@ check "...but a promoted item file riding with a note still does" 1
 # to deny even code-only PRs in --files mode.
 R="$(new_repo t22)"
 base="$(head_sha "$R")"
-mk_item "$R" F1.1 done
+mk_item "$R" F1.1 'done'
 commit_all "$R"
 mk_record "$R" F1 "$base" "0000000000000000000000000000000000000000" 0 0 0
 commit_all "$R" record
@@ -352,7 +352,7 @@ check_out "--check still prints the range_head diagnostic" "FAIL: record .*range
 # nonexistent dir) -> item_rows found zero items -> gate passed unconditionally
 # on every template-scaffolded repo. Must now deny, naming the milestone.
 R="$(new_repo t25)"
-mk_item "$R" F1.1 done
+mk_item "$R" F1.1 'done'
 commit_all "$R"
 {
   printf '## sweap config\n'
@@ -367,7 +367,7 @@ check_out "debt names milestone despite the inline comment" "FAIL: milestone F1 
 # T26: inline list + trailing comment (`audit.baseline: [F1] # grandfathered`)
 # must strip the comment while keeping the list intact, so F1 stays exempt.
 R="$(new_repo t26)"
-mk_item "$R" F1.1 done
+mk_item "$R" F1.1 'done'
 commit_all "$R"
 printf '## sweap config\naudit.baseline: [F1] # grandfathered\n' > "$R/CLAUDE.md"
 commit_all "$R" "baseline with inline comment"
@@ -388,7 +388,7 @@ mk_prose_record() { printf '# %s milestone audit\n\nWe audited it. Trust me.\n' 
 # it carries sweap_format, so it is not inherited, it is wrong.
 R="$(new_repo t27)"
 base="$(head_sha "$R")"
-mk_item "$R" F1.1 done
+mk_item "$R" F1.1 'done'
 commit_all "$R"
 mk_record "$R" F1 "$base" "$(head_sha "$R")" 0 0 0
 sed -i.bak 's/^sweap_format: 1$/sweap_format: 2/' "$R/roadmap/audits/F1.md" && rm -f "$R/roadmap/audits/F1.md.bak"
@@ -401,7 +401,7 @@ check_out "names the format mismatch" "sweap_format: 2 but this gate speaks form
 # T28: an ALREADY-MERGED pre-format record is reported as STALE, not FAIL —
 # --check passes so the repo's loop is not wedged by a format introduction.
 R="$(new_repo t28)"
-mk_item "$R" F1.1 done
+mk_item "$R" F1.1 'done'
 mk_prose_record "$R" F1
 commit_all "$R"
 anchor_main "$R"
@@ -417,7 +417,7 @@ check "stale-only debt does not block an item-file PR" 0
 # (its adding commit is not reachable from origin/main) is judged strictly — so
 # "legacy" can be inherited but never authored.
 R="$(new_repo t30)"
-mk_item "$R" F1.1 done
+mk_item "$R" F1.1 'done'
 commit_all "$R"
 anchor_main "$R"
 mk_prose_record "$R" F1
@@ -431,7 +431,7 @@ check "newly-added pre-format record still blocks merges" 1
 # T31: no mainline anchor (no remote) => nothing can be proven inherited, so the
 # gate judges strictly. Uncertainty is never a free pass.
 R="$(new_repo t31)"
-mk_item "$R" F1.1 done
+mk_item "$R" F1.1 'done'
 mk_prose_record "$R" F1
 commit_all "$R"
 run_gate "$R" --check
@@ -445,7 +445,7 @@ check "no origin/main => pre-format record judged strictly" 1
 # T32a: without `defects:`, blocks must still equal confirmed (unchanged contract).
 R="$(new_repo t32a)"
 base="$(head_sha "$R")"
-mk_item "$R" F1.1 done
+mk_item "$R" F1.1 'done'
 commit_all "$R"
 mk_record "$R" F1 "$base" "$(head_sha "$R")" 6 0 6 '### 1. a
 disposition: fix_pr #1
@@ -476,7 +476,7 @@ check "defects: 0 with confirmed findings => invalid" 1
 
 # T33: the anchor is overridable (CI on a PR points it at origin/<base_ref>).
 R="$(new_repo t32)"
-mk_item "$R" F1.1 done
+mk_item "$R" F1.1 'done'
 mk_prose_record "$R" F1
 commit_all "$R"
 git -C "$R" update-ref refs/remotes/origin/release HEAD
@@ -505,7 +505,7 @@ PYEOF
 # is 1, UI confirmed is 2 => 3 blocks are legitimate.
 R="$(new_repo t34)"
 base="$(head_sha "$R")"
-mk_item "$R" F1.1 done
+mk_item "$R" F1.1 'done'
 commit_all "$R"
 mk_record "$R" F1 "$base" "$(head_sha "$R")" 1 0 1 '### 1. code defect
 disposition: fix_pr #1
@@ -521,7 +521,7 @@ check "UI-axis survivors get their own disposition blocks" 0
 # T35: a declared axis must carry its full key set.
 R="$(new_repo t35)"
 base="$(head_sha "$R")"
-mk_item "$R" F1.1 done
+mk_item "$R" F1.1 'done'
 commit_all "$R"
 mk_record "$R" F1 "$base" "$(head_sha "$R")" 1 0 1 '### 1. x
 disposition: fix_pr #1'
@@ -534,7 +534,7 @@ check_out "names the missing axis key" "axis 'ui' is declared but ui.raw: is mis
 # T36: axis stats must themselves add up.
 R="$(new_repo t36)"
 base="$(head_sha "$R")"
-mk_item "$R" F1.1 done
+mk_item "$R" F1.1 'done'
 commit_all "$R"
 mk_record "$R" F1 "$base" "$(head_sha "$R")" 1 0 1 '### 1. x
 disposition: fix_pr #1'
@@ -546,7 +546,7 @@ check "axis raw != refuted + confirmed => invalid" 1
 # T37: blocks are still bounded — an axis does not license unlimited blocks.
 R="$(new_repo t37)"
 base="$(head_sha "$R")"
-mk_item "$R" F1.1 done
+mk_item "$R" F1.1 'done'
 commit_all "$R"
 mk_record "$R" F1 "$base" "$(head_sha "$R")" 1 0 1 '### 1. a
 disposition: fix_pr #1
@@ -578,11 +578,11 @@ with_anchor() { local a="$1"; shift; export SWEAP_MAIN_REF="$a"; run_gate "$@"; 
 # that completes the milestone does.
 boundary_repo() {
   local r; r="$(new_repo "$1")"
-  mk_item "$r" F1.1 done
+  mk_item "$r" F1.1 'done'
   mk_item "$r" F1.2 todo
   commit_all "$r" base
   local b; b="$(head_sha "$r")"
-  mk_item "$r" F1.2 done
+  mk_item "$r" F1.2 'done'
   commit_all "$r" "complete F1"
   printf '%s %s\n' "$r" "$b"
 }
@@ -612,12 +612,12 @@ check_out "post-landing --check names F1" "FAIL: milestone F1 is complete but ha
 # T41: the exemption is per-milestone, not a blanket pass. Debt inherited from
 # the anchor still fails on the very same diff that completes another milestone.
 R="$(new_repo t41)"
-mk_item "$R" F0.1 done
-mk_item "$R" F1.1 done
+mk_item "$R" F0.1 'done'
+mk_item "$R" F1.1 'done'
 mk_item "$R" F1.2 todo
 commit_all "$R" base
 BASE="$(head_sha "$R")"
-mk_item "$R" F1.2 done
+mk_item "$R" F1.2 'done'
 commit_all "$R" "complete F1"
 with_anchor "$BASE" "$R" --check
 check "inherited debt still fails on a completing diff" 1
@@ -694,7 +694,7 @@ R="$(new_repo t48)"
 mk_attended "$R" F1.1
 mk_item "$R" F1.2 todo
 commit_all "$R" author-handoff
-mk_item "$R" F1.1 done
+mk_item "$R" F1.1 'done'
 commit_all "$R" human-finished-it
 run_gate "$R" --check
 check "a completed hand-off (attended -> done) is not a provenance violation" 0
@@ -702,7 +702,7 @@ check "a completed hand-off (attended -> done) is not a provenance violation" 0
 # T49: an attended item keeps its milestone INCOMPLETE, so no audit is due and no
 # debt accrues. This is the property that makes the whole feature free at the gate.
 R="$(new_repo t49)"
-mk_item "$R" F1.1 done
+mk_item "$R" F1.1 'done'
 mk_attended "$R" F1.2
 commit_all "$R" mixed
 run_gate "$R" --check
@@ -748,7 +748,7 @@ check_out "carried 2 says ASKED, not offered" "AGING: blocked F1\.1 — carried 
 # T53: AGING coexists with real audit debt without masking it — the debt still
 # fails, still names the milestone, and the AGING line rides alongside.
 R="$(new_repo t53)"
-mk_item "$R" F1.1 done
+mk_item "$R" F1.1 'done'
 mk_blocked "$R" F2.1
 commit_all "$R" debt-and-a-question
 run_gate "$R" --check
@@ -779,7 +779,7 @@ fi
 # T55: zero findings with no evidence of work -> invalid, and says why
 R="$(new_repo t55)"
 base="$(head_sha "$R")"
-mk_item "$R" F1.1 done
+mk_item "$R" F1.1 'done'
 commit_all "$R"
 mk_record "$R" F1 "$base" "$(head_sha "$R")" 0 0 0
 commit_all "$R" record
@@ -790,7 +790,7 @@ check_out "the failure names the missing evidence" "raw: 0 but no finders_report
 # T56: zero findings, and the evidence says nothing reported -> invalid
 R="$(new_repo t56)"
 base="$(head_sha "$R")"
-mk_item "$R" F1.1 done
+mk_item "$R" F1.1 'done'
 commit_all "$R"
 mk_record "$R" F1 "$base" "$(head_sha "$R")" 0 0 0 "" "finders_reporting: 0"
 commit_all "$R" record
@@ -801,7 +801,7 @@ check_out "it is called a dead run, not a clean milestone" "not a clean mileston
 # T57: zero findings with a non-numeric count -> invalid
 R="$(new_repo t57)"
 base="$(head_sha "$R")"
-mk_item "$R" F1.1 done
+mk_item "$R" F1.1 'done'
 commit_all "$R"
 mk_record "$R" F1 "$base" "$(head_sha "$R")" 0 0 0 "" "finders_reporting: all of them"
 commit_all "$R" record
@@ -814,7 +814,7 @@ check_out "names the numeric requirement" "finders_reporting must be numeric"
 # key existed must keep validating (purely additive, no sweap_format bump).
 R="$(new_repo t58)"
 base="$(head_sha "$R")"
-mk_item "$R" F1.1 done
+mk_item "$R" F1.1 'done'
 commit_all "$R"
 mk_record "$R" F1 "$base" "$(head_sha "$R")" 1 0 1 '### 1. a
 disposition: fix_pr #1'
@@ -825,7 +825,7 @@ check "a record with findings needs no finders_reporting" 0
 # T59: the UI axis is a different producer and is not conscripted into this.
 R="$(new_repo t59)"
 base="$(head_sha "$R")"
-mk_item "$R" F1.1 done
+mk_item "$R" F1.1 'done'
 commit_all "$R"
 mk_record "$R" F1 "$base" "$(head_sha "$R")" 0 0 0 "" "finders_reporting: 6
 axes: [ui]

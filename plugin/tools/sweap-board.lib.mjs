@@ -13,6 +13,11 @@ import { existsSync } from "node:fs";
 import { basename } from "node:path";
 import { createHash } from "node:crypto";
 
+// Same flat-frontmatter contract as roadmap-lint.sh/audit-gate.sh: `key: value`
+// lines; on a duplicate key the FIRST occurrence wins (their `sed -n ... | head -1`).
+// YAML 1.2 requires unique keys and js-yaml rejects duplicates; sweap does not
+// reject (no lint rule yet) — it only agrees with its own gate about which value
+// is read.
 export function parseFrontmatter(text) {
   const norm = String(text).replace(/\r\n?/g, "\n");
   const lines = norm.split("\n");
@@ -23,7 +28,7 @@ export function parseFrontmatter(text) {
   const fm = {};
   for (let i = 1; i < end; i++) {
     const m = lines[i].match(/^([A-Za-z0-9_-]+):\s?(.*)$/);
-    if (m) fm[m[1]] = m[2].trim();
+    if (m && !Object.hasOwn(fm, m[1])) fm[m[1]] = m[2].trim();
   }
   return { fm, body: lines.slice(end + 1).join("\n") };
 }

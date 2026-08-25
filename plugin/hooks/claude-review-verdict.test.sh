@@ -8,7 +8,7 @@
 # The jq program is EXTRACTED FROM the workflow file rather than copied here, so
 # these cases test the text that actually ships. Fixtures stand in for the three
 # GitHub API reads (issue comments, review bodies, inline review comments), each
-# an object of {t: timestamp, u: author login, b: body}.
+# an object of {t: timestamp, u: author login, ty: user.type, b: body}.
 #
 # Run:  bash plugin/hooks/claude-review-verdict.test.sh
 # Exit: 0 = all pass, 1 = a failure (prints which case).
@@ -18,7 +18,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 YML="$HERE/../templates/.github/workflows/claude-review.yml"
 
 PROG=$(awk '
-  /\| jq -rs --arg since/ { inprog=1; sub(/.*--arg since "\$head_ts" \x27/, ""); }
+  /\| jq -rs .*--arg since/ { inprog=1; sub(/.*--arg since "\$head_ts" \x27/, ""); }
   inprog {
     if ($0 ~ /\x27$/ && !/--arg since/) { sub(/\x27$/, ""); print; exit }
     print
@@ -35,17 +35,20 @@ HEAD_TS="2026-08-11T20:00:00Z"   # the PR head commit
 AFTER="2026-08-11T20:05:00Z"     # a comment from this run
 BEFORE="2026-08-11T19:00:00Z"    # a comment from a previous push
 
+WHO="claude[bot]"                # the reviewer login the gate expects (default)
+
 pass=0; fail=0
 check() { # check <desc> <expected-verdict-line> <fixture lines on stdin>
   local desc="$1" want="$2" got
-  got=$(cat | jq -rs --arg since "$HEAD_TS" "$PROG")
+  got=$(cat | jq -rs --arg who "$WHO" --arg since "$HEAD_TS" "$PROG")
   if [ "$got" = "$want" ]; then
     pass=$((pass+1)); printf '  PASS  %s\n' "$desc"
   else
     fail=$((fail+1)); printf '  FAIL  %s\n        expected [%s]\n        got      [%s]\n' "$desc" "$want" "$got"
   fi
 }
-fx() { jq -c -n --arg t "$1" --arg u "$2" --arg b "$3" '{t:$t,u:$u,b:$b}'; }
+check_as() { local WHO="$1"; shift; check "$@"; } # check_as <login> <desc> <expected>
+fx() { jq -c -n --arg t "$1" --arg u "$2" --arg b "$3" --arg ty "${4:-Bot}" '{t:$t,u:$u,ty:$ty,b:$b}'; }
 
 echo "claude-review-verdict.test.sh:"
 
@@ -100,7 +103,35 @@ Verdict: approve")
 EOF
 
 check "a human comment cannot drive the gate" "" <<EOF
-$(fx "$AFTER" "some-human" "Verdict: approve")
+$(fx "$AFTER" "some-human" "Verdict: approve" "User")
+EOF
+
+# Identity is exact login + user.type Bot: the old `test("claude"; "i")`
+# substring match accepted any of the following.
+check "human handle containing 'claude' cannot drive the gate" "" <<EOF
+$(fx "$AFTER" "claudette-dev" "Verdict: approve" "User")
+EOF
+
+check "a different bot cannot drive the gate" "" <<EOF
+$(fx "$AFTER" "claude-helper[bot]" "Verdict: approve" "Bot")
+EOF
+
+check "exact login but type User is rejected" "" <<EOF
+$(fx "$AFTER" "claude[bot]" "Verdict: approve" "User")
+EOF
+
+# A projection regression (ty dropped) must fail closed, not crash.
+check "missing type field is rejected, not fatal" "" <<EOF
+$(jq -c -n --arg t "$AFTER" '{t:$t,u:"claude[bot]",b:"Verdict: approve"}')
+EOF
+
+# CLAUDE_REVIEWER_LOGIN override (custom github_token app).
+check_as "acme-reviewer[bot]" "override login is honored" "Verdict: approve" <<EOF
+$(fx "$AFTER" "acme-reviewer[bot]" "Verdict: approve")
+EOF
+
+check_as "acme-reviewer[bot]" "default login is rejected under an override" "" <<EOF
+$(fx "$AFTER" "claude[bot]" "Verdict: approve")
 EOF
 
 check "CRLF body + trailing blank lines parse" "Verdict: approve" <<EOF

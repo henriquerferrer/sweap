@@ -193,7 +193,9 @@ Two exits from this, both narrow:
 - **Non-interactive** — `/loop-schedule` and any headless driver. `/handoff`
   requires a human in the session and must never run unattended, so these skip
   it entirely and use the hand-offs-outstanding template directly, naming the
-  skipped hand-offs in their notification.
+  skipped hand-offs in their notification. These drivers reference this
+  command's steps by name rather than copying its templates, so this file is
+  the only place the goal text lives.
 
 Environment pre-flight (parity — see the playbook's "Environment parity"
 section). Do this **yourself** — the user should never bring up services by
@@ -284,8 +286,10 @@ runnable and carries no reason a human is needed is flagged on the board as
 must name an action "the system is unable to take itself", made checkable. If
 you cannot name why it is theirs, do it yourself.
 
-`reason:` must be one of those four. This is what gives a stuck run a legitimate
-way OUT: before it existed the only exit from an unsatisfiable goal was to ask
+`reason:` must be one of those four. Headless drivers echo `reason:` and
+`needs:` verbatim in their end-of-run notification — in a cloud routine the run
+file is discarded with the VM, so the notification is the only durable copy.
+This is what gives a stuck run a legitimate way OUT: before it existed the only exit from an unsatisfiable goal was to ask
 the human in chat, where no tool could see it, which is why consumer A looked
 silent for seven hours on 2026-08-21 while it was in fact politely waiting for
 an answer.

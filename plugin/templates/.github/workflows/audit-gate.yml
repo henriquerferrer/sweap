@@ -69,7 +69,8 @@ jobs:
 
       # The gate is VENDORED into this repo at .github/scripts/ by sweap's
       # scaffold (audit-gate.sh + the roadmap-lint.sh it shells out to), and
-      # kept byte-identical to the plugin's copy on every session start.
+      # kept in lockstep with the plugin's copy on every session start (stamped
+      # with the plugin version + source hash; see the first line of each file).
       #
       # It is vendored rather than checked out from sweap because a cross-repo
       # checkout of a private repo needs a PAT in every consumer repo, and a

@@ -467,15 +467,17 @@ may ADD dimensions it judges necessary; it may not remove tagged ones.
   `reason:` and (for `awaiting-human`) `needs:` to `.claude/sweap-run.md` — see
   `/milestone`, "Record the end of the run". A run that stops without recording
   why is indistinguishable from one that died, and "I asked the human in chat"
-  is not a record: no tool can read it. Leave the file in place when the reason
-  is `awaiting-human`, so the board can show whose answer the run is waiting on.
-- **Delete `.claude/sweap-run.md`** when the goal ends, met or stopped. It
-  describes THIS run; left behind it makes the board's card claim a run that is
-  over. It is gitignored, so this is a plain `rm -f`, never a commit. (The card
-  already ignores a run file whose milestone has no unfinished items, so the
-  worst a missed delete causes is a stale shape line — but do not lean on that
-  backstop for a run that stopped mid-milestone, which is exactly the case it
-  cannot detect.)
+  is not a record: no tool can read it.
+- **Delete `.claude/sweap-run.md`** when the run ended with reason `goal-met`,
+  `frontier-empty` or `turns-exhausted` — it describes THIS run and, left
+  behind, makes the board's card claim a run that is over. **Do not delete it
+  when the reason is `awaiting-human`**: it is then the board's only record of
+  whose answer the run is waiting on (`needs:`/`why_not_agent:`); the next
+  `/milestone` kickoff overwrites it (one run at a time). Gitignored, so
+  deletion is a plain `rm -f`, never a commit. (The card ignores a run file
+  whose milestone has no unfinished items, so a missed delete after `goal-met`
+  only stales the shape line — a run stopped mid-milestone is exactly the case
+  that backstop cannot detect.)
 - **Never commit to the local `main` checkout — not even docs.** Every commit
   happens in a worktree and reaches `main` only through a PR. (This keeps the
   primary checkout from diverging; auto-mode cannot hard-reset it later.)
@@ -563,6 +565,23 @@ may ADD dimensions it judges necessary; it may not remove tagged ones.
     `0`), so a PR whose `e2e` had FAILED got merged and briefly broke `main`. The
     hook removes the human-reads-the-output link. This *strengthens* the gate and
     never weakens it — the hook only ever denies, never auto-approves.
+  - **The push gate.** The same hook denies any `git push` whose destination
+    resolves to the base branch (`main`/`master`, `origin/HEAD`, or
+    `SWEAP_BASE_BRANCH` from the hook's env) — `origin main`, `HEAD:main`,
+    `refs/heads/main`, `--delete main`, `--all`/`--mirror`, and a bare
+    `git push` while on the base or when `push.default` would land there.
+    Item-branch pushes, `--force-with-lease` to item branches, `--delete <item>`,
+    tags and `main:<item>` pass. It is local-only (no `gh`) because a stalled
+    hook fails open. Over-blocks are recoverable: re-issue the push plainly.
+    Override `SWEAP_PUSH_GATE=off` is honoured only from user-level settings
+    `env` or the shell that launched Claude Code; the hook ignores it when the
+    project's `.claude` settings define it, and an inline `VAR= git push`
+    prefix never reaches the hook.
+  - **Self-modifying CI is never session-mergeable.** The same hook denies any
+    `gh pr merge` whose PR touches `.github/workflows/**` or
+    `.github/scripts/**`, whatever its check state (the PR ran its own copy of
+    every check); a human merges those from the web UI or their own shell, and
+    the run records the PR as a `status: blocked` question.
 - **Waiting discipline (upstream of the gate).** The gate decides at merge time;
   the waiting before it is where runs have burned the most time. Four rules,
   each bought by a documented incident (consumer A 2026-08-21/22, one run):
@@ -587,7 +606,8 @@ may ADD dimensions it judges necessary; it may not remove tagged ones.
   and some didn't — the confirm was a per-run judgment call, not a rule. Stating
   the authorization here removes the ambiguity.) The one thing never
   self-authorized: **weakening the gate to get a merge** — editing
-  `.github/workflows`, `gh workflow disable`, or changing required checks. A run
+  `.github/workflows`, `gh workflow disable`, changing required checks, setting
+  `SWEAP_PUSH_GATE`, editing any settings `env`, or pushing to the base branch. A run
   must never be able to turn off the verification that makes its own autonomy
   safe; if the gate is in the way, escalate, don't disable it.
 - **Allowlist scope and its limit (`.claude/settings.json`).** The `gh` allowlist
@@ -889,16 +909,23 @@ When the last item of a milestone merges, run the saved audit workflow via
 `{milestone: "<id>"}`, optionally with `{range: "<base>..<head>"}` too when
 known. Passing the milestone id is what lets the workflow refuse to run if it
 resolves a different one (see "Audit evidence" below) — omitting it disables
-that guard. It audits the
-merged whole with the finder lenses declared in `audit.lenses` — by default **the
-generic default lens set defined in the audit workflow** (correctness,
-authz/security, data-integrity, concurrency/races, test-integrity, api-contract),
-optionally extended with **domain lenses the project appends via `audit.lenses`**
-(the preferred `default + [...]` form), or replaced entirely by an explicit list
-when the project deliberately wants a custom set — and adversarially refutes
-every finding — only majority-surviving findings are
-reported. It exists to catch what per-PR review structurally cannot: cross-feature
-interactions, systemic patterns, and plan-level mistakes.
+that guard. It audits the merged whole with the finder lenses declared in
+`audit.lenses` — by default **the generic default lens set defined in the audit
+workflow** (correctness, authz/security, data-integrity, concurrency/races,
+test-integrity, api-contract), optionally extended with **domain lenses the
+project appends via `audit.lenses`** (the preferred `default + [...]` form), or
+replaced entirely by an explicit list when the project deliberately wants a
+custom set — and adversarially refutes every finding — only majority-surviving
+findings are reported. It exists to catch what per-PR review structurally
+cannot: cross-feature interactions, systemic patterns, and plan-level mistakes.
+
+The operational recipe (run the workflow, triage, write the record from the
+workflow's `record` field, `--check`, land it in one PR) is `/milestone-audit`;
+the record format and every rule the gate enforces on it are
+`playbook/audit-record.template.md`. This section is the doctrine those two
+implement, and it is the drift guard for `/loop-schedule`'s prompt.
+
+### Auto-launch and read-only toolset
 
 **Auto-launch (pre-authorized in the goal).** A milestone `/goal` run carries a
 final clause so the audit fires once, automatically, at the milestone boundary —
@@ -911,10 +938,15 @@ no cron, no standing agent. Standard template:
 > `{milestone: "<milestone>", range: "<base>..<head>"}` for that range,
 > triage the confirmed findings (below), and post a summary before stopping.
 > Stop when the only [todo] items left are audit follow-ups carrying
-> followup_of: <milestone> (the next run's debt, not this run's work), and
-> everything else remaining is [blocked] or [attended] — or after N turns.*
+> followup_of: <milestone> (those are the next run's debt, not this run's
+> work), or when NOTHING IS RUNNABLE — every remaining [todo] has an
+> unsatisfied dependency on a [blocked], [attended] or [deferred] item, so the
+> frontier is empty and no agent may pick anything up. Or after N turns. When
+> you stop, record it (see /milestone's "Record the end of the run").*
 
-(The follow-up clause is load-bearing, not padding. A correct audit ends by CREATING work: bucket-2 triage writes
+(The follow-up clause is load-bearing: the frontier this run stops on excludes
+`followup_of: <milestone>` items its own audit created — they are the next
+run's debt. A correct audit ends by CREATING work: bucket-2 triage writes
 `followup_of:` todo items, so a run that audits well can never literally reach
 "only blocked or attended remain" — consumer A's F11 run hit exactly that and had to
 escalate the ambiguity. Those items are the NEXT run's debt (the frontier drains
@@ -936,9 +968,7 @@ across all configured prefixes and always emits the audit clause; see
 clause is **malformed**: the run drains its items but stops before auditing,
 which is stopping early — the audit is part of the milestone's definition of
 done, not an optional extra. If a milestone goal is ever hand-written rather
-than printed by `/milestone`, the audit clause still travels with it. (Learned
-the hard way: a hand-written milestone goal that once omitted the clause
-drained its items but stopped before its audit.)
+than printed by `/milestone`, the audit clause still travels with it.
 
 The evaluator won't call the goal met until the audit has run and its findings
 are triaged. The `/milestone-audit` workflow finds and reports confirmed
@@ -948,17 +978,15 @@ surrounding session performs (below): a bucket-1 fix is a deliberate, gated
 
 **Read-only is a toolset, and the toolset has to be addressable.** A plugin
 agent registers under its **scoped** name (`sweap:audit-reader`); the same file
-in a repo's own `.claude/agents/` registers **bare**. The workflow dispatched
-the bare name unconditionally, so it worked in sweap's checkout and was broken
-for every plugin install — consumer A's F11 audit lost all eleven finder agents to
-`agent type 'audit-reader' not found` and only completed because the session
-hand-patched its own copy of the script. It now resolves: scoped name, then bare
-name, then — if the runtime rejects both — whatever name the not-found error
-says it *does* have, which survives a plugin or marketplace rename the script
-cannot see. What it never does is fall back to *no* agent type: an unresolvable
-agent is a thrown error, because the alternative is the default toolset, which
-can `Write`. Watch for this class when reviewing: a guarantee that depends on a
-name is only as good as that name's addressability in the install it lands in.
+in a repo's own `.claude/agents/` registers **bare**. The workflow resolves:
+scoped name, then bare name, then — if the runtime rejects both — whatever name
+the not-found error says it *does* have, which survives a plugin or marketplace
+rename the script cannot see. What it never does is fall back to *no* agent
+type: an unresolvable agent is a thrown error, because the alternative is the
+default toolset, which can `Write`. (consumer A's F11 audit lost all eleven finders
+to `agent type 'audit-reader' not found` before this resolution existed.) Watch
+for this class when reviewing: a guarantee that depends on a name is only as
+good as that name's addressability in the install it lands in.
 
 **Read-only is a toolset, and its scope is exact.** The workflow's finders and
 refuters run as the `audit-reader` agent — `Read`, `Grep`, `Glob`, with no
@@ -975,16 +1003,13 @@ absolute-path write outside the session cwd; its `Bash` is deliberately NOT
 path-checked, because a shell line cannot be parsed reliably enough to be a
 control, and pretending otherwise would be worse than saying so. The `Scope`
 stage needs `Bash` for `git log` and is therefore governed by instruction only;
-say that rather than claiming the whole workflow is sealed. Why this is stated
-so precisely: until 2026-08-16 "read-only" lived exclusively in this paragraph
-and in `/milestone-audit`, both of which address the **calling session** — the
-finders and refuters never saw either, their prompts said nothing about writing,
-and they ran with the default toolset. A refuter in a consumer repo wrote a test
-file into the human's primary checkout to settle a claim empirically, where it
-sat untracked and would have run in their next test invocation. It did what the
-prompt invited with the tools it was handed. **A guarantee asserted to a third
-party is not a guarantee** — the same lesson as the hand-off escape hatch, one
-rung worse, because here the doctrine was never even communicated to the actor.
+say that rather than claiming the whole workflow is sealed. The precision is
+earned: until 2026-08-16 "read-only" was doctrine addressed to the calling
+session, never to the agent holding the tools, and a refuter wrote a test file
+into a consumer's primary checkout to settle a claim empirically. **A guarantee
+asserted to a third party is not a guarantee.**
+
+### Evidence, refutation and validation
 
 **Evidence and a number, not a verdict — and the number lives in the pipeline.**
 A refuter returns four things about a finding, every time: the `path:line`
@@ -996,23 +1021,13 @@ refutation is a score strictly above `TUNING.refutedAt` (**0.5**), and
 in one `TUNING` block in the workflow, and the prompt interpolates them so it
 can never quote a stale price.
 
-Why the shape rather than the labels. This was a boolean, then
-`refuted`/`stands`/`unverifiable`, and that one change took the panel's kill
-rate from 63–73% to **2.7%** (1 of 36) — while a UI-critic axis with an
-unchanged prompt held at 40% in the same run, which is the control that makes it
-causal. 216 verdicts split 210 `stands` / 6 `refuted` / 0 `unverifiable`. A
-categorical verdict puts the decision boundary **inside the model**, where an
-adjective moves it 25×, and the labels were priced asymmetrically on top of
-that: `refuted` demanded a "positive, code-grounded disproof" from an agent that
-cannot run code, `unverifiable` demanded an experiment and was demoted to
-`stands` without one, and `stands` demanded nothing. Two costly inlets, one free
-sink. The generic version of that is worse than the specific one — adding an
-option perturbs the distribution for non-semantic reasons at all — so the fix is
-not better labels, it is no labels. Every lab externalises this: OpenAI's
-`score_model` grader returns `{"result": float, "steps": ReasoningStep[]}` with
-a separate `pass_threshold` in the config; the model scores, the system cuts.
-The research behind this paragraph, with every quote re-fetched raw and
-string-matched, is `docs/research/2026-08-18-refuter-verdict-design.md`.
+Why a score rather than labels: the three-valued `refuted`/`stands`/`unverifiable`
+verdict put the decision boundary inside the model, priced its options
+asymmetrically (two costly inlets, one free sink), and the switch to a score
+took the panel's kill rate from 63–73% to **2.7%** with an unchanged control
+axis holding at 40% — the fix is not better labels, it is no labels. The
+research, with every quote re-fetched and string-matched, is
+`docs/research/2026-08-18-refuter-verdict-design.md`.
 
 **Evidence is required symmetrically.** The answer that leaves a finding alone
 cites code on exactly the same terms as the answer that kills it — the required
@@ -1021,49 +1036,41 @@ no code is a **schema violation** that the model is made to retry. Never a
 demotion: a demotion is a drain into whichever answer is cheapest, which is the
 mechanism this design exists to delete.
 
-**`unverifiable` is now an out-of-band ticket, not a verdict.** A refuter that
+**`unverifiable` is an out-of-band ticket, not a verdict.** A refuter that
 cannot settle a claim by reading names the exact command in `experiment` —
 *and still scores*, on what it did manage to read. The ticket **suspends** the
 finding for the Validate stage rather than resolving it, and being off the
 scoring axis is the whole point: a ticket cannot take probability mass from a
 score the way a third label takes it from the other two. One ticket routes
-(`TUNING.proofTickets`); the old ">=2 of 3 abstained" bar, combined with a
-label nobody ever chose, is what made the Validate stage structurally
-unreachable.
+(`TUNING.proofTickets`).
 
 **Why the kill threshold is still 2.** Not because it is known to be right —
-63–73% was very likely also wrong, in the direction nobody was measuring. There
-is a real argument it should fall to 1: under documented positive bias an
-agreeable majority is the failure mode rather than the safeguard, and the paper
-making that case proposes a minority veto. That same paper is why it has not
-moved — the optimal threshold "requires a calibration set with ground-truth
-labels", and flipping it on intuition re-rolls the dice that produced 63% and
-2.7%. What is fixed is the *renormalisation*: never "a majority of votes cast",
-because that lets two lost votes promote the third refuter to a majority of one,
-handing a single voter a veto exactly when the panel is least informed. Lost and
-unscored votes are excluded from the numerator with the threshold left where it
-is. **The next piece of work is the labeled set** — seeded known-bad and
-known-good findings — and until it exists no kill rate, 2.7% or 73%, can be
-called right or wrong.
+there is a real argument for 1 (under documented positive bias an agreeable
+majority is the failure mode, and the paper making that case proposes a
+minority veto), but the same paper says the optimal threshold "requires a
+calibration set with ground-truth labels", and flipping it on intuition re-rolls
+the dice that produced 63% and 2.7%. What is fixed is the *renormalisation*:
+never "a majority of votes cast", because that lets two lost votes promote the
+third refuter to a majority of one. Lost and unscored votes are excluded from
+the numerator with the threshold left where it is. **The next piece of work is
+the labeled set** — seeded known-bad and known-good findings — and until it
+exists no kill rate can be called right or wrong.
 
 **The Validate stage — the empirical gate, spent only where reading ran out.**
 When a refuter has ticketed a surviving finding as unsettleable by reading, one
-`audit-prover` agent runs the named experiment and returns a verdict backed by a pasted command and its actual
-output. It has `Bash` and `Write`; its containment is `isolation: 'worktree'` —
-a throwaway git worktree, auto-removed if unchanged — rather than tool removal.
-Be equally honest about that: worktree isolation relocates the working
-directory, it is not a jail, and an absolute path escapes it. The agent's own
-instructions forbid absolute paths, and the failure it contains is the
-accidental one that actually happened, not an adversarial one. The stage exists
-because adversarial reasoning catches reasoning errors and not empirical ones —
-in that same published system, ten agents including a senior arbiter unanimously
-confirmed a finding that one fresh instance killed by compiling the code and
-running three tests. It is dispatched **conditionally**: a worktree per refuter
-would mean ninety sandboxes to settle a handful of verdicts. Its own verdict is
-still categorical and still three-valued, deliberately — that agent *has* the
-capability, its answer is backed by a pasted command and its actual output, and
-its `unverifiable` means "I tried to run it and something blocked me", a fact it
-earned rather than a bucket it fell into. Nothing routes onward from it either.
+`audit-prover` agent runs the named experiment and returns a verdict backed by a
+pasted command and its actual output. It has `Bash` and `Write`; its containment
+is `isolation: 'worktree'` — a throwaway git worktree, auto-removed if unchanged
+— rather than tool removal. Be equally honest about that: worktree isolation
+relocates the working directory, it is not a jail, and an absolute path escapes
+it; the agent's own instructions forbid absolute paths, and the failure it
+contains is the accidental one that actually happened, not an adversarial one.
+The stage exists because adversarial reasoning catches reasoning errors and not
+empirical ones. It is dispatched **conditionally**: a worktree per refuter would
+mean ninety sandboxes to settle a handful of verdicts. Its own verdict is still
+categorical and three-valued, deliberately — that agent *has* the capability,
+and its `unverifiable` means "I tried to run it and something blocked me", a
+fact it earned rather than a bucket it fell into. Nothing routes onward from it.
 
 **`unverified` findings are a coverage gap, not a defect.** A finding that
 survived because nobody could check it is reported separately — a subset of
@@ -1077,15 +1084,15 @@ out of its depth on that surface.
 
 **A zero-findings audit must prove it ran.** "This audit was clean" and "this
 audit ran" are different claims, and a `0 / 0 / 0` record makes the first while
-the second may be false: it satisfies every arithmetic and binding check the
-gate performs. It is also exactly what a totally failed run produces. Two
-layers close that. The workflow **throws** rather than returning when no lens
-reported — fail at the source, where the failure is still attributable — and
-lists in `lenses:` only the lenses that actually ran, logging any that were
-lost. And every record carries `finders_reporting: <n>`, which
-`audit-gate.sh` demands (`>= 1`) whenever `raw` is 0. A finding no refuter ever
+the second may be false — it is also exactly what a totally failed run produces.
+The workflow **throws** rather than returning when no lens reported, lists in
+`lenses:` only the lenses that actually ran, and every record carries
+`finders_reporting: <n>`, which `audit-gate.sh` demands (`>= 1`) whenever `raw`
+is 0 (see the template's "Rules the gate enforces"). A finding no refuter ever
 scored is likewise counted as `unverified` rather than as adversarially
 confirmed.
+
+### Audit evidence and the audit record
 
 **Audit evidence (mandatory).** The audit only counts if it runs *after* the
 milestone's last item has actually merged to the project's default branch —
@@ -1120,12 +1127,26 @@ per the attestation literature — is judge audit QUALITY: a real-but-shallow
 audit passes the gate. The adversarial refuter design and the human on the
 direction loop remain the answer for that.
 
+**The record format is versioned (`sweap_format`)**, and the schema lives in
+one place — `playbook/audit-record.template.md`, "Rules the gate enforces". The
+gate classifies rather than fails: a record already merged without the key is
+reported as `STALE:` and never blocks; a record introduced by the work under
+review is judged strictly. Legacy can be **inherited but never authored** —
+provenance comes from git, not file content, and uncertainty (no remote,
+unresolvable anchor) means everything is judged strictly. When you bump the
+format, bump `RECORD_FORMAT` in `hooks/audit-gate.sh`, the `SWEAP_FORMAT`
+constant in `workflows/milestone-audit.js`, and the template together.
+Consumer repos drain `STALE:` records by **transcription, not by re-auditing**
+— the audit already ran and its fix-PRs and follow-ups already exist; the
+recipe is the template's "Migrating a `STALE:` record".
+
+### Enforcing the audit gate in CI
+
 **Enforcing the audit gate in CI (consumer repos).** This is SCAFFOLDED, not
 copy-pasted: `.github/workflows/audit-gate.yml` ships in `templates/` and
 `scaffold.sh` installs it — including into repos that adopted sweap before the
-control existed (the self-heal runs ahead of the already-scaffolded fast-guard,
-same as the gitignore rules). Run `/agentic-loop-init` to force it. What you do with it
-then depends on your GitHub plan — read the next paragraph before assuming you
+control existed. Run `/agentic-loop-init` to force it. What you do with it then
+depends on your GitHub plan — read the plan paragraphs below before assuming you
 can make it a required check.
 
 This job is not a convenience. It is the ONLY surface that validates a record
@@ -1135,48 +1156,29 @@ record being discharged is not merged yet. Everything else is a backstop.
 
 The gate script is **vendored** into the repo at `.github/scripts/` (both
 `audit-gate.sh` and the `roadmap-lint.sh` it shells out to) and kept
-byte-identical to the plugin's copy on every session start. It is vendored
-rather than checked out from sweap in CI because a cross-repo checkout of a
-private repo needs a PAT in every consumer repo, and a required check that dies
-when that token expires blocks every PR — the same "gate depends on
-infrastructure it polices" failure as pinning it to a self-hosted runner.
-Vendored, the check needs no auth, no network and no cross-repo access.
-
-Those files are sweap-managed, not project-owned: the scaffold REWRITES them
-when they drift, because a consumer repo silently running an old gate is the bug
-this subsystem exists to fix. Every rewrite is an ordinary diffable working-tree
-change. Customize via repo variables, never by editing them — and protect
-`.github/scripts/**` exactly like `.github/workflows/**`.
-
-*Why it must live in the repo, not just in the plugin:* on 2026-08-11 a consumer
-repo merged a malformed audit record and then authored a whole new milestone on
-top of the undischarged debt. Every local control was correct and every local
-control was skew-broken — the machine's plugin cache was pinned to a build from
-three days earlier that contained no audit gate at all, and the cache did not
-refresh until sixteen hours after the bad merge. A check pinned in the repo
-cannot be stale-cached. **Any control that lives only in the plugin is a control
-whose version you do not know.**
+byte-identical to the plugin's copy on every session start: a cross-repo
+checkout of a private repo needs a PAT in every consumer, and a required check
+that dies when that token expires blocks every PR — the same "gate depends on
+infrastructure it polices" failure as pinning it to a self-hosted runner. Those
+files are sweap-managed, not project-owned: the scaffold REWRITES them when they
+drift, as an ordinary diffable working-tree change. Customize via repo
+variables, never by editing them. *Why in the repo, not just the plugin:* on
+2026-08-11 a consumer merged a malformed record and authored a whole milestone
+on top of the debt while every local control was stale-cached three days behind.
+**Any control that lives only in the plugin is a control whose version you do
+not know.**
 
 **The milestone boundary — the one merge the gate cannot ask for a record on.**
 The audit is only legal against the merged default branch (§"Audit evidence"),
-so on the PR that flips a milestone's *last* item to `done`, the record it would
-be asked for cannot exist yet: unwritable before the merge, and the merge
-unreachable without it. Both gate modes read the tree they run in, so on that
-PR's own checkout the milestone reads complete-with-no-record and both modes
-denied it — no milestone could ever be completed. Consumer A hit this on F10.4
-(2026-08-15), the first milestone to complete after the CI job was installed.
-
-The gate now exempts a milestone that is **not** complete at the mainline anchor
-but **is** complete in the state under review. The exemption is narrow: it covers
-a *missing* record only (a record that is present is still validated strictly, so
-CI keeps catching a malformed one before it merges), it is per-milestone (debt
-inherited from the anchor still denies that same PR), and it fails closed when
-the anchor cannot be resolved. Nothing is deferred to a backstop — one PR later
-the anchor contains the completion, the exemption stops applying by construction,
-and `--files` denies every backlog-advancing PR until the record lands. **So the
-audit is still mandatory; it is merely sequenced after the merge that makes it
-possible.** Merge the completing PR, then run `/milestone-audit` for it before
-anything else touches the backlog.
+so on the PR that flips a milestone's *last* item to `done`, the record cannot
+exist yet. The gate exempts a milestone that is **not** complete at the mainline
+anchor but **is** complete in the state under review — a *missing* record only
+(a present record is still validated strictly), per-milestone (inherited debt
+still denies that PR), failing closed when the anchor cannot be resolved. One PR
+later the anchor contains the completion and the exemption stops applying by
+construction. **So the audit is still mandatory; it is merely sequenced after
+the merge that makes it possible.** Merge the completing PR, then run
+`/milestone-audit` for it before anything else touches the backlog.
 
 **Required checks may not be available to you — plan the enforcement, not just
 the check.** Branch protection and rulesets are a PAID feature for private
@@ -1238,41 +1240,7 @@ Hard-won rules for the required check, WHERE ONE IS AVAILABLE (research memo,
   drift control, not a security control against a determined actor — say so
   rather than implying protection nobody can configure.
 
-**The audit record format is versioned (`sweap_format`).** The record schema
-lives in one place — `playbook/audit-record.template.md` — and every record
-carries the format version it was written under. This exists because a gate that
-retroactively invalidates already-merged records strands every consumer repo on
-every tightening: the loop wedges, and the only ways out are hand-editing config
-or re-running an expensive audit. So the gate classifies rather than fails:
-
-- A record **already merged** (its adding commit is reachable from the mainline
-  anchor) that carries **no** `sweap_format` was written before the format
-  existed. `--check` reports it as `STALE:` and it never blocks a merge.
-- A record **introduced by the work under review** is judged strictly, always.
-  `git log <anchor> -- <path>` only walks commits reachable from the anchor, so
-  a record added by the PR is invisible there and gets no grandfathering.
-
-That asymmetry is the whole design: legacy can be **inherited but never
-authored**. Provenance comes from git, not from file content, so nobody
-discharges debt by committing an empty file. Uncertainty (no remote, unresolvable
-anchor) means nothing is legacy and everything is judged strictly.
-
-When you bump the format, bump `RECORD_FORMAT` in `hooks/audit-gate.sh`, the
-`SWEAP_FORMAT` constant in `workflows/milestone-audit.js`, and the template
-together.
-
-**Consumer repos then drain `STALE:` records by TRANSCRIPTION, not by
-re-auditing.** A stale record means the audit already ran — its findings were
-already triaged and its fix-PRs and follow-up items already exist. Re-running
-`/milestone-audit` spends a full adversarial audit to produce a *different*
-result set, and the record it lands then documents a run that nothing in the
-backlog traces to. The migration is: recover the frontmatter from the old
-record's own stated range and stats plus the run's surviving `wf_*` transcript
-(`workflow_run`, `journal_sha256`), and give each distinct defect a
-`disposition:` line pointing at the fix-PR or follow-up item it already
-produced. `audit.baseline` is the fallback only when that evidence is genuinely
-unrecoverable — and re-audit only when no audit ever actually ran. Full recipe
-in `playbook/audit-record.template.md`.
+### Findings triage (three buckets)
 
 **Findings triage (three buckets — the session running the audit sorts them).**
 1. **Bug** (code fails its own spec): the session opens a follow-on fix-PR
@@ -1297,6 +1265,8 @@ in `playbook/audit-record.template.md`.
    a notification plus a waiting roadmap entry, never an autonomous scope
    expansion. The dividing line between bucket 1 and 3 is the acceptance
    criteria — failed-the-spec is a bug; not-in-the-spec is a direction call.
+
+### UI audit
 
 **UI audit (UI-heavy milestones).** When a completed milestone carries
 product-visible UI, run a **UI audit** at the boundary alongside the code audit,
@@ -1400,7 +1370,7 @@ an in-flight branch at width 1 too, and a Free-plan repo never reports BEHIND.
 | Workflow (multi-agent orchestration) | Deterministic fan-out: parallel finders + adversarial verifiers; use for audits/reviews, not feature code | Claude (user opt-in, e.g. "ultracode") |
 | `/goal` (built-in) | Sets a stop condition checked by an evaluator model after every turn; Claude keeps chaining turns until the condition is demonstrably met. Preferred driver for roadmap execution: `/goal <condition, incl. verification commands shown in transcript> or stop after N turns`. **User-only — Claude cannot invoke `/goal`; a human pastes it** | User sets once; Claude sustains |
 | `/loop` + self-scheduled wakeups | Time-paced recurring iteration; better for polling/monitoring (CI, deploys) than for goal-directed backlog work | User starts once; Claude sustains |
-| Cron jobs / scheduled cloud agents (`/schedule`) | Sessions that start on a schedule (nightly deps bump, backlog grooming, post-merge audit) — cloud routines run even if the PC is off | Claude can create; runs unattended |
+| Cron jobs / scheduled cloud agents (`/schedule`) | Sessions that start on a schedule (nightly deps bump, backlog grooming, post-merge audit) — cloud routines run even if the PC is off. `/loop-schedule` builds the prompt by referencing `/milestone`'s steps by name — it carries no copy of the goal — and the plugin must be installed by the routine's environment setup script | Claude can create; runs unattended |
 | Headless `claude -p` + auto permission mode | Scripted/CI-triggered sessions; classifier gates commands | Scripts/CI/events |
 | Agentic CI (GitHub Actions) | Claude reviews every PR; merge gated on green e2e + clean review | Git events |
 | `claude --continue` / `--resume` | Pick a session back up after a crash/reboot; long sessions survive via context summarization | User |

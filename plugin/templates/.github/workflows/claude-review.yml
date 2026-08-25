@@ -4,6 +4,13 @@ name: Claude Review
 # (agentic-ci Plan B, hand-rolled). Skips gracefully until the
 # CLAUDE_CODE_OAUTH_TOKEN repo secret exists (generate with
 # `claude setup-token`, store with `gh secret set`).
+#
+# Reviewer identity: with no `github_token` passed (this template passes none;
+# `id-token: write` is the app-auth path) the action posts as `claude[bot]`,
+# which is what the verdict gate below requires. A repo that connects a custom
+# GitHub App (custom `github_token` / `bot_name`) must set the repo variable
+# CLAUDE_REVIEWER_LOGIN to its own `<slug>[bot]`, or the verdict gate fails
+# closed on every PR.
 
 on:
   pull_request:
@@ -82,6 +89,7 @@ jobs:
           PR: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          REVIEWER_LOGIN: ${{ vars.CLAUDE_REVIEWER_LOGIN || 'claude[bot]' }}
         run: |
           # A PR that edits the reviewer workflow makes the action self-skip (it
           # refuses to run a workflow diff not yet on the default branch), so it
@@ -101,7 +109,7 @@ jobs:
           # issue-comments-only read reported "no verdict" and blocked a PR the
           # reviewer had in fact reviewed.
           #
-          # Two hardening rules ride along, because widening the search widens
+          # Three hardening rules ride along, because widening the search widens
           # what a stale or quoted string could do:
           #   1. Only the LAST non-empty line of a comment can carry the verdict
           #      (exactly what the prompt demands). A substring match anywhere in
@@ -111,6 +119,17 @@ jobs:
           #   2. Only comments newer than the head commit count. Otherwise an
           #      approve from a previous push satisfies the gate for a run whose
           #      reviewer errored out and posted nothing.
+          #   3. Identity is exact: login must equal the reviewer app's bot login
+          #      (default claude[bot], overridable via repo variable
+          #      CLAUDE_REVIEWER_LOGIN) AND user.type must be Bot. The old
+          #      case-insensitive substring match accepted any human handle
+          #      containing "claude" and any third-party "*claude*[bot]" app.
+          #      GitHub usernames cannot contain "[" or "]", so an exact
+          #      "<slug>[bot]" login cannot be produced by a user account.
+          #      performed_via_github_app is deliberately NOT checked — GitHub
+          #      returns it only on issue comments, not on reviews or inline
+          #      review comments (observed 2026-08-25), so a gate on it would
+          #      reject two of the three surfaces.
           head_ts=$(gh api "repos/$REPO/commits/$HEAD_SHA" --jq '.commit.committer.date')
           if [ -z "$head_ts" ]; then
             echo "::error::Could not read the head commit timestamp — failing closed."
@@ -119,14 +138,14 @@ jobs:
           verdict=$(
             {
               gh api "repos/$REPO/issues/$PR/comments" --paginate \
-                --jq '.[] | {t: .created_at, u: .user.login, b: .body}'
+                --jq '.[] | {t: .created_at, u: .user.login, ty: .user.type, b: .body}'
               gh api "repos/$REPO/pulls/$PR/reviews" --paginate \
-                --jq '.[] | {t: .submitted_at, u: .user.login, b: .body}'
+                --jq '.[] | {t: .submitted_at, u: .user.login, ty: .user.type, b: .body}'
               gh api "repos/$REPO/pulls/$PR/comments" --paginate \
-                --jq '.[] | {t: .created_at, u: .user.login, b: .body}'
-            } | jq -rs --arg since "$head_ts" '
+                --jq '.[] | {t: .created_at, u: .user.login, ty: .user.type, b: .body}'
+            } | jq -rs --arg who "$REVIEWER_LOGIN" --arg since "$head_ts" '
                   [ .[]
-                    | select(.u != null and (.u | test("claude"; "i")))
+                    | select(.u == $who and .ty == "Bot")
                     | select(.t != null and .t > $since)
                     | select(.b != null and .b != "")
                     | .last = ( .b | split("\n") | map(sub("\r$"; ""))
@@ -136,7 +155,7 @@ jobs:
                   | sort_by(.t) | last | if . == null then "" else .last end'
           )
           if [ -z "$verdict" ]; then
-            echo "::error::No reviewer verdict found — failing closed. Re-run the review or investigate why it did not post."
+            echo "::error::No verdict from reviewer '$REVIEWER_LOGIN' (user.type Bot) newer than head $HEAD_SHA — failing closed. Re-run the review or investigate why it did not post. If the reviewer posts under a different login (custom github_token app), set repo variable CLAUDE_REVIEWER_LOGIN."
             exit 1
           elif printf '%s' "$verdict" | grep -qiE "needs-work"; then
             echo "::error::Reviewer verdict is needs-work — address the blocking findings and push before merge."

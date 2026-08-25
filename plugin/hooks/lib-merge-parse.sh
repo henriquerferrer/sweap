@@ -191,3 +191,193 @@ EOF
   [ "$in_gh" = "1" ] && _mc_record
   return 0
 }
+
+# ==============================================================================
+# `git push` detector/parser — same greedy-detect + fail-closed doctrine.
+#
+# Sourced by pre-merge-gate.sh for its push branch (deny a push whose resolved
+# destination is the base branch). Lives in this lib so the two detectors share
+# ONE tokeniser and one set of accepted false-positives.
+#
+# `parse_push_command "<raw command string>"` sets these globals:
+#   PC_PUSH_RELATED — 1 iff PC_RELATED_COUNT>0 OR PC_PUSH_COUNT>0. Never a
+#                     no-op just because the greedy scan missed a quoted -C path.
+#   PC_RELATED_COUNT— greedy count: `push` seen as the FIRST non-option word after
+#                     a `git` token (skipping dash-tokens and the values of
+#                     -C/-c/--git-dir/--work-tree/--namespace/--exec-path/
+#                     --super-prefix), structure-agnostic (quotes/operators
+#                     vanish). Deliberately NARROWER than the merge scan so
+#                     `git stash push`, `git commit -m "push notifications"` and
+#                     `git log --grep push` do not trip, while `echo "git push"`,
+#                     `bash -c "git push origin main"`, `if …; then git push …; fi`
+#                     and `$(git push …)` still do (fail closed).
+#   PC_PUSH_COUNT   — precise count of command-position `git push` invocations.
+#   PC_PARSE_ERR    — 1 if the command could not be safely tokenised.
+#   PC_HAS_CD       — 1 if a `cd`/`pushd`/`popd` command appears anywhere, or a
+#                     `git -C <path>` was consumed (cwd cannot be trusted).
+#   PC_C_PATHS      — newline-separated list of `-C` values seen.
+#   PC_PUSHES       — one record per push, newline-separated:
+#                     `<flags>\x1f<remote>\x1f<refspec1> <refspec2>…` (US-separated,
+#                     since tab is IFS whitespace and an empty flags column would
+#                     collapse) where flags is a comma-joined subset of {all,mirror,branches,delete,tags,
+#                     prune,dryrun} (dry-run is informational only — still gated).
+#
+# Value-taking push flags (separate token) are ONLY -o/--push-option,
+# --receive-pack, --exec, --repo. `--force-with-lease`, `--signed`,
+# `--force-if-includes`, -f/-u/-n/-q/-v/-4/-6 and every other `-*` are booleans
+# (the attached `--force-with-lease=…`/`--repo=…`/`--signed=…` forms are single
+# tokens, ignored). Getting this wrong fails OPEN: treating a bare
+# `--force-with-lease` as value-taking would eat `origin` in
+# `git push --force-with-lease origin main`, make `main` the remote, and resolve
+# the CURRENT branch instead.
+#
+# RESIDUAL / ACCEPTED FALSE-POSITIVES: identical to the merge parser above —
+# token-hiding (eval/string assembly) is out of the threat model; a mention of
+# `git push` in structure the precise parser cannot see denies recoverably.
+
+_pc_related_scan() {
+  local n=""
+  if command -v awk >/dev/null 2>&1 && command -v tr >/dev/null 2>&1; then
+    n="$(printf '%s' "$1" | tr -c 'A-Za-z0-9_.=/~:@+-' '\n' | awk '
+      NF==0 { next }
+      { if ($0=="git") { s=1; next }
+        if (s==1) {
+          if (skip==1) { skip=0; next }
+          if (substr($0,1,1)=="-") {
+            if ($0=="-C" || $0=="-c" || $0=="--git-dir" || $0=="--work-tree" || $0=="--namespace" || $0=="--exec-path" || $0=="--super-prefix") skip=1
+            next
+          }
+          if ($0=="push") c++
+          s=0; skip=0
+        } }
+      END { print c+0 }' 2>/dev/null)"
+  fi
+  if printf '%s' "$n" | grep -qE '^[0-9]+$'; then
+    PC_RELATED_COUNT="$n"
+  elif printf '%s' "$1" | grep -Eq 'git.*push'; then
+    # Greedy counter unavailable (missing tr/awk) — do NOT fail open. Sentinel
+    # count can never equal PC_PUSH_COUNT, so the gate denies (recoverable).
+    PC_RELATED_COUNT=999999
+  fi
+}
+
+# Flush the push invocation being walked (state in _pc_*).
+_pc_record() {
+  [ "$_pc_in_push" = "1" ] || return 0
+  PC_PUSH_COUNT=$((PC_PUSH_COUNT + 1))
+  PC_PUSHES="${PC_PUSHES}${PC_PUSHES:+$'\n'}${_pc_flags}"$'\x1f'"${_pc_remote}"$'\x1f'"${_pc_refspecs}"
+}
+
+_pc_reset() {
+  _pc_in_git=0; _pc_in_push=0; _pc_git_skip=0; _pc_git_c=0; _pc_push_skip=0
+  _pc_dashdash=0; _pc_flags=""; _pc_remote=""; _pc_refspecs=""; _pc_npos=0
+}
+
+parse_push_command() {
+  PC_PUSH_RELATED=0
+  PC_RELATED_COUNT=0
+  PC_PUSH_COUNT=0
+  PC_PARSE_ERR=0
+  PC_HAS_CD=0
+  PC_C_PATHS=""
+  PC_PUSHES=""
+
+  local raw="$1"
+  [ -n "$raw" ] || return 0
+
+  _pc_related_scan "$raw"
+
+  # Cheap pre-filter: if the literal word `push` is nowhere in the string the
+  # precise walker cannot find one either (it only recognises the token `push`).
+  # Keeps the hot path (every Bash call) to one grep + one awk.
+  if [ "$PC_RELATED_COUNT" = "0" ] && ! printf '%s' "$raw" | grep -qw 'push'; then
+    return 0
+  fi
+
+  # Precise parse — same pipeline as parse_merge_command.
+  raw="${raw//\\$'\n'/ }"
+  raw="${raw//$'\n'/ ; }"
+  raw="$(printf '%s' "$raw" | sed -E 's/(\|\||&&|;|\||&)/ \1 /g')"
+  local tokens
+  if ! tokens="$(printf '%s' "$raw" | xargs -n1 printf '%s\n' 2>/dev/null)"; then
+    PC_PARSE_ERR=1
+    PC_PUSH_RELATED=1
+    return 0
+  fi
+
+  local expect_cmd=1 tok
+  _pc_reset
+  while IFS= read -r tok; do
+    [ -n "$tok" ] || continue
+
+    case "$tok" in
+      ";" | "&&" | "||" | "|" | "&" | "|&")
+        _pc_record
+        _pc_reset
+        expect_cmd=1
+        continue ;;
+    esac
+
+    if [ "$_pc_in_push" = "1" ]; then
+      case "$tok" in *">"* | *"<"*) continue ;; esac     # redirections
+      if [ "$_pc_push_skip" = "1" ]; then _pc_push_skip=0; continue; fi
+      if [ "$_pc_dashdash" = "0" ]; then
+        case "$tok" in
+          --) _pc_dashdash=1; continue ;;
+          -o | --push-option | --receive-pack | --exec | --repo) _pc_push_skip=1; continue ;;
+          --all | --mirror | --branches) _pc_flags="${_pc_flags}${_pc_flags:+,}all"; continue ;;
+          -d | --delete) _pc_flags="${_pc_flags}${_pc_flags:+,}delete"; continue ;;
+          --tags) _pc_flags="${_pc_flags}${_pc_flags:+,}tags"; continue ;;
+          --prune) _pc_flags="${_pc_flags}${_pc_flags:+,}prune"; continue ;;
+          -n | --dry-run) _pc_flags="${_pc_flags}${_pc_flags:+,}dryrun"; continue ;;
+          -*) continue ;;   # every other flag is boolean (incl. attached =value forms)
+        esac
+      fi
+      _pc_npos=$((_pc_npos + 1))
+      if [ "$_pc_npos" = "1" ]; then _pc_remote="$tok"
+      else _pc_refspecs="${_pc_refspecs}${_pc_refspecs:+ }$tok"; fi
+      continue
+    fi
+
+    if [ "$_pc_in_git" = "1" ]; then
+      # git global options before the subcommand.
+      if [ "$_pc_git_c" = "1" ]; then
+        _pc_git_c=0; PC_HAS_CD=1
+        PC_C_PATHS="${PC_C_PATHS}${PC_C_PATHS:+$'\n'}$tok"
+        continue
+      fi
+      if [ "$_pc_git_skip" = "1" ]; then _pc_git_skip=0; continue; fi
+      case "$tok" in
+        -C) _pc_git_c=1; continue ;;
+        -C?*) PC_HAS_CD=1; PC_C_PATHS="${PC_C_PATHS}${PC_C_PATHS:+$'\n'}${tok#-C}"; continue ;;
+        -c | --git-dir | --work-tree | --namespace | --exec-path | --super-prefix) _pc_git_skip=1; continue ;;
+        -*) continue ;;
+      esac
+      if [ "$tok" = "push" ]; then _pc_in_push=1; else _pc_in_git=0; fi
+      continue
+    fi
+
+    if [ "$expect_cmd" = "1" ]; then
+      case "$tok" in
+        [A-Za-z_]*=*) continue ;;                                   # VAR=val prefix
+        command | builtin | exec | env | sudo | nice | nohup | time | timeout)
+          continue ;;                                               # command wrappers
+      esac
+      expect_cmd=0
+      case "$tok" in
+        git) _pc_in_git=1 ;;
+        cd | pushd | popd) PC_HAS_CD=1 ;;
+      esac
+      continue
+    fi
+    # Argument of a non-git command → ignore.
+  done <<EOF2
+$tokens
+EOF2
+  _pc_record
+
+  if [ "${PC_RELATED_COUNT:-0}" -gt 0 ] || [ "${PC_PUSH_COUNT:-0}" -gt 0 ]; then
+    PC_PUSH_RELATED=1
+  fi
+  return 0
+}

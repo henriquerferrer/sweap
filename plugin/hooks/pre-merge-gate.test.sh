@@ -26,7 +26,10 @@ trap 'rm -rf "$WORK"' EXIT
 # Two shapes the hook issues:
 #   - `gh pr view <n> --json ...` : rollup + mergeability. Mode is GH_STUB,
 #     overridable PER PR via GH_STUB_<n> (e.g. GH_STUB_43=failure) so
-#     chained-merge tests can make different PRs green/red independently.
+#     chained-merge tests can make different PRs green/red independently. The
+#     PR's changed-file list is GH_FILES_JSON, overridable PER PR the same way
+#     via GH_FILES_JSON_<n>. If GH_MARK names a path, every view call touches
+#     it (lets a test prove the merge branch was never consulted).
 #   - `gh api repos/.../compare/<base>...<headOid> --jq .behind_by` : the
 #     protection-independent base-freshness check. Answer driven by GH_COMPARE:
 #     unset/`0` -> print `0` (head up-to-date); an integer like `2` -> print it
@@ -60,6 +63,9 @@ for a in "$@"; do
 done
 ovr="GH_STUB_${num}"
 mode="${!ovr:-${GH_STUB:-green}}"
+fovr="GH_FILES_JSON_${num}"
+files="${!fovr:-${GH_FILES_JSON:-[]}}"
+[ -n "${GH_MARK:-}" ] && : >"$GH_MARK"
 case "$mode" in
   error)   exit 1 ;;                                   # gh failed / unreachable
   slow)    sleep "${GH_STUB_SLEEP:-5}"; exit 0 ;;      # exceed the internal timeout
@@ -69,7 +75,7 @@ case "$mode" in
       {"__typename":"CheckRun","name":"lint","status":"COMPLETED","conclusion":"SUCCESS"},
       {"__typename":"CheckRun","name":"e2e","status":"COMPLETED","conclusion":"SUCCESS"},
       {"__typename":"CheckRun","name":"review","status":"COMPLETED","conclusion":"SUCCESS"}
-    ],"mergeStateStatus":"CLEAN","baseRefName":"main","headRefOid":"deadbeef","mergeCommit":{"oid":"deadbeef"},"files":%s}\n' "${GH_FILES_JSON:-[]}" ;;
+    ],"mergeStateStatus":"CLEAN","baseRefName":"main","headRefOid":"deadbeef","mergeCommit":{"oid":"deadbeef"},"files":%s}\n' "$files" ;;
   skipped)
     echo '{"statusCheckRollup":[
       {"__typename":"CheckRun","name":"lint","status":"COMPLETED","conclusion":"SUCCESS"},
@@ -81,20 +87,20 @@ case "$mode" in
       {"__typename":"CheckRun","name":"e2e","status":"COMPLETED","conclusion":"SKIPPED"},
       {"__typename":"CheckRun","name":"review","status":"COMPLETED","conclusion":"SUCCESS"},
       {"__typename":"CheckRun","name":"audit-gate","status":"COMPLETED","conclusion":"SUCCESS"}
-    ],"mergeStateStatus":"CLEAN","baseRefName":"main","headRefOid":"deadbeef","mergeCommit":{"oid":"deadbeef"},"files":%s}\n' "${GH_FILES_JSON:-[]}" ;;
+    ],"mergeStateStatus":"CLEAN","baseRefName":"main","headRefOid":"deadbeef","mergeCommit":{"oid":"deadbeef"},"files":%s}\n' "$files" ;;
   greenfull)  # green including the ci-status aggregator (presence-check shape)
     printf '{"statusCheckRollup":[
       {"__typename":"CheckRun","name":"lint","status":"COMPLETED","conclusion":"SUCCESS"},
       {"__typename":"CheckRun","name":"e2e","status":"COMPLETED","conclusion":"SUCCESS"},
       {"__typename":"CheckRun","name":"ci-status","status":"COMPLETED","conclusion":"SUCCESS"},
       {"__typename":"CheckRun","name":"review","status":"COMPLETED","conclusion":"SUCCESS"}
-    ],"mergeStateStatus":"CLEAN","baseRefName":"main","headRefOid":"deadbeef","mergeCommit":{"oid":"deadbeef"},"files":%s}\n' "${GH_FILES_JSON:-[]}" ;;
+    ],"mergeStateStatus":"CLEAN","baseRefName":"main","headRefOid":"deadbeef","mergeCommit":{"oid":"deadbeef"},"files":%s}\n' "$files" ;;
   gateskipped)  # a gate check that may NEVER skip reports SKIPPED (misconfigured workflow)
     printf '{"statusCheckRollup":[
       {"__typename":"CheckRun","name":"lint","status":"COMPLETED","conclusion":"SUCCESS"},
       {"__typename":"CheckRun","name":"e2e","status":"COMPLETED","conclusion":"SUCCESS"},
       {"__typename":"CheckRun","name":"audit-gate","status":"COMPLETED","conclusion":"SKIPPED"}
-    ],"mergeStateStatus":"CLEAN","baseRefName":"main","headRefOid":"deadbeef","mergeCommit":{"oid":"deadbeef"},"files":%s}\n' "${GH_FILES_JSON:-[]}" ;;
+    ],"mergeStateStatus":"CLEAN","baseRefName":"main","headRefOid":"deadbeef","mergeCommit":{"oid":"deadbeef"},"files":%s}\n' "$files" ;;
   failure)
     echo '{"statusCheckRollup":[
       {"__typename":"CheckRun","name":"lint","status":"COMPLETED","conclusion":"SUCCESS"},
@@ -190,9 +196,9 @@ out="$(GH_FILES_JSON='[{"path":"roadmap/F1.2.md"},{"path":"src/a.ts"}]' run_gate
 if is_deny "$out" && reason "$out" | grep -q "not roadmap-only"; then ok "a4) e2e skipped + code file -> deny (skip != pass)"
 else bad "a4) e2e skipped + code -> deny" "got: $out"; fi
 
-# (a5) e2e SKIPPED and a workflow edit -> DENY (.github/ is code)
+# (a5) e2e SKIPPED and a workflow edit -> DENY (self-modifying CI fires before the lane check)
 out="$(GH_FILES_JSON='[{"path":".github/workflows/ci.yml"}]' run_gate e2eskipped 'gh pr merge 42 --squash')"
-if is_deny "$out" && reason "$out" | grep -q "not roadmap-only"; then ok "a5) e2e skipped + workflow edit -> deny"
+if is_deny "$out" && reason "$out" | grep -q "CI controls"; then ok "a5) e2e skipped + workflow edit -> deny (self-modifying CI, fires before lane check)"
 else bad "a5) e2e skipped + workflow edit -> deny" "got: $out"; fi
 
 # (a6) e2e SKIPPED with no file list -> DENY (cannot confirm the lane)
@@ -219,6 +225,55 @@ else ok "a9) no ci-status declared -> presence not required (no regression)"; fi
 out="$(run_gate gateskipped 'gh pr merge 42 --squash')"
 if is_deny "$out" && reason "$out" | grep -q "SKIPPED: audit-gate"; then ok "a7) audit-gate skipped -> deny (misconfigured workflow)"
 else bad "a7) audit-gate skipped -> deny" "got: $out"; fi
+
+echo "== self-modifying CI: a PR touching .github/workflows or .github/scripts is never session-mergeable =="
+
+# (w1) green PR editing a workflow -> DENY naming the PR and the human exit
+out="$(GH_FILES_JSON='[{"path":".github/workflows/ci.yml"}]' run_gate green 'gh pr merge 42 --squash')"
+if is_deny "$out" && reason "$out" | grep -q 'PR #42' && reason "$out" | grep -q 'HUMAN'; then ok "w1) green + .github/workflows/ci.yml -> deny (human merges)"
+else bad "w1) workflow edit -> deny" "got: $out"; fi
+
+# (w2) mixed PR (code + workflow) -> DENY naming the workflow file
+out="$(GH_FILES_JSON='[{"path":"src/a.ts"},{"path":".github/workflows/claude-review.yml"}]' run_gate green 'gh pr merge 42 --squash')"
+if is_deny "$out" && reason "$out" | grep -q 'claude-review.yml'; then ok "w2) mixed code + workflow -> deny naming claude-review.yml"
+else bad "w2) mixed PR -> deny" "got: $out"; fi
+
+# (w3) vendored gate script -> DENY
+out="$(GH_FILES_JSON='[{"path":".github/scripts/audit-gate.sh"}]' run_gate green 'gh pr merge 42 --squash')"
+if is_deny "$out" && reason "$out" | grep -q 'CI controls'; then ok "w3) .github/scripts/audit-gate.sh -> deny"
+else bad "w3) vendored script -> deny" "got: $out"; fi
+
+# (w4) consumer-owned script in the vendored dir -> DENY (whole directory protected)
+out="$(GH_FILES_JSON='[{"path":".github/scripts/ci-status.sh"}]' run_gate green 'gh pr merge 42 --squash')"
+if is_deny "$out" && reason "$out" | grep -q 'CI controls'; then ok "w4) .github/scripts/ci-status.sh -> deny (whole dir)"
+else bad "w4) consumer script -> deny" "got: $out"; fi
+
+# (w5) nested path -> DENY
+out="$(GH_FILES_JSON='[{"path":".github/workflows/nested/x.yml"}]' run_gate green 'gh pr merge 42 --squash')"
+if is_deny "$out" && reason "$out" | grep -q 'CI controls'; then ok "w5) nested .github/workflows/nested/x.yml -> deny"
+else bad "w5) nested path -> deny" "got: $out"; fi
+
+# (w6) other .github files are NOT CI controls -> ALLOW
+out="$(GH_FILES_JSON='[{"path":".github/ISSUE_TEMPLATE/bug.md"},{"path":".github/CODEOWNERS"},{"path":".github/dependabot.yml"}]' run_gate green 'gh pr merge 42 --squash')"
+if [ -z "$out" ]; then ok "w6) .github/ non-workflow files -> allow"
+else bad "w6) other .github files -> allow" "unexpected: $out"; fi
+
+# (w7) root-anchored: look-alike paths elsewhere -> ALLOW
+out="$(GH_FILES_JSON='[{"path":"docs/.github/workflows/x.yml"},{"path":"github/workflows/y.yml"}]' run_gate green 'gh pr merge 42 --squash')"
+if [ -z "$out" ]; then ok "w7) docs/.github/workflows + github/workflows -> allow (root-anchored)"
+else bad "w7) look-alike paths -> allow" "unexpected: $out"; fi
+
+# (w8) batch: only the SECOND PR edits a workflow -> deny naming #42, not #41
+export GH_FILES_JSON_42='[{"path":".github/workflows/ci.yml"}]'
+out="$(GH_FILES_JSON='[{"path":"src/a.ts"}]' run_gate green 'gh pr merge 41 --squash && gh pr merge 42 --squash')"
+unset GH_FILES_JSON_42
+if is_deny "$out" && reason "$out" | grep -q 'PR #42' && ! reason "$out" | grep -q 'PR #41'; then ok "w8) batch 41(code) && 42(workflow) -> deny naming #42 only"
+else bad "w8) batch workflow deny" "got: $out"; fi
+
+# (w9) red PR + workflow edit -> the red-check deny fires first (ordering unchanged)
+out="$(GH_FILES_JSON='[{"path":".github/workflows/ci.yml"}]' run_gate failure 'gh pr merge 42 --squash')"
+if is_deny "$out" && reason "$out" | grep -q 'e2e=FAILURE'; then ok "w9) red + workflow edit -> red deny first"
+else bad "w9) red + workflow -> red deny first" "got: $out"; fi
 
 # (b) a FAILURE -> DENY naming the check
 out="$(run_gate failure 'gh pr merge 42 --squash')"
@@ -672,6 +727,158 @@ out="$(GH_FILES_JSON="$BIGLIST" run_gate green 'gh pr merge 7 --squash' "$AUD")"
 if is_deny "$out" && printf '%s' "$(reason "$out")" | grep -q 'truncat'; then
   ok "g4) 100-file PR fails closed"
 else bad "g4) 100-file PR fails closed" "out: $out"; fi
+
+echo "== push gate: a git push whose destination resolves to the base branch =="
+
+# Offline git fixture: bare remote, clone on feat/x tracking origin/feat/x,
+# origin/HEAD -> main, a worktree on feat/y, plus a develop-default clone.
+PF="$WORK/push"
+mkdir -p "$PF"
+git init -q --bare "$PF/remote.git"
+git clone -q "$PF/remote.git" "$PF/repo" 2>/dev/null
+PG="git -C $PF/repo -c user.email=t@t -c user.name=t"
+$PG commit -q --allow-empty -m init
+$PG branch -M main
+$PG push -q -u origin main
+$PG remote set-head origin -a >/dev/null 2>&1
+$PG branch feat/y && $PG push -q -u origin feat/y && $PG worktree add -q "$PF/wt" feat/y
+$PG checkout -q -b feat/x && $PG push -q -u origin feat/x
+PREPO="$PF/repo"
+
+run_push() {  # $1=command [$2=cwd] ; extra env via caller. Green stub on PATH, GH_MARK records any view.
+  local cmd="$1" cwd="${2:-$PREPO}"
+  local json
+  json="$(jq -cn --arg c "$cmd" --arg d "$cwd" \
+    '{tool_name:"Bash",hook_event_name:"PreToolUse",cwd:$d,tool_input:{command:$c}}')"
+  PATH="$STUB_BIN:$PATH" GH_STUB=green GH_COMPARE=0 MERGE_GATE_GH_TIMEOUT=5 GH_FILES_JSON='[]' \
+    GH_MARK="$PF/viewed" bash "$GATE" <<<"$json"
+}
+expect_allow() {  # $1=label $2=cmd [$3=cwd]
+  local out; out="$(run_push "$2" "${3:-$PREPO}")"
+  if [ -z "$out" ]; then ok "$1"; else bad "$1" "unexpected: $out"; fi
+}
+expect_deny() {  # $1=label $2=cmd $3=reason-substring [$4=cwd]
+  local out; out="$(run_push "$2" "${4:-$PREPO}")"
+  if is_deny "$out" && reason "$out" | grep -qF -- "$3"; then ok "$1"; else bad "$1" "got: $out"; fi
+}
+
+# MUST NOT DENY (hot path)
+expect_allow "p1) --force-with-lease origin feat/x -> allow"            'git push --force-with-lease origin feat/x'
+expect_allow "p2) --force-with-lease=feat/x:abc origin feat/x -> allow"  'git push --force-with-lease=feat/x:abc origin feat/x'
+expect_allow "p3) -u origin feat/x -> allow"                             'git push -u origin feat/x'
+expect_allow "p4) origin HEAD on feat/x -> allow"                        'git push origin HEAD'
+expect_allow "p5) bare git push on feat/x (upstream feat/x) -> allow"    'git push'
+expect_allow "p6) bare --force-with-lease from the worktree -> allow"    'git push --force-with-lease' "$PF/wt"
+expect_allow "p7) verbatim rebase recipe -> allow"                       'git fetch origin && git rebase origin/main && git push --force-with-lease'
+expect_allow "p8) origin --delete feat/x -> allow"                       'git push origin --delete feat/x'
+expect_allow "p9) origin :feat/x -> allow"                               'git push origin :feat/x'
+expect_allow "p10) origin main:feat/x -> allow"                          'git push origin main:feat/x'
+expect_allow "p11) tag v1.2.3 -> allow"                                  'git push origin v1.2.3'
+expect_allow "p12) HEAD:refs/sweap/probe -> allow (not a branch)"        'git push origin HEAD:refs/sweap/probe'
+expect_allow "p13) -u origin feat/x 2>&1 | tail -3 -> allow"             'git push -u origin feat/x 2>&1 | tail -3'
+expect_allow "p13b) git -C <wt> push origin feat/x -> allow (explicit refspec)" "git -C $PF/wt push origin feat/x"
+expect_allow "p14) git pull origin main -> no-op"                        'git pull origin main'
+expect_allow "p15) git stash push -m wip -> no-op"                       'git stash push -m wip'
+expect_allow "p16) commit message mentioning push -> no-op"              'git commit -m "feat: push notifications"'
+expect_allow "p17) git log --grep push -> no-op"                         'git log --grep push'
+expect_allow "p18) git log main -> no-op"                                'git log main'
+expect_allow "p19) echo push -> no-op"                                   'echo push'
+expect_allow "p20) gh pr merge 42 green -> merge branch unchanged"       'gh pr merge 42 --squash'
+out="$(SWEAP_PUSH_GATE=off run_push 'git push origin main')"
+if [ -z "$out" ]; then ok "p21) SWEAP_PUSH_GATE=off in hook env (no project file) -> allow"
+else bad "p21) override from hook env -> allow" "unexpected: $out"; fi
+
+# MUST DENY
+B="destination resolves to base branch 'main'"
+expect_deny "q1) origin main -> deny"                    'git push origin main' "$B"
+expect_deny "q2) origin HEAD:main -> deny"               'git push origin HEAD:main' "$B"
+expect_deny "q3) origin main:main -> deny"               'git push origin main:main' "$B"
+expect_deny "q4) origin refs/heads/main -> deny"         'git push origin refs/heads/main' "$B"
+expect_deny "q5) origin +main -> deny"                   'git push origin +main' "$B"
+expect_deny "q6) -f origin main -> deny"                 'git push -f origin main' "$B"
+expect_deny "q7) --force-with-lease origin main -> deny (flag must not eat origin)" 'git push --force-with-lease origin main' "$B"
+expect_deny "q8) origin feat/x:main -> deny"             'git push origin feat/x:main' "$B"
+expect_deny "q9) origin :main -> deny"                   'git push origin :main' "$B"
+expect_deny "q10) origin --delete main -> deny"          'git push origin --delete main' "$B"
+expect_deny "q11) origin master -> deny"                 'git push origin master' "base branch 'master'"
+expect_deny "q12) --all origin -> deny"                  'git push --all origin' 'every branch'
+expect_deny "q13) --mirror origin -> deny"               'git push --mirror origin' 'every branch'
+expect_deny "q14) git -C <repo> push origin main -> deny (explicit refspec; -C irrelevant)" "git -C $PREPO push origin main" "$B"
+expect_deny "q15) FOO=bar git push origin main -> deny"  'FOO=bar git push origin main' "$B"
+expect_deny "q16) origin main && echo ok -> deny"        'git push origin main && echo ok' "$B"
+expect_deny "q17) echo x | git push origin main -> deny" 'echo x | git push origin main' "$B"
+expect_deny "q18) upstream main -> deny"                 'git push upstream main' "$B"
+expect_deny "q19) origin main 2>&1 -> deny"              'git push origin main 2>&1' "$B"
+expect_deny "q20) cd sub && git push -> deny (recoverable)" 'cd sub && git push' 'cd/-C'
+expect_deny "q21) if-wrapped push -> deny (greedy 1 != precise 0)" 'if true; then git push origin feat/x; fi' 'push-related but is not a plain'
+expect_deny "q22) echo \"git push origin feat/x\" -> deny (accepted over-block)" 'echo "git push origin feat/x"' 'push-related but is not a plain'
+expect_deny "q23) bash -c \"git push origin main\" -> deny" 'bash -c "git push origin main"' 'push-related but is not a plain'
+expect_deny "q24) -C \"/dir with space\" -> deny (precise 1, greedy 0)" 'git -C "/dir with space" push origin main' 'push-related but is not a plain'
+expect_deny "q25) unbalanced quote -> deny"              'git push origin "main' 'push-related but is not a plain'
+expect_deny "q26) SWEAP_PUSH_GATE=off inline prefix -> still deny" 'SWEAP_PUSH_GATE=off git push origin main' "$B"
+out="$(SWEAP_BASE_BRANCH=develop run_push 'git push origin develop')"
+if is_deny "$out" && reason "$out" | grep -q "base branch 'develop'"; then ok "q27) SWEAP_BASE_BRANCH=develop + push develop -> deny"
+else bad "q27) SWEAP_BASE_BRANCH -> deny" "got: $out"; fi
+
+# q28: origin/HEAD -> trunk fixture
+git clone -q "$PF/remote.git" "$PF/trunkrepo" 2>/dev/null
+TG="git -C $PF/trunkrepo -c user.email=t@t -c user.name=t"
+$TG checkout -q -b trunk && $TG push -q -u origin trunk
+$TG symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/trunk
+$TG checkout -q -b feat/z
+expect_deny "q28) origin/HEAD -> trunk + push origin trunk -> deny" 'git push origin trunk' "base branch 'trunk'" "$PF/trunkrepo"
+expect_allow "q28b) same repo, push origin feat/z -> allow"        'git push origin feat/z' "$PF/trunkrepo"
+
+# q29: bare push while on main
+$PG checkout -q main
+expect_deny "q29) bare git push with HEAD on main -> deny"   'git push' "$B"
+expect_deny "q30) origin HEAD on main -> deny"               'git push origin HEAD' "$B"
+$PG checkout -q feat/x
+
+# q31: push.default=upstream with upstream origin/main
+$PG branch -q -u origin/main && $PG config push.default upstream
+expect_deny "q31) bare push, upstream origin/main, push.default=upstream -> deny" 'git push' "$B"
+$PG config push.default matching
+expect_deny "q32) bare push, push.default=matching -> deny"  'git push' 'matching'
+$PG config --unset push.default && $PG branch -q -u origin/feat/x
+
+# q33: detached HEAD
+$PG checkout -q --detach
+expect_deny "q33) detached HEAD + origin HEAD -> deny (recoverable)" 'git push origin HEAD' 'detached'
+$PG checkout -q feat/x
+
+# q34: awk missing -> sentinel deny even for an item branch
+out="$(PATH="$NOAWK" GH_STUB=green bash "$GATE" <<<"$(jq -cn --arg c 'git push origin feat/x' --arg d "$PREPO" '{tool_name:"Bash",cwd:$d,tool_input:{command:$c}}')")"
+if is_deny "$out" && reason "$out" | grep -q 'push-related but is not a plain'; then ok "q34) awk/tr missing + push feat/x -> sentinel deny"
+else bad "q34) awk missing -> deny" "got: $out"; fi
+
+# q35: parser lib unreadable (hook copied without the lib) -> deny
+NOLIBDIR="$WORK/nolibdir"; mkdir -p "$NOLIBDIR"; cp "$GATE" "$NOLIBDIR/pre-merge-gate.sh"
+out="$(bash "$NOLIBDIR/pre-merge-gate.sh" <<<"$(jq -cn --arg c 'git push origin main' --arg d "$PREPO" '{tool_name:"Bash",cwd:$d,tool_input:{command:$c}}')" 2>/dev/null)"
+if is_deny "$out" && reason "$out" | grep -q 'parser could not load'; then ok "q35) parser lib missing + push -> deny (fail-closed)"
+else bad "q35) lib missing -> deny" "got: $out"; fi
+out="$(bash "$NOLIBDIR/pre-merge-gate.sh" <<<"$(jq -cn --arg c 'ls -la' --arg d "$PREPO" '{tool_name:"Bash",cwd:$d,tool_input:{command:$c}}')" 2>/dev/null)"
+if [ -z "$out" ]; then ok "q35b) parser lib missing + unrelated -> no-op"
+else bad "q35b) lib missing + unrelated -> no-op" "got: $out"; fi
+
+# q36: override refused when the PROJECT settings define it
+mkdir -p "$PREPO/.claude"; printf '{"env":{"SWEAP_PUSH_GATE":"off"}}\n' > "$PREPO/.claude/settings.json"
+out="$(SWEAP_PUSH_GATE=off run_push 'git push origin main')"
+if is_deny "$out" && reason "$out" | grep -q "project's .claude settings"; then ok "q36) override in hook env BUT project settings define it -> still deny"
+else bad "q36) project-defined override -> deny" "got: $out"; fi
+rm -rf "$PREPO/.claude"
+
+# q37: push deny wins before the merge branch is consulted
+rm -f "$PF/viewed"
+expect_deny "q37) push origin main; gh pr merge 42 -> push deny" 'git push origin main; gh pr merge 42' "$B"
+if [ ! -e "$PF/viewed" ]; then ok "q37b) merge never queried (no gh pr view)"
+else bad "q37b) merge never queried" "stub marker present"; fi
+
+# q38: jq missing + push -> deny, not no-op
+push_json="$(jq -cn --arg c 'git push origin main' --arg d "$PREPO" '{tool_name:"Bash",cwd:$d,tool_input:{command:$c}}')"
+out="$(PATH="$NOJQ" bash "$GATE" <<<"$push_json")"
+if is_deny "$out" && reason "$out" | grep -q 'jq is unavailable'; then ok "q38) jq missing + push -> deny (fail-closed)"
+else bad "q38) jq missing + push -> deny" "got: $out"; fi
 
 echo
 printf 'RESULT: %d passed, %d failed\n' "$PASS" "$FAIL"

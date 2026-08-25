@@ -70,6 +70,15 @@ export function renderPage() {
   /* Ties the card to the Backlog below it: the same milestone, marked once. */
   .ms.running { border-left:3px solid var(--accent); padding-left:9px; }
   .ms.running > h3 { color:var(--accent); }
+  /* The resume plan: what the human does next. */
+  .plan { margin-top:8px; } .plan h4 { font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin:6px 0 4px; font-weight:600; }
+  /* The plan is the human's to-do, not the run's verdict: readable fg even inside a red (contradicted) endbar. */
+  .endbar .plan .row { color:var(--fg); }
+  .cmd { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; background:var(--bg); border:1px solid var(--line); border-radius:4px; padding:0 5px; }
+  .cmd.pending { opacity:.6; text-decoration:line-through; }
+  .copy { font:inherit; font-size:11px; border:1px solid var(--line); background:var(--bg); color:var(--fg); border-radius:4px; padding:0 6px; cursor:pointer; }
+  .suspect { color:var(--warn); } details.dropped { color:var(--muted); margin-top:4px; }
+  #updated.err { color:var(--bad); }
 </style></head>
 <body>
 <header><h1>sweap <span id="project">…</span></h1><span id="notes"></span><span id="updated"></span></header>
@@ -111,6 +120,39 @@ const plural = (n, w) => n + " " + w + (n === 1 ? "" : "s");
 // milestone is a good guess, and a good guess still must not read as a fact.
 const SOURCE = { "run-file": "resolved by /milestone", "in-flight": "inferred from what is in flight", derived: "next runnable in index order", gated: "next in index order — every item of it is gated" };
 const AUDIT_ICON = { clean: "✓", debt: "✗", deferred: "⏳", "blocked-by-debt": "✗", "not-due": "—", unknown: "?" };
+// The resume plan: what the human does next, in the lib's order. Only a
+// machine-applicable step earns a copy button — rustc's Applicability rule,
+// already promised in the lib: a step whose own deps are unmet must not be
+// offered as if it could run. Every field goes through esc(), the command and
+// its data-cmd attribute included; never an inline handler.
+function planBlock(plan) {
+  if (!plan) return "";
+  const steps = plan.steps || [], dropped = plan.dropped || [], suspect = plan.suspect || [];
+  if (!steps.length && !dropped.length) return "";
+  const stepRow = (s) => {
+    const ready = s.applicability === "machine-applicable";   // anything else is treated as has-placeholders (conservative)
+    const cls = s.kind === "blocked" ? "q" : "task";
+    const meta = [esc(s.purpose)];
+    if (s.ask) meta.push("ask: " + esc(s.ask));
+    if (s.gates && s.gates.length) meta.push("gates " + plural(s.gates.length, "item"));
+    if (s.whyNotAgent) meta.push("why not an agent: " + esc(s.whyNotAgent));
+    const cmd = ready
+      ? '<code class="cmd">' + esc(s.command) + '</code> <button type="button" class="copy" data-cmd="' + esc(s.command) + '">copy</button>'
+      : '<code class="cmd pending">' + esc(s.command) + '</code> <span class="meta">not yet — its own dependencies are unmet</span>';
+    return '<div class="row step step-' + esc(s.kind) + (ready ? "" : " pending") + '"><span class="' + cls + '">'
+      + (s.kind === "blocked" ? "⛔ " : "🙋 ") + '<b>' + esc(s.id) + '</b> ' + esc(s.subject) + '</span>'
+      + '<div class="meta">' + meta.join(" · ") + '</div>'
+      + '<div>' + cmd + '</div>'
+      + '<div class="meta">done when: ' + esc(s.doneWhen) + '</div></div>';
+  };
+  let out = '<div class="plan">';
+  if (steps.length) out += '<h4>To resume</h4>' + steps.map(stepRow).join("");
+  if (suspect.length) out += '<div class="meta suspect">⚠ machine-applicable with no why_not_agent: ' + suspect.map(esc).join(", ") + ' — a hand-off an agent could arguably have done</div>';
+  // Dropped steps are audit trail, not a to-do: collapsed.
+  if (dropped.length) out += '<details class="dropped"><summary>' + plural(dropped.length, "stale/unknown step") + ' dropped</summary>'
+    + dropped.map((d) => '<div class="row"><b>' + esc(d.id) + '</b> — ' + esc(d.why) + '</div>').join("") + '</details>';
+  return out + '</div>';
+}
 function milestoneCard(m) {
   const el = document.getElementById("milestone");
   if (!m) { el.className = "card next"; return empty(el, "no milestone to run — nothing is todo with its dependencies satisfied"); }
@@ -204,8 +246,32 @@ function graphSvg(s) {
   const node = (id) => { const p=pos.get(id), it=byId.get(id); return '<g><rect x="'+p.x+'" y="'+p.y+'" width="120" height="18" rx="4" fill="var(--card)" stroke="var(--line)"/><text x="'+(p.x+6)+'" y="'+(p.y+13)+'" font-size="11" fill="var(--fg)">'+esc(id)+' '+esc((it.status||"")[0]||"")+'</text></g>'; };
   return '<svg viewBox="0 0 '+W+' '+H+'" width="'+W+'">'+(s.edges||[]).map(line).join("")+items.map(i=>node(i.id)).join("")+'</svg>';
 }
-async function tick() { try { const r = await fetch("/state.json", {cache:"no-store"}); draw(await r.json()); } catch (e) { document.getElementById("updated").textContent = "disconnected"; } }
+const setStatus = (t, bad) => { const u = document.getElementById("updated"); u.textContent = t; u.className = bad ? "err" : ""; };
+// Three lanes, kept apart on purpose: a network failure, a server that answered
+// badly, and a bug in this page. Folding them into "disconnected" hid a render
+// bug for four days while blaming the connection. Polling continues after any
+// lane — the next tick may succeed.
+async function tick() {
+  let r;
+  try { r = await fetch("/state.json", { cache: "no-store" }); }
+  catch (e) { return setStatus("disconnected", true); }
+  if (!r.ok) return setStatus("server error HTTP " + r.status, true);
+  let s;
+  try { s = await r.json(); } catch (e) { return setStatus("server error: invalid JSON", true); }
+  try { draw(s); setStatus(document.getElementById("updated").textContent, false); }
+  catch (e) { console.error("board render failed", e); setStatus("render error: " + ((e && e.message) || e) + " — state fetched fine; this is a board bug", true); }
+}
 tick(); setInterval(tick, 3000);
+// One delegated listener, attached once: milestoneCard re-runs every tick and
+// must not stack handlers. navigator.clipboard is absent outside a secure
+// context and writeText may reject (NotAllowedError) — neither ever throws here.
+document.getElementById("milestone").addEventListener("click", (e) => {
+  const btn = e.target && e.target.closest ? e.target.closest("button.copy") : null;
+  if (!btn) return;
+  const cb = typeof navigator !== "undefined" && navigator.clipboard;
+  if (!cb || !cb.writeText) return;                       // the command is still on screen to select
+  cb.writeText(btn.dataset.cmd).then(() => { btn.textContent = "copied"; setTimeout(() => { btn.textContent = "copy"; }, 1500); }, () => {});
+});
 document.getElementById("idea-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const msg = document.getElementById("idea-msg");
