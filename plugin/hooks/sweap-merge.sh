@@ -600,6 +600,25 @@ sm_transition() {
   return 0
 }
 
+# sm_checkpoint: the ARM-TIME write. A fenced write of the state as it already
+# is — no transition, no history row, no gh call. Until this existed the state
+# file was first created by the tick's first sm_transition, i.e. only AFTER an
+# evaluation succeeded: a tick that claimed the lease and then died inside its
+# FIRST gh call (budget exhausted, a hung API, a lost lease) left the lock
+# heartbeat behind but NO state file, so `status` listed nothing for a PR whose
+# watch was armed and the durable object lagged the lease. One write right after
+# the claim publishes .pr / .state / .primary / .lease.{owner,epoch,heartbeat_at}
+# so the file exists from the instant the lease does. `.state` is carried over
+# untouched (a file that does not exist yet arms as `missing`, which is what the
+# next tick would read anyway), so no state is invented and no history row is
+# appended — the tick's real first transition still records from=<what it was>.
+# Cost: one extra .seq bump per tick.
+sm_checkpoint() {
+  sm_set '.pr = ($pr|tonumber) | .state = (.state // $st)' --arg pr "$SM_PR" --arg st "$SM_STATE" \
+    || { SM_WRITE_ERR="arm-time checkpoint update failed (jq)"; return 1; }
+  sm_state_write
+}
+
 # --- §5 workflow reader ---------------------------------------------------------------
 # sm_classify_workflow <file> <base>: CW_RESULT = member|excluded|undecidable,
 # CW_WHY, CW_TIMEOUT (max timeout-minutes seen). One bash line reader (E10).
@@ -1070,6 +1089,17 @@ sm_tick() {
   if [ "$SM_STATE" = "merged" ]; then
     sm_after_merged
     sm_finish merged "${SM_REASON:-PR #$SM_PR is merged}"
+  fi
+  # Arm-time checkpoint (see sm_checkpoint). HERE, not right after the claim:
+  # the `merging` branch above reconciles from a file that already exists (and
+  # always finishes), the `merged` branch likewise, and the `superseded` branch
+  # has just cleared the deadlines in memory — so this is the first point at
+  # which the shape of the durable object for THIS tick is settled and nothing
+  # after it is anything but gh-driven. Everything below can die in a gh call;
+  # the state file and its heartbeat are already on disk.
+  if ! sm_checkpoint; then
+    SM_STATE="failed"
+    sm_finish failed "${SM_WRITE_ERR:-arm-time checkpoint failed}"
   fi
 
   while :; do

@@ -26,12 +26,34 @@ trap 'rm -rf "$WORK"' EXIT
 pass=0; fail=0
 ok()   { pass=$((pass + 1)); printf 'ok   %s\n' "$1"; }
 bad()  { fail=$((fail + 1)); printf 'FAIL %s\n     %s\n' "$1" "$2"; }
-check() {   # check <name> <condition-command...>
-  local name="$1"; shift
-  if "$@"; then ok "$name"; else bad "$name" "condition failed: $*"; fi
+check() {   # check <name> <cmd...> [-- <cmd...>]...: EVERY command must succeed.
+  # A bare `--` separates conditions; a condition may start with `!` to negate it.
+  # `check <name> C1 && C2` does NOT work and must never be written: check returns
+  # 0 whether the assertion passed or failed, so C2 is evaluated and its result
+  # thrown away — the second half of such an assertion asserts nothing at all.
+  local name="$1" rc=0 all n a; shift
+  all="$*"
+  while [ $# -gt 0 ]; do
+    n=0
+    for a in "$@"; do [ "$a" = "--" ] && break; n=$((n + 1)); done
+    if [ "$n" -gt 0 ]; then
+      ( set -- "${@:1:$n}"; if [ "$1" = "!" ]; then shift; ! "$@"; else "$@"; fi ) || rc=1
+    fi
+    shift "$n"
+    [ "${1:-}" = "--" ] && shift
+  done
+  if [ "$rc" = 0 ]; then ok "$name"; else bad "$name" "condition failed: $all"; fi
 }
 word_is() { [ "$(printf '%s\n' "$OUT" | tail -1 | cut -d' ' -f1)" = "$1" ]; }
+word_in() {   # word_in <word>...: the terminal word is one of these (for cases where
+              # more than one outcome is CORRECT, never to paper over one that is not)
+  local w a; w="$(printf '%s\n' "$OUT" | tail -1 | cut -d' ' -f1)"
+  for a in "$@"; do [ "$w" = "$a" ] && return 0; done
+  return 1
+}
 contains() { printf '%s' "$1" | grep -qF -- "$2"; }
+quiet() { "$@" >/dev/null 2>&1; }   # a condition whose OUTPUT is noise (a redirect written
+                                    # after a `check ... --` list would redirect check itself)
 absent() { ! grep -qF -- "$1" "$2"; }
 expect() {   # expect <name> <word> [substring-of-reason]
   local name="$1" w="$2" sub="${3:-}"
@@ -436,7 +458,7 @@ drive tick "$PR"; expect "E path removed on head => failed" failed "removed on h
 newcase e-no-workflows-dir
 rm -f "$FIX/contents.json"   # base has no .github/workflows at all (404)
 drive tick "$PR"; expect "E base without .github/workflows => undecidable (not an API retry)" undecidable "no .github/workflows"
-check "E no-workflows-dir: exits 1, no merge" [ "$RC" = 1 ] && [ "$(merges_in_log)" = 0 ]
+check "E no-workflows-dir: exits 1, no merge" [ "$RC" = 1 ] -- [ "$(merges_in_log)" = 0 ]
 
 # ======================================================================================
 printf '== §6 table, row by row\n'
@@ -644,10 +666,30 @@ check "version file: swept" [ ! -e "$STATE_DIR/$PR.json.v$((seq0 + 1))" ]
 
 newcase l-takeover-storm
 # H3: 40 simultaneous library-level claims on a STALE lock (epoch 5, live pid,
-# heartbeat 1000 s old; state file epoch 1), five rounds: exactly one claim,
-# its epoch 6 (never the state file's 1+1), the lock left at 6, and every loser
-# names the WINNER (not the dead owner it read first). Each claimant holds its
-# claim for 0.3 s so a second "winner" cannot hide behind a fast release.
+# heartbeat 1000 s old; state file epoch 1), five rounds. The SAFETY invariants
+# are exact: exactly one claim, at epoch 6 (never the state file's 1+1), the
+# lock left at 6, all 40 claimants accounted for, and nothing on stderr. Each
+# claimant holds its claim for 0.3 s so a second "winner" cannot hide behind a
+# fast release.
+#
+# The loser's `held-by=<owner>` is a DIAGNOSTIC MESSAGE, not a lock invariant:
+# it is whatever sm_lease_lost_to could read from the lock path during a 0.5 s
+# best-effort re-read, and the winner's rename-back may legitimately land after
+# that window closes on a loaded machine. So "how many losers name the winner"
+# is timing-bound and must never be asserted (a `>= 20` threshold here was the
+# maintainer's flake: 16/39 on a loaded box, with every safety invariant intact).
+# What IS an invariant is that no loser ever names an ILLEGITIMATE holder. The
+# only owners that may ever appear on the lock path are the displaced stale
+# owner (`other:$LIVE`) and the one winner, so a loser may print exactly:
+#   - the winner            — it re-read after the rename-back landed;
+#   - `other:$LIVE`         — it re-read the stale lock it is displacing, which
+#                             genuinely held the path at that instant;
+#   - `?`                   — the driver's explicit "I could not read the lock",
+#                             which names nobody (mkdir/write gap, or the whole
+#                             re-read window fell inside the rename gap).
+# A THIRD party (any other `test:<pid>`) would mean a second claimant wrote the
+# lock — a fencing bug — and an EMPTY owner would mean the verdict line
+# `held-by:` names no one at all. Both are hard failures at any load.
 LIVE=$(sh -c 'sleep 300 >/dev/null 2>&1 & echo $!')
 storm_bad=0
 for round in 1 2 3 4 5; do
@@ -663,19 +705,21 @@ for round in 1 2 3 4 5; do
   wait
   nc="$(grep -c '^claimed' "$FIX/claims")"
   winner="$(sed -n 's/^claimed .* me=\(.*\)$/\1/p' "$FIX/claims" | head -1)"
-  nlose="$(grep -c "^held-by=$winner\$" "$FIX/claims")"
+  nlose="$(grep -c '^held-by=' "$FIX/claims")"
+  # every loser line that is NOT one of the three legitimate namings (see above)
+  bogus="$(grep '^held-by=' "$FIX/claims" \
+           | grep -v -x -F -e "held-by=$winner" -e "held-by=other:$LIVE" -e 'held-by=?' | tr '\n' ';')"
   lock_epoch="$(sed -n 's/^epoch=//p' "$STATE_DIR/$PR.lock/info" 2>/dev/null)"
-  # Hard invariants are exact; "losers name the winner" is cosmetic and timing-
-  # bound (a loser re-reads for 0.5 s while the winner's mv-back may land late
-  # under load), so a majority suffices.
-  if [ "$nc" != 1 ] || ! grep -q "^claimed epoch=6 lock=$winner/6 " "$FIX/claims" || [ "$lock_epoch" != 6 ] || [ "$nlose" -lt 20 ] || [ -s "$FIX/claims.err" ]; then
+  if [ "$nc" != 1 ] || ! grep -q "^claimed epoch=6 lock=$winner/6 " "$FIX/claims" || [ "$lock_epoch" != 6 ] \
+     || [ "$nlose" != 39 ] || [ -n "$bogus" ] || [ -s "$FIX/claims.err" ]; then
     storm_bad=$((storm_bad + 1))
-    printf '     round %s: claimed=%s lock_epoch=%s losers-naming-winner=%s | %s | err: %s\n' "$round" "$nc" "$lock_epoch" "$nlose" \
+    printf '     round %s: claimed=%s lock_epoch=%s losers=%s illegitimate-naming=[%s] | %s | err: %s\n' \
+      "$round" "$nc" "$lock_epoch" "$nlose" "$bogus" \
       "$(grep '^claimed' "$FIX/claims" | tr '\n' ';')" "$(head -2 "$FIX/claims.err" | tr '\n' ' ')"
   fi
 done
 kill "$LIVE" 2>/dev/null; wait "$LIVE" 2>/dev/null
-check "lease: 40-way takeover storm x5 => exactly one claim at epoch 6, lock at 6, most losers name the winner, no stderr" [ "$storm_bad" = 0 ]
+check "lease: 40-way takeover storm x5 => exactly one claim at epoch 6, lock at 6, all 39 losers name a legitimate holder (winner, the displaced owner, or '?'), no stderr" [ "$storm_bad" = 0 ]
 check "lease: takeover storm leaves no mutex or renamed lock behind" [ -z "$(ls -d "$STATE_DIR/$PR.lock.takeover" "$STATE_DIR/$PR.lock.stale."* 2>/dev/null)" ]
 newcase l-takeover-crashed
 # a claimant that died mid-takeover: mutex + renamed lock (epoch 7) older than
@@ -702,7 +746,7 @@ newcase g-deny
 XENV="FAKE_GATE=deny FAKE_GATE_REASON=merge-gate:_PR_not_green GATE_IN=$FIX/gate.in" drive tick "$PR"
 expect "gate: deny => failed: gate: <reason>" failed "gate: merge-gate:_PR_not_green"
 check "gate: deny => the stub never saw gh pr merge" [ "$(merges_in_log)" = 0 ]
-check "gate: state is failed, verdict kept" [ "$(state .state)" = failed ] && [ "$(state .verdict.head)" = "$HEAD1" ]
+check "gate: state is failed, verdict kept" [ "$(state .state)" = failed ] -- [ "$(state .verdict.head)" = "$HEAD1" ]
 gin="$(cat "$FIX/gate.in")"
 check "gate: payload is PreToolUse Bash 'gh pr merge <pr> --squash' with cwd=<primary>" \
   [ "$(printf '%s' "$gin" | jq -r '.tool_name + "|" + .tool_input.command + "|" + .cwd')" = "Bash|gh pr merge $PR --squash|$REPO" ]
@@ -766,7 +810,7 @@ expect "gate: allowlisted env case still merges" merged
 for k in CLAUDE_PROJECT_DIR GH_HOST GH_CONFIG_DIR BASH_ENV CDPATH LC_ALL CLAUDE_PLUGIN_ROOT SWEAP_MERGE_GH SWEAP_MERGE_HOOK_ENV_PASS; do
   check "gate: $k does not reach the gate (env -i + allowlist)" [ -z "$(grep -E "^$k=" "$FIX/gate.env")" ]
 done
-check "gate: HOME and GH_TOKEN pass through" grep -q "^HOME=$HOME\$" "$FIX/gate.env" && grep -q '^GH_TOKEN=tok-x$' "$FIX/gate.env"
+check "gate: HOME and GH_TOKEN pass through" grep -q "^HOME=$HOME\$" "$FIX/gate.env" -- grep -q '^GH_TOKEN=tok-x$' "$FIX/gate.env"
 check "gate: runs under env -i: PATH = <resolved gh dir>:<pinned>" grep -q "^PATH=$STUB_BIN:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin" "$FIX/gate.env"
 newcase g-gh-unresolvable
 XENV="SWEAP_MERGE_GH=relative/gh" drive tick "$PR"
@@ -785,7 +829,7 @@ cp "$FAKE_PLUGIN/hooks/pre-merge-gate.sh" "$FAKE_PLUGIN/hooks/post-merge-"*.sh "
 mkdir -p "$REPO/hooks"; cp "$HERE/"*.sh "$REPO/hooks/"; : >"$REPO/hooks/$SENTINEL"
 DRV="hooks/sweap-merge.sh" XENV="CDPATH=$E FAKE_GATE=allow GATE_ENV_FILE=$FIX/gate.env" drive tick "$PR"
 expect "gate: CDPATH-relative invocation => the REAL gate next to the driver denies" failed "gate: merge-gate: PR #7 is NOT green"
-check "gate: CDPATH => no merge, stub gate never ran" [ "$(merges_in_log)" = 0 ] && [ ! -f "$FIX/gate.env" ]
+check "gate: CDPATH => no merge, stub gate never ran" [ "$(merges_in_log)" = 0 ] -- [ ! -f "$FIX/gate.env" ]
 rm -rf "$REPO/hooks" "$E"
 
 # --- round-2 repros: one inline env prefix on the Bash call that launches the
@@ -809,12 +853,12 @@ evil_gh
 DRV="$DRIVER" XENV="SWEAP_MERGE_GH=$FIX/evilbin/gh" drive tick "$PR" --budget 5
 check "P3: inline SWEAP_MERGE_GH on the repo driver (no sentinel) => no merge, still a state word, rc 1" \
   bash -c '[ "$1" = 1 ] && { [ "$2" = missing ] || [ "$2" = failed ]; }' _ "$RC" "$(printf '%s\n' "$OUT" | tail -1 | cut -d' ' -f1)"
-check "P3: the evil gh never ran and the stub never heard a merge" [ ! -e "$FIX/evil.ran" ] && [ "$(merges_in_log)" = 0 ]
+check "P3: the evil gh never ran and the stub never heard a merge" [ ! -e "$FIX/evil.ran" ] -- [ "$(merges_in_log)" = 0 ]
 # the seam DOES work where the sentinel is (else every case above is vacuous)
 r="$(cd "$REPO" && SWEAP_MERGE_LIB=1 SWEAP_MERGE_GH="$STUB_BIN/gh" bash -c '. "$1"; sm_resolve_tools; echo "$SM_GH|$SM_SEAMS"' _ "$FAKE_DRIVER")"
 check "P3: next to the sentinel the same seam selects the stub gh" [ "$r" = "$STUB_BIN/gh|1" ]
 r="$(cd "$REPO" && SWEAP_MERGE_LIB=1 SWEAP_MERGE_GH="$STUB_BIN/gh" bash -c '. "$1"; sm_resolve_tools; echo "${SWEAP_MERGE_GH:-unset}|$SM_SEAMS|$SM_GH"' _ "$DRIVER")"
-check "P3: without the sentinel SM_SEAMS=0, the seam is unset and gh is the pinned one" [ "${r%%|*}" = unset ] && contains "$r" "|0|/" && [ "${r##*|}" != "$STUB_BIN/gh" ]
+check "P3: without the sentinel SM_SEAMS=0, the seam is unset and gh is the pinned one" [ "${r%%|*}" = unset ] -- contains "$r" "|0|/" -- [ "${r##*|}" != "$STUB_BIN/gh" ]
 
 newcase g-p4-fake-jq
 # P4: a caller-PATH jq that rewrites failure -> success / deny -> allow. Runs
@@ -835,12 +879,12 @@ J
 chmod +x "$FIX/evilbin/jq"
 DRV="$REAL_DRIVER" XENV="PATH=$FIX/evilbin:$STUB_BIN:$PATH EVIL_JQ_RAN=$FIX/evil.ran" drive tick "$PR"
 expect "P4: caller-PATH jq (red->green, deny->allow rewrite) => the driver's own evaluation still says failed" failed "$AG failure"
-check "P4: no merge; the fake jq never ran (driver under the pinned PATH, jq absolute)" [ "$(merges_in_log)" = 0 ] && [ ! -e "$FIX/evil.ran" ]
+check "P4: no merge; the fake jq never ran (driver under the pinned PATH, jq absolute)" [ "$(merges_in_log)" = 0 ] -- [ ! -e "$FIX/evil.ran" ]
 # same fake jq, runs green, rollup red: the REAL gate's deny must be read by the pinned jq
 all_green
 DRV="$REAL_DRIVER" XENV="PATH=$FIX/evilbin:$STUB_BIN:$PATH EVIL_JQ_RAN=$FIX/evil.ran" drive tick "$PR"
 expect "P4: caller-PATH jq cannot flip the REAL gate's deny into allow" failed "gate: merge-gate: PR #7 is NOT green"
-check "P4: no merge, fake jq never ran (gate deny parsed with the pinned jq)" [ "$(merges_in_log)" = 0 ] && [ ! -e "$FIX/evil.ran" ]
+check "P4: no merge, fake jq never ran (gate deny parsed with the pinned jq)" [ "$(merges_in_log)" = 0 ] -- [ ! -e "$FIX/evil.ran" ]
 
 newcase g-p5-fake-env
 # P5: a caller-PATH env(1) that ignores -i and the K=V prefix, so the gate would
@@ -858,11 +902,11 @@ V
 chmod +x "$FIX/evilbin/env"
 DRV="$REAL_DRIVER" XENV="PATH=$FIX/evilbin:$STUB_BIN:$PATH EVIL_ENV_RAN=$FIX/evilenv.ran GATE_ENV_FILE=$FIX/gate.env" drive tick "$PR"
 expect "P5: caller-PATH env(1) that ignores -i => the REAL gate still denies" failed "gate: merge-gate: PR #7 is NOT green"
-check "P5: no merge; neither the fake env nor the shadow gh ran" [ "$(merges_in_log)" = 0 ] && [ ! -e "$FIX/evilenv.ran" ] && [ ! -e "$FIX/evil.ran" ]
+check "P5: no merge; neither the fake env nor the shadow gh ran" [ "$(merges_in_log)" = 0 ] -- [ ! -e "$FIX/evilenv.ran" ] -- [ ! -e "$FIX/evil.ran" ]
 # the env the gate actually receives (fake gate records it): pinned, evilbin absent
 XENV="PATH=$FIX/evilbin:$STUB_BIN:$PATH EVIL_ENV_RAN=$FIX/evilenv.ran FAKE_GATE=allow GATE_ENV_FILE=$FIX/gate.env" drive tick "$PR"
 check "P5: the gate's PATH is the pinned one (evilbin absent), fake env never ran" \
-  [ -f "$FIX/gate.env" ] && ! grep -q "^PATH=.*evilbin" "$FIX/gate.env" && grep -q "^PATH=$STUB_BIN:/opt/homebrew/bin:" "$FIX/gate.env" && [ ! -e "$FIX/evilenv.ran" ]
+  [ -f "$FIX/gate.env" ] -- ! grep -q "^PATH=.*evilbin" "$FIX/gate.env" -- grep -q "^PATH=$STUB_BIN:/opt/homebrew/bin:" "$FIX/gate.env" -- [ ! -e "$FIX/evilenv.ran" ]
 
 newcase g-p7-fake-git
 # P7: a caller-PATH git that answers `rev-parse --git-common-dir` with another
@@ -881,8 +925,8 @@ chmod +x "$FIX/evilbin/git"
 DRV="$REAL_DRIVER" XENV="PATH=$FIX/evilbin:$STUB_BIN:$PATH" drive tick "$PR"
 expect "P7: caller-PATH git forging <primary> => the driver runs (green fixture) with the REAL primary" merged
 check "P7: state file under the real primary, none under the forged one, fake git never ran" \
-  [ -f "$STATE_DIR/$PR.json" ] && [ ! -d "$FORGED/.claude/sweap-merge" ] && [ ! -e "$FIX/evilgit.ran" ]
-check "P7: the state file and the lease record the primary they were written under" [ "$(state .primary)" = "$REPO" ] && [ "$(state .lease.primary)" = "$REPO" ]
+  [ -f "$STATE_DIR/$PR.json" ] -- [ ! -d "$FORGED/.claude/sweap-merge" ] -- [ ! -e "$FIX/evilgit.ran" ]
+check "P7: the state file and the lease record the primary they were written under" [ "$(state .primary)" = "$REPO" ] -- [ "$(state .lease.primary)" = "$REPO" ]
 rm -rf "$FORGED"
 newcase g-p7-state-split
 # the belt: a state file written under another primary is refused, never split
@@ -893,7 +937,7 @@ printf '{"pr":%s,"state":"pending","head":"%s","primary":"/elsewhere/checkout","
 rm -f "$FIX/merged.flag"; : >"$FIX/gh.log"
 drive tick "$PR"
 expect "P7 belt: a state file recorded under another <primary> => failed: state split (fail closed)" failed "state split"
-check "P7 belt: no gh call, no merge, the file is left as found" [ ! -s "$FIX/gh.log" ] && [ "$(state .primary)" = "/elsewhere/checkout" ]
+check "P7 belt: no gh call, no merge, the file is left as found" [ ! -s "$FIX/gh.log" ] -- [ "$(state .primary)" = "/elsewhere/checkout" ]
 rm -rf "$STATE_DIR"; mkdir -p "$STATE_DIR/$PR.lock"
 printf 'owner=other:1\nepoch=3\npid=1\nhost=%s\nheartbeat=%s\nprimary=/elsewhere/checkout\n' "$(hostname)" "$NOW" >"$STATE_DIR/$PR.lock/info"
 drive tick "$PR"
@@ -924,7 +968,7 @@ DRV="$DRIVER" XENV="BASH_ENV=$FIX/be.sh" drive tick "$PR" --budget 5
 check "F1: BASH_ENV prefix on the repo driver => no merge, still a state word, rc 1" \
   bash -c '[ "$1" = 1 ] && { [ "$2" = missing ] || [ "$2" = failed ]; }' _ "$RC" "$(printf '%s\n' "$OUT" | tail -1 | cut -d' ' -f1)"
 check "F1: the BASH_ENV file WAS sourced by the first process, yet the evil gh never ran (belt A: env -i + bash -p re-exec)" \
-  [ -e "$FIX/be.sourced" ] && [ ! -e "$FIX/evil.ran" ] && [ ! -e "$FIX/evil.merged" ]
+  [ -e "$FIX/be.sourced" ] -- [ ! -e "$FIX/evil.ran" ] -- [ ! -e "$FIX/evil.merged" ]
 # the verifier's end-to-end shape: the REAL gate denies a red rollup, and a
 # BASH_ENV-injected jq that flips deny->allow must not be the jq that reads it
 newcase g-f1-bash-env-jq
@@ -945,7 +989,7 @@ command() { if [ "\${1:-}" = -v ]; then case "\${2:-}" in jq) printf '%s\n' "$FI
 B
 DRV="$REAL_DRIVER" XENV="BASH_ENV=$FIX/be.sh" drive tick "$PR"
 expect "F1: BASH_ENV-injected jq (deny->allow) => the REAL gate's deny is still read as a deny" failed "gate: merge-gate: PR #7 is NOT green"
-check "F1: no merge, the evil jq never ran" [ "$(merges_in_log)" = 0 ] && [ ! -e "$FIX/eviljq.ran" ]
+check "F1: no merge, the evil jq never ran" [ "$(merges_in_log)" = 0 ] -- [ ! -e "$FIX/eviljq.ran" ]
 r="$(cd "$REPO" && SWEAP_MERGE_LIB=1 bash -c '. "$1"; echo "${SM_REEXEC:-unset}"' _ "$FAKE_DRIVER")"
 check "F1: sourcing as a library (SWEAP_MERGE_LIB=1) never re-execs" [ "$r" = unset ]
 
@@ -958,7 +1002,7 @@ FORGED="$WORK/forged"; rm -rf "$FORGED"; mkdir -p "$FORGED"; git -C "$FORGED" in
 XENV="GIT_DIR=$FORGED/.git GIT_WORK_TREE=$FORGED" drive tick "$PR"
 expect "F2: inline GIT_DIR=<forged>/.git => the driver still derives the REAL primary and merges (green)" merged
 check "F2: state + lease under the real primary, the forged tree untouched" \
-  [ -f "$STATE_DIR/$PR.json" ] && [ "$(state .primary)" = "$REPO" ] && [ "$(state .lease.primary)" = "$REPO" ] && [ ! -d "$FORGED/.claude/sweap-merge" ]
+  [ -f "$STATE_DIR/$PR.json" ] -- [ "$(state .primary)" = "$REPO" ] -- [ "$(state .lease.primary)" = "$REPO" ] -- [ ! -d "$FORGED/.claude/sweap-merge" ]
 # a state file that consistently records the forged primary is a split now, not a home
 rm -rf "$STATE_DIR"; mkdir -p "$STATE_DIR"
 printf '{"pr":%s,"state":"pending","head":"%s","primary":"%s","seq":1}\n' "$PR" "$HEAD1" "$FORGED" >"$STATE_DIR/$PR.json"
@@ -1026,7 +1070,7 @@ check "merge: first refusal recorded as attempt 1" [ "$(state .merge_attempts)" 
 newcase m-persistent-fail
 write_pr pr.after.json OPEN "$HEAD1"
 XENV="GH_MERGE=fail" drive watch "$PR"
-check "merge: persistent refusal under watch => terminal failed (no livelock)" word_is failed && contains "$OUT" "after 2 attempts"
+check "merge: persistent refusal under watch => terminal failed (no livelock)" word_is failed -- contains "$OUT" "after 2 attempts"
 check "merge: persistent refusal => exits 1" [ "$RC" = 1 ]
 check "merge: persistent refusal => at most 2 merge calls" [ "$(merges_in_log)" -le 2 ]
 newcase m-attempts-reset
@@ -1097,7 +1141,7 @@ r="$(SWEAP_MERGE_LIB=1 SWEAP_MERGE_NOW="$NOW" SWEAP_MERGE_SESSION=test SWEAP_MER
      bash -c '. "$1"; echo "$(sm_now) $SM_SESSION ${SWEAP_MERGE_GH:-unset} $SM_STALE"' _ "$DRIVER")"
 check "seams: SWEAP_MERGE_NOW ignored (sm_now is the real clock)" [ "${r%% *}" != "$NOW" ]
 check "seams: SWEAP_MERGE_SESSION / SWEAP_MERGE_GH / SWEAP_MERGE_STALE ignored (unset at the scrub)" \
-  [ "$(printf '%s' "$r" | cut -d' ' -f2-)" != "test /x 1" ] && contains "$r" " unset 130"
+  [ "$(printf '%s' "$r" | cut -d' ' -f2-)" != "test /x 1" ] -- contains "$r" " unset 130"
 newcase a-nojq
 # a PATH with every usual tool except jq (symlinks), plus the stub gh
 mkdir -p "$WORK/nojq"
@@ -1118,7 +1162,7 @@ DIR="$WT" drive tick "$PR"; expect "worktree: tick from .claude/worktrees/x merg
 check "worktree: state lives under <primary>/.claude/sweap-merge" [ -f "$STATE_DIR/$PR.json" ]
 check "worktree: nothing written under the worktree" [ ! -d "$WT/.claude/sweap-merge" ]
 check "worktree: post-merge hooks run in the SESSION's cwd (the worktree), payload cwd likewise" \
-  [ "$(cat "$FIX/pm.log.post-merge-cleanup.sh.cwd")" = "$WT" ] && [ "$(jq -r .cwd "$FIX/pm.log.post-merge-cleanup.sh.in")" = "$WT" ]
+  [ "$(cat "$FIX/pm.log.post-merge-cleanup.sh.cwd")" = "$WT" ] -- [ "$(jq -r .cwd "$FIX/pm.log.post-merge-cleanup.sh.in")" = "$WT" ]
 newcase w-real-cleanup
 # the REAL post-merge-cleanup.sh, driven from inside worktree x, with the stub
 # saying every branch has a merged PR: it must retire the OTHER worktree and
@@ -1128,25 +1172,49 @@ DIR="$WT" DRV="$REALCLEAN_PLUGIN/hooks/sweap-merge.sh" XENV="GH_PRLIST_MERGED=1"
 expect "worktree: real cleanup through the driver => merged" merged
 check "worktree: real cleanup consulted gh pr list (it ran)" grep -q '^pr list --head wt-' "$FIX/gh.log"
 check "worktree: the OTHER merged worktree was retired" [ ! -d "$REPO/.claude/worktrees/y" ]
-check "worktree: the session's own worktree survives cleanup" [ -d "$WT" ] && git -C "$WT" rev-parse --is-inside-work-tree >/dev/null 2>&1
+check "worktree: the session's own worktree survives cleanup" [ -d "$WT" ] -- quiet git -C "$WT" rev-parse --is-inside-work-tree
 
 # ======================================================================================
 printf '== tick budget, watch, status\n'
 newcase b-budget
+# CI in_progress, so a tick that DOES evaluate ends `pending`. A 2 s budget on a
+# loaded box may expire inside the first gh call instead, and then nothing was
+# evaluated and the tick ends `missing` — both are correct, so the word is
+# asserted as "no verdict was reached", not as one fixed string. What is exact
+# either way: the budget was honoured, no merge was issued, and the arm-time
+# checkpoint put the lease on disk (SWEAP_MERGE_NOW is fixed, so the heartbeat
+# value is deterministic) — before sm_checkpoint the state file did not exist at
+# all on the died-in-the-first-gh-call path and this assert flaked.
 write_runs "$(run 101 "$CI" in_progress null)" "$(run 102 "$AG" completed success)" "$(run 103 "$CR" completed success)"
 t0=$(date +%s)
 MAX_ITER=0 drive tick "$PR" --budget 2
 el=$(( $(date +%s) - t0 ))
-expect "budget: tick stops at --budget with the current state" pending
+check "budget: tick stops at --budget with the current state, never a verdict" word_in pending missing
+check "budget: 2 s budget never merged" [ "$(merges_in_log)" = 0 ]
 check "budget: 2 s budget ended within 6 s (elapsed ${el}s)" [ "$el" -le 6 ]
 check "budget: heartbeat written" [ "$(state .lease.heartbeat_at)" = "$NOW" ]
+check "budget: the checkpoint carries owner, epoch, primary and pr" \
+  [ "$(state '[.lease.owner, (.lease.epoch|tostring), .primary, (.pr|tostring), .state] | map(select(. != null and . != "")) | length')" = 5 ]
+newcase b-arm-time-state
+# the same tick, but gh is guaranteed to outlive the budget: the tick dies in
+# its FIRST gh call, having reached no evaluation at all. The state file must
+# still exist (arm-time checkpoint) and `status` must list the PR — a PR whose
+# watch is armed is never invisible.
+XENV="GH_STUB_SLEEP=5 SWEAP_MERGE_GH_TIMEOUT=1" drive tick "$PR" --budget 1
+check "arm-time: a tick that dies in its first gh call still ends on a state word" word_is missing
+check "arm-time: the state file exists after a tick that never evaluated" [ -f "$STATE_DIR/$PR.json" ]
+check "arm-time: it carries pr, state and the lease" \
+  [ "$(state '.pr')" = "$PR" ] -- [ "$(state .state)" = missing ] -- [ "$(state .lease.heartbeat_at)" = "$NOW" ] -- [ "$(state .primary)" = "$REPO" ]
+check "arm-time: no history row was invented for a state that did not change" [ "$(state '(.history // []) | length')" = 0 ]
+drive status "$PR"
+check "arm-time: status lists a PR whose tick died in its first gh call" contains "$OUT" "#$PR missing head= owner="
 newcase b-slow-gh
 write_runs "$(run 101 "$CI" in_progress null)" "$(run 102 "$AG" completed success)" "$(run 103 "$CR" completed success)"
 t0=$(date +%s)
 XENV="GH_STUB_SLEEP=3 SWEAP_MERGE_GH_TIMEOUT=1" drive tick "$PR" --budget 3
 el=$(( $(date +%s) - t0 ))
 check "budget: a hung gh is cut by bounded_run (elapsed ${el}s <= 6)" [ "$el" -le 6 ]
-check "budget: hung gh => no verdict, reason names the call" word_is missing && contains "$OUT" "gh pr view"
+check "budget: hung gh => no verdict, reason names the call" word_is missing -- contains "$OUT" "gh pr view"
 
 newcase wt-watch
 mkdir -p "$FIX/runs.seq"
@@ -1170,7 +1238,7 @@ kill "$LIVE2" 2>/dev/null; wait "$LIVE2" 2>/dev/null
 newcase wt-watch-cap
 write_runs "$(run 101 "$CI" in_progress null)" "$(run 102 "$AG" completed success)" "$(run 103 "$CR" completed success)"
 XENV="SWEAP_MERGE_MAX_TICKS=2" drive watch "$PR"
-check "watch: pending ticks keep looping (test cap stops it)" word_is pending && contains "$OUT" "watch stopped after 2"
+check "watch: pending ticks keep looping (test cap stops it)" word_is pending -- contains "$OUT" "watch stopped after 2"
 
 newcase st-status
 write_runs "$(run 101 "$CI" in_progress null)" "$(run 102 "$AG" completed success)" "$(run 103 "$CR" completed success)"
