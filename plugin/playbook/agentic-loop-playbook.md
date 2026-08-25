@@ -504,7 +504,7 @@ may ADD dimensions it judges necessary; it may not remove tagged ones.
   6. **Verify none linger:** `git worktree list`, `git branch`, `git branch -r`.
 - In practice the plugin's `post-merge-cleanup` hook does steps 3–5
   **automatically**, so you usually just merge (1), let the hook clean up, and
-  verify (6). The hook (shipped by the plugin and wired via `plugin.json`) fires
+  verify (6). The hook (shipped by the plugin and wired via `hooks/hooks.json`) fires
   after any `gh pr merge`, fast-forwards the primary, prunes stale
   remote-tracking refs, and for any worktree whose branch has a **merged** PR
   removes the worktree, deletes the local branch, **and `git push origin
@@ -551,7 +551,7 @@ may ADD dimensions it judges necessary; it may not remove tagged ones.
     nothing). A run that posts no verdict anywhere still fails closed — that is
     the reviewer failing to do its job, not the gate misreading it.
   - **The greenness check is HOOK-ENFORCED.** A `PreToolUse` hook
-    (`pre-merge-gate`, shipped by the plugin and wired via `plugin.json`) fires on
+    (`pre-merge-gate`, shipped by the plugin and wired via `hooks/hooks.json`) fires on
     every `gh pr merge`, independently queries the PR's `statusCheckRollup`, and
     **denies the merge** unless every check is green — plus it denies
     `--admin`/`--repo`/`-R` outright. On any uncertainty (gh errors/times out) it
@@ -598,6 +598,10 @@ may ADD dimensions it judges necessary; it may not remove tagged ones.
   discarded stderr inside a sleep-loop is a livelock — #189 went to attempt 41);
   re-run ONCE as diagnosis, never retry-until-green; stop if the same check is
   red on the base branch. One watcher per PR, owned by the session that merges.
+- **Merge from the consumer's own session.** The gate is a plugin hook scoped
+  to the project the session was started in; `cd <other-repo> && gh pr merge`
+  from a different project's session runs with no gate at all. Open the repo,
+  then merge.
 - **Merging a green PR is pre-authorized — do not ask.** Once `gh pr checks <n>`
   is green (every check, including `review`), merging an unblocked item's PR is a
   standing authorization: `gh pr merge <n> --squash` with no confirmation prompt.
@@ -1373,7 +1377,7 @@ an in-flight branch at width 1 too, and a Free-plan repo never reports BEHIND.
 | Cron jobs / scheduled cloud agents (`/schedule`) | Sessions that start on a schedule (nightly deps bump, backlog grooming, post-merge audit) — cloud routines run even if the PC is off. `/loop-schedule` builds the prompt by referencing `/milestone`'s steps by name — it carries no copy of the goal — and the plugin must be installed by the routine's environment setup script | Claude can create; runs unattended |
 | Headless `claude -p` + auto permission mode | Scripted/CI-triggered sessions; classifier gates commands | Scripts/CI/events |
 | Agentic CI (GitHub Actions) | Claude reviews every PR; merge gated on green e2e + clean review | Git events |
-| `claude --continue` / `--resume` | Pick a session back up after a crash/reboot; long sessions survive via context summarization | User |
+| `claude --continue` / `--resume` | Reopen a session after a crash/reboot from its on-disk transcript. Not run protection: default auto-compact on 1M models fires near the limit, after quality has degraded — end runs via `turns`/frontier | User |
 | `/board` (read-only viewer) | Local loopback page showing the live run (frontier/in-flight/open-PRs/hand-offs/blocked) + backlog + dep graph; derives state from item files + git + PRs, never writes | User runs; safe during autonomous runs |
 | `/handoff <id>` | Walks one `[attended]` hand-off with the human, then flips it to done through a gated PR on their explicit confirmation | User runs; interactive only |
 | `/unblock <id>` | Walks one `[blocked]` question with the human — prepares the fork, never answers it — then closes it through a gated PR (`todo` + authored spec, or `done`) | User runs; interactive only |

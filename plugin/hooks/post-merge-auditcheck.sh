@@ -3,7 +3,7 @@
 # post-merge-auditcheck.sh — backstop for the audit gate's ONE structural blind
 # spot.
 #
-# Wired as a PostToolUse(Bash) hook (see plugin.json). Fires on every Bash call
+# Wired as a PostToolUse(Bash) hook (see hooks/hooks.json). Fires on every Bash call
 # and self-filters to `gh pr merge`, exactly like post-merge-redcheck.sh — this
 # is that hook's sibling: redcheck asks "did we break main?", this asks "did we
 # just merge undischarged audit debt?".

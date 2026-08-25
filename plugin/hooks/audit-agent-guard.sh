@@ -2,7 +2,7 @@
 #
 # audit-agent-guard.sh — execution-time containment for the audit's sub-agents.
 #
-# Wired as a PreToolUse hook (see plugin.json). Hooks fire INSIDE subagents and
+# Wired as a PreToolUse hook (see hooks/hooks.json). Hooks fire INSIDE subagents and
 # the payload carries `agent_type`, so this can deny at the moment of the write
 # rather than trusting that a toolset was applied correctly upstream.
 #

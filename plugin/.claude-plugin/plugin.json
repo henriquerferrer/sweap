@@ -1,0 +1,8 @@
+{
+  "name": "sweap",
+  "version": "0.12.1",
+  "description": "SWE Agentic Pipeline \u2014 per-feature loop, merge-greenness gate, roadmap/milestone/audit, cron driver.",
+  "author": {
+    "name": "Henrique"
+  }
+}

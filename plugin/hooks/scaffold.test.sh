@@ -35,7 +35,7 @@ mk_fixture() { # mk_fixture <dir> ; creates <dir>/proj and <dir>/plugin
   rm -rf "$d"; mkdir -p "$d/proj/.github/workflows" "$d/plugin/templates/.github/workflows" "$d/plugin/hooks"
   git -C "$d/proj" init -q
   printf '# Project\n\n## sweap config\n```\nverify.e2e: true\n```\n' > "$d/proj/CLAUDE.md"
-  printf '{"version":"9.9.9"}\n' > "$d/plugin/plugin.json"
+  mkdir -p "$d/plugin/.claude-plugin"; printf '{"version":"9.9.9"}\n' > "$d/plugin/.claude-plugin/plugin.json"
   printf 'name: audit-gate\non: [pull_request]\njobs: {}\n' > "$d/plugin/templates/.github/workflows/audit-gate.yml"
   for s in audit-gate roadmap-lint ci-lane; do
     printf '#!/usr/bin/env bash\necho %s\n' "$s" > "$d/plugin/hooks/$s.sh"
@@ -167,6 +167,18 @@ ok "k: vendored script matches the real plugin copy" test "$(tail -n +2 "$CLAUDE
 ok "k: summary lists the vendored scripts" grep -q 'Installed sweap-managed CI controls.*audit-gate\.sh' <<< "$out"
 out="$(CLAUDE_PROJECT_DIR="$K/proj" CLAUDE_PLUGIN_ROOT="$CLAUDE_PLUGIN_ROOT" bash "$SCAFFOLD" <<< '{"source":"startup"}' 2>/dev/null)"
 want "k: second run is silent" "" "$out"
+
+# --- l. gitignore append is announced on the fast-guard path, once ------------
+L="$WORK/fl"; mk_fixture "$L"
+run_scaffold "$L" '{"source":"startup"}' >/dev/null           # first run: full scaffold + all rules
+sed -i.bak '/sweap-run.md/d' "$L/proj/.gitignore"; rm -f "$L/proj/.gitignore.bak"   # a consumer scaffolded before the rule existed
+out="$(run_scaffold "$L" '{"source":"startup"}')"
+ok "l: heal path announces the appended ignore rule" grep -q 'appended sweap runtime ignore rules' <<<"$out"
+ok "l: heal path names the rule" grep -q 'sweap-run.md' <<<"$out"
+ok "l: rule is back" grep -qF '.claude/sweap-run.md' "$L/proj/.gitignore"
+want "l: it is a single JSON emit" "1" "$(printf '%s\n' "$out" | grep -c hookSpecificOutput)"
+out="$(run_scaffold "$L" '{"source":"startup"}')"
+want "l: steady state is silent again" "" "$out"
 
 printf 'RESULT: %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

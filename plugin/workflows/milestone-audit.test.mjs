@@ -19,7 +19,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const SRC = readFileSync(join(HERE, "milestone-audit.js"), "utf8");
 const AGENT = readFileSync(join(HERE, "..", "agents", "audit-reader.md"), "utf8");
 const PROVER = readFileSync(join(HERE, "..", "agents", "audit-prover.md"), "utf8");
-const MANIFEST = JSON.parse(readFileSync(join(HERE, "..", "plugin.json"), "utf8"));
+const MANIFEST = JSON.parse(readFileSync(join(HERE, "..", ".claude-plugin", "plugin.json"), "utf8"));
 const MARKETPLACE = JSON.parse(readFileSync(join(HERE, "..", "..", ".claude-plugin", "marketplace.json"), "utf8"));
 
 // Option-object literals that name a phase. Matched line-scoped rather than

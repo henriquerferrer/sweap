@@ -91,7 +91,7 @@ Recorded so the same recommendation is not re-derived by the next auditor.
 | `--check --pr` mode for the audit gate | 2–1 | Opens a record-deletion hole (`--files` never sets `touches_items` for `audits/`) and fixes half the symptom. The freeze has cost one 44-minute detour. |
 | Vendor the review-verdict step as a managed script | 2–1 | A managed script cannot reach the create-once `claude-review.yml` caller; same one-PR effort as pasting the step. Zero wrong-direction verdicts in consumer B's last 15 PRs. |
 | Align board milestone membership with the gate | 3–0 | Filtering `loadItems` blinds the frontier, debt list, and debt-first ordering (#22's core). Board and gate answer different questions by design. |
-| `context-exhausted` end reason + worker brief | 2–1 | Unfalsifiable self-report (the model cannot sense fill), contradicting `verifyEnd`'s checked-claim rule. All three agreed the memo itself should be written and `playbook:1390` corrected — still owed. |
+| `context-exhausted` end reason + worker brief | 2–1 | Unfalsifiable self-report (the model cannot sense fill), contradicting `verifyEnd`'s checked-claim rule. All three agreed the memo should be written and `playbook:1376` corrected; the maintainer deferred the memo (research kept in session memory; the row was corrected in 0.12.1). |
 | Pin `performed_via_github_app.id` in the verdict jq | 2–1 | Only issue comments carry it; would blind two of the three surfaces consumer A#125 added. The fail-closed self-skip is theatre because the workflow runs on `pull_request`. |
 | Commit `journal.jsonl` / recompute audit tallies in the gate | 3–0 | See §1; also ~1 MB of harness-owned, schema-unstable transcript, and recomputing violates `audit-gate.sh:44-47`'s "bash + git only" contract. |
 | Diversify refuter seats / span-validate evidence / capture thinking | 3–0 | Span validation cannot live where proposed (Workflow scripts have no fs; a content rejection becomes a lost vote); per-seat model has no runtime surface; diversifying before the Tier-2 labeled set exists is the "re-roll the dice" `milestone-audit.js:365-379` forbids. The cited arXiv 2512.12117 does not report the claimed precision/recall. |
@@ -161,17 +161,50 @@ this shape and not the first one.
 - **`./test.sh`** runs every suite (node 24 rejects bare directories as test
   args); README documents it as the merge bar for a repo with no hosted CI.
 
-## 5. Still owed
+## 5. Still owed — and the bug found while closing it
 
-- The context-budget memo (research done 2026-08-22, never written) and the
-  `playbook` line that implies autocompact protects a run.
-- Why the scaffold hook appears never to have fired on consumer B. The stamp makes
-  this visible now; it does not explain it.
-- Consumer PRs copying the hardened verdict step (consumer A, consumer B), and one
-  review of the stamped-managed-files diff each — both opened alongside this
-  memo, both to be merged by a human per the rule this round shipped.
-- The `sweap-merge` driver (R1 of the 2026-08-22 memo) remains the real
-  closure for every gate-shaped residual above; nothing here substitutes for it.
+Closing the leftovers of this audit found the most consequential defect of the
+whole exercise, and it was not on any auditor's list. **None of sweap's hooks
+had ever been registered in a consumer.** Claude Code loads plugin hooks from
+`hooks/hooks.json` (or string paths under `manifest.hooks`); an inline
+`"hooks": {…}` object in `plugin.json` is silently skipped — no log, no error —
+and the manifest itself was at `plugin/plugin.json`, outside the documented
+`.claude-plugin/` location, so its version was never read either (consumers
+showed a commit sha as the version). Skills, agents, commands, and workflows
+load from default directories regardless, which is why the plugin *looked*
+installed. Proof: a `claude -p --debug` session in consumer B logged "Read
+hooks.json" for two other plugins and "Registered 3 hooks from 5 plugins";
+placing a `hooks/hooks.json` in the cached plugin made it "Registered 9 hooks"
+and the SessionStart scaffold ran for the first time. Consumer evidence back to
+adoption (2026-08-07/08): zero PreToolUse denies in any transcript; "the cleanup
+hook didn't fire — doing it by hand" recorded twice (2026-08-15, 08-20); the
+`audit-debt` ignore rule from 2026-08-14 never appeared; every managed-file
+sync landed by hand PR. The merge gate, push gate, audit-agent guard, post-merge
+checks, and scaffold self-heal were all doctrine, not mechanism, for 18 days.
+Fixed in 0.12.1 (`hooks/hooks.json`, manifest moved to `.claude-plugin/`,
+inline key removed, a manifest test). Two corrections to this memo follow from
+it:
+
+- §3's "consumer B sync" story was wrong in the other direction than assumed: the
+  runner-variable change reached consumer B by hand-port (consumer B#35, ten minutes after
+  sweap#26 and three hours before the cache had it), not by the hook. The stamp
+  makes the question moot going forward.
+- Merges issued from a *different* project's session (`cd consumer A && gh pr
+  merge …` from a sweap session) are outside the plugin's scope entirely —
+  Consumer A#147 merged with checks pending that later failed this way, and it would
+  not have been caught even with hooks registered. Consumer PRs are merged from
+  the consumer's own session; that rule is now in the playbook's merge section.
+
+Still owed after this:
+
+- The context-budget memo is deferred by the maintainer (research retained in
+  session memory; the misleading playbook row is corrected).
+- Consumer PRs copying the hardened verdict step (consumer A#209, consumer B#37) — both
+  open, both to be merged by a human per the rule this round shipped. On the
+  first session after the 0.12.1 repin the scaffold will edit `.gitignore` and
+  the managed files once; review and commit that diff.
+- The `sweap-merge` driver (R1 of the 2026-08-22 memo) remains the real closure
+  for every gate-shaped residual above; nothing here substitutes for it.
 
 ## 6. Evidence strength, bluntly
 
