@@ -582,9 +582,12 @@ may ADD dimensions it judges necessary; it may not remove tagged ones.
     `.github/scripts/**`, whatever its check state (the PR ran its own copy of
     every check); a human merges those from the web UI or their own shell, and
     the run records the PR as a `status: blocked` question.
-- **Waiting discipline (upstream of the gate).** The gate decides at merge time;
-  the waiting before it is where runs have burned the most time. Four rules,
-  each bought by a documented incident (consumer A 2026-08-21/22, one run):
+- **Waiting discipline (upstream of the gate).** These four rules are what
+  `sweap-merge.sh` implements (next bullet); a session should not hand-roll
+  them. They stay here as documentation of what the driver does. The gate
+  decides at merge time; the waiting before it is where runs have burned the
+  most time. Four rules, each bought by a documented incident (consumer A
+  2026-08-21/22, one run):
   **(1) Absence is not a pass.** A check that has not been reported is not
   green: wait on the expected set being *present and succeeded*, never on
   "nothing is pending" — an empty rollup satisfies `all(…)`-style predicates
@@ -598,6 +601,20 @@ may ADD dimensions it judges necessary; it may not remove tagged ones.
   discarded stderr inside a sleep-loop is a livelock — #189 went to attempt 41);
   re-run ONCE as diagnosis, never retry-until-green; stop if the same check is
   red on the base branch. One watcher per PR, owned by the session that merges.
+- **Preferred merge path (0.13.0): `bash "${CLAUDE_PLUGIN_ROOT}/hooks/sweap-merge.sh" watch <n>`**,
+  run with Bash `run_in_background: true` (Monitor optional). It waits, verifies
+  conclusiveness from the base branch's workflows (expected set present and
+  succeeded on the current head), runs the merge gate itself, merges pinned to
+  that head, and runs the post-merge hooks. One terminal word: `merged`;
+  `failed` (red check / gate deny / merge refused — a finding, not a retry);
+  `superseded` (head moved — re-arm); `behind` (base moved — rebase, re-arm);
+  `undecidable` (expected set not computable, e.g. `paths:` — escalate);
+  `timed_out` (deadline passed — a finding); `attended` (a check needs a human);
+  `held-by:<owner>` (another live watcher owns the PR — don't start a second).
+  On `failed`: `gh run rerun --failed <run-id>` once, by hand, with the reason
+  in the PR. Consumers must allow the script in project `settings.json`
+  (`Bash(${CLAUDE_PLUGIN_ROOT}/hooks/sweap-merge.sh:*)` or the plain path) —
+  Consumer A allows only `Bash(gh pr merge:*)` today.
 - **Merge from the consumer's own session.** The gate is a plugin hook scoped
   to the project the session was started in; `cd <other-repo> && gh pr merge`
   from a different project's session runs with no gate at all. Open the repo,
@@ -1380,6 +1397,7 @@ an in-flight branch at width 1 too, and a Free-plan repo never reports BEHIND.
 | `claude --continue` / `--resume` | Reopen a session after a crash/reboot from its on-disk transcript. Not run protection: default auto-compact on 1M models fires near the limit, after quality has degraded — end runs via `turns`/frontier | User |
 | `/board` (read-only viewer) | Local loopback page showing the live run (frontier/in-flight/open-PRs/hand-offs/blocked) + backlog + dep graph; derives state from item files + git + PRs, never writes | User runs; safe during autonomous runs |
 | `/handoff <id>` | Walks one `[attended]` hand-off with the human, then flips it to done through a gated PR on their explicit confirmation | User runs; interactive only |
+| `sweap-merge.sh watch <n>` | Background merge driver for one PR: waits on the base branch's expected checks pinned to the head, runs the merge gate, merges, runs the post-merge hooks; exits with one terminal word. Run via Bash `run_in_background: true`; Monitor optional | Claude (the session that owns the PR) |
 | `/unblock <id>` | Walks one `[blocked]` question with the human — prepares the fork, never answers it — then closes it through a gated PR (`todo` + authored spec, or `done`) | User runs; interactive only |
 
 ## Model policy

@@ -180,5 +180,16 @@ want "l: it is a single JSON emit" "1" "$(printf '%s\n' "$out" | grep -c hookSpe
 out="$(run_scaffold "$L" '{"source":"startup"}')"
 want "l: steady state is silent again" "" "$out"
 
+# --- m. sweap-merge/ state dir is ignored: fresh scaffold + heal path ---------
+ok "m: fresh scaffold ignores .claude/sweap-merge/" grep -qF '.claude/sweap-merge/' "$P/.gitignore"
+M="$WORK/fm"; mk_fixture "$M"
+run_scaffold "$M" '{"source":"startup"}' >/dev/null
+sed -i.bak '/sweap-merge/d' "$M/proj/.gitignore"; rm -f "$M/proj/.gitignore.bak"   # a consumer scaffolded before 0.13.0
+ok "m: rule removed for the test" test "$(grep -cF '.claude/sweap-merge/' "$M/proj/.gitignore")" -eq 0
+out="$(run_scaffold "$M" '{"source":"startup"}')"
+ok "m: heal path restores .claude/sweap-merge/" grep -qF '.claude/sweap-merge/' "$M/proj/.gitignore"
+ok "m: heal message names the rule" grep -q 'appended sweap runtime ignore rules.*sweap-merge/' <<<"$out"
+want "m: rule appears exactly once" "1" "$(grep -cF '.claude/sweap-merge/' "$M/proj/.gitignore")"
+
 printf 'RESULT: %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

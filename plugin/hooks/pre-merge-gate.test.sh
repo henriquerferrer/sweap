@@ -880,6 +880,52 @@ out="$(PATH="$NOJQ" bash "$GATE" <<<"$push_json")"
 if is_deny "$out" && reason "$out" | grep -q 'jq is unavailable'; then ok "q38) jq missing + push -> deny (fail-closed)"
 else bad "q38) jq missing + push -> deny" "got: $out"; fi
 
+echo "== merge-driver launch hygiene (belt B) =="
+# The gate refuses a `sweap-merge.sh` launch line that carries an environment
+# override. Plain launches pass untouched; the scan is a pure text match.
+LAUNCH='bash "${CLAUDE_PLUGIN_ROOT}/hooks/sweap-merge.sh" watch 7'
+expect_launch_ok() {  # $1=label $2=cmd
+  local out; out="$(run_gate green "$2")"
+  if [ -z "$out" ]; then ok "$1"; else bad "$1" "unexpected: $out"; fi
+}
+expect_launch_deny() {  # $1=label $2=cmd $3=var named in the reason
+  local out; out="$(run_gate green "$2")"
+  if is_deny "$out" && reason "$out" | grep -qF -- "refusing to launch sweap-merge.sh with an environment override ($3)"; then ok "$1"
+  else bad "$1" "got: $out"; fi
+}
+expect_launch_ok   "m1) plain launch -> untouched"                                  "$LAUNCH"
+expect_launch_ok   "m2) plain launch with --budget=300 -> untouched"                'bash "${CLAUDE_PLUGIN_ROOT}/hooks/sweap-merge.sh" tick 7 --budget=300'
+expect_launch_ok   "m3) plain launch by absolute path -> untouched"                 '/Users/x/.claude/plugins/sweap/hooks/sweap-merge.sh status'
+expect_launch_ok   "m4) plain launch piped to tail -> untouched"                    "$LAUNCH 2>&1 | tail -3"
+expect_launch_ok   "m5) PATH= on an unrelated command -> no-op"                     'PATH=/evil:$PATH ls'
+expect_launch_ok   "m6) the driver's TEST suite (sweap-merge.test.sh) -> no-op"     'PATH=/x bash plugin/hooks/sweap-merge.test.sh'
+expect_launch_deny "m7) BASH_ENV= prefix -> deny"          "BASH_ENV=/tmp/be.sh $LAUNCH"                    BASH_ENV
+expect_launch_deny "m8) ENV= prefix -> deny"               "ENV=/tmp/be.sh $LAUNCH"                         ENV
+expect_launch_deny "m9) SHELLOPTS= prefix -> deny"         "SHELLOPTS=xtrace $LAUNCH"                       SHELLOPTS
+expect_launch_deny "m10) BASHOPTS= prefix -> deny"         "BASHOPTS=x $LAUNCH"                             BASHOPTS
+expect_launch_deny "m11) PATH= prefix -> deny"             "PATH=/evil:\$PATH $LAUNCH"                       PATH
+expect_launch_deny "m12) CDPATH= prefix -> deny"           "CDPATH=/evil $LAUNCH"                           CDPATH
+expect_launch_deny "m13) HOME= prefix -> deny"             "HOME=/evil $LAUNCH"                             HOME
+expect_launch_deny "m14) GIT_DIR= prefix -> deny"          "GIT_DIR=/forged/.git $LAUNCH"                   GIT_DIR
+expect_launch_deny "m15) GIT_WORK_TREE= prefix -> deny"    "GIT_WORK_TREE=/forged $LAUNCH"                  GIT_WORK_TREE
+expect_launch_deny "m16) GIT_CONFIG_GLOBAL= prefix -> deny" "GIT_CONFIG_GLOBAL=/forged/gitconfig $LAUNCH"   GIT_CONFIG_GLOBAL
+expect_launch_deny "m17) LD_PRELOAD= prefix -> deny"       "LD_PRELOAD=/evil.so $LAUNCH"                    LD_PRELOAD
+expect_launch_deny "m18) DYLD_INSERT_LIBRARIES= prefix -> deny" "DYLD_INSERT_LIBRARIES=/evil.dylib $LAUNCH" DYLD_INSERT_LIBRARIES
+expect_launch_deny "m19) SWEAP_MERGE_GH= seam prefix -> deny" "SWEAP_MERGE_GH=/evil/gh $LAUNCH"             'SWEAP_MERGE_*'
+expect_launch_deny "m20) SWEAP_MERGE_NOW= seam prefix -> deny" "SWEAP_MERGE_NOW=0 $LAUNCH"                   'SWEAP_MERGE_*'
+expect_launch_deny "m21) env -i wrapper -> deny"           "env -i $LAUNCH"                                 'env wrapper'
+expect_launch_deny "m22) /usr/bin/env wrapper -> deny"     "/usr/bin/env BASH_ENV=/x $LAUNCH"               BASH_ENV
+expect_launch_deny "m23) export PATH=…; launch -> deny"    "export PATH=/evil:\$PATH; $LAUNCH"               PATH
+expect_launch_deny "m24) launch after cd with GIT_DIR= -> deny" "cd /repo && GIT_DIR=/f/.git $LAUNCH"       GIT_DIR
+# Accepted over-denies (documented): the scan is textual, so a command that
+# merely MENTIONS the driver next to an assignment token is refused too. The
+# recovery is to rephrase (drop the mention or the `=`), never a bypass.
+expect_launch_deny "m25) echo mentioning sweap-merge.sh + PATH= elsewhere -> deny (accepted over-deny)" 'echo "run sweap-merge.sh"; PATH=/x ls' PATH
+expect_launch_deny "m26) grep PATH= in the driver source -> deny (accepted over-deny)" 'grep -n PATH= plugin/hooks/sweap-merge.sh' PATH
+expect_launch_deny "m27) comment mentioning env + launch -> deny (accepted over-deny)" "$LAUNCH # under env -i" 'env wrapper'
+expect_launch_ok   "m28) word 'environment' next to the driver is not the env wrapper -> untouched" "$LAUNCH # environment"
+expect_launch_ok   "m29) grep PATH (no '=') in the driver source -> untouched"      'grep -n PATH plugin/hooks/sweap-merge.sh'
+
 echo
 printf 'RESULT: %d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

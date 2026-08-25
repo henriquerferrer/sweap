@@ -158,6 +158,33 @@ cwd="$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null)"
 [ "$tool_name" = "Bash" ] || exit 0
 [ -n "$cmd" ] || exit 0
 
+# --- merge-driver launch hygiene (belt B) ------------------------------------------
+# The driver (sweap-merge.sh) re-execs itself under `env -i` + `bash -p` (belt
+# A), but its FIRST process has already sourced $BASH_ENV by then, so a file that
+# shadows `exec`/`env` there defeats belt A. This rule refuses the launch LINE:
+# any command that names `sweap-merge.sh` AND carries an environment override —
+# an interpreter knob (BASH_ENV, ENV, SHELLOPTS, BASHOPTS), a lookup knob (PATH,
+# CDPATH, HOME), a repo re-anchor (GIT_DIR, GIT_WORK_TREE, GIT_CONFIG_GLOBAL),
+# a loader hook (LD_PRELOAD, DYLD_INSERT_LIBRARIES), a SWEAP_MERGE_* test seam,
+# or an `env` wrapper. Pure text scan, no git, no gh; greedy on purpose — a
+# comment or `echo` that mentions the driver next to `PATH=` is over-denied
+# (re-issue without the mention). Independent of the parser lib (runs before
+# it is needed) and of the merge/push branches (a deny here is final).
+case "$cmd" in
+  *sweap-merge.sh*)
+    ml_hit=""
+    for ml_v in BASH_ENV ENV SHELLOPTS BASHOPTS PATH CDPATH HOME GIT_DIR GIT_WORK_TREE GIT_CONFIG_GLOBAL LD_PRELOAD DYLD_INSERT_LIBRARIES; do
+      if printf '%s' "$cmd" | grep -Eq "(^|[^A-Za-z0-9_])${ml_v}="; then ml_hit="$ml_v"; break; fi
+    done
+    if [ -z "$ml_hit" ] && printf '%s' "$cmd" | grep -Eq '(^|[^A-Za-z0-9_])SWEAP_MERGE_[A-Za-z0-9_]*='; then ml_hit="SWEAP_MERGE_*"; fi
+    if [ -z "$ml_hit" ] && printf '%s' "$cmd" | grep -Eq '(^|[^A-Za-z0-9_.-])env[[:space:]]'; then ml_hit="env wrapper"; fi
+    if [ -n "$ml_hit" ]; then
+      emit_deny "merge-driver: refusing to launch sweap-merge.sh with an environment override ($ml_hit). Run it plainly: bash \"\${CLAUDE_PLUGIN_ROOT}/hooks/sweap-merge.sh\" watch <n>"
+      exit 0
+    fi
+    ;;
+esac
+
 # If the shared parser failed to load (lib missing/deleted, a syntax error, or a
 # missing tool like `dirname` broke the `.` source line), do NOT proceed to an
 # undefined `parse_merge_command` — that would abort under `set -u` before we mark
