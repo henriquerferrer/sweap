@@ -39,6 +39,14 @@ BACKLOG_DIR="$(sed -n 's/^backlog\.dir:[[:space:]]*\([^[:space:]#]*\).*/\1/p' CL
 BACKLOG_DIR="${BACKLOG_DIR:-roadmap/}"
 case "$BACKLOG_DIR" in */) : ;; *) BACKLOG_DIR="$BACKLOG_DIR/" ;; esac
 BACKLOG_DIR="${BACKLOG_DIR#./}"
+# Fail closed on a degenerate configured value: `backlog.dir: ./` (or `.`)
+# normalises to an EMPTY prefix above, and an empty prefix string-matches every
+# path — which would classify a code PR `roadmap-only` and let the gate bless
+# its skipped e2e (found by an adversarial review, 2026-08-24). "The repo root
+# is the backlog" cannot be allowlisted; fall back to the default so the
+# allowlist stays narrow. (A leading-slash or `..` value is harmless: it can
+# never prefix-match a repo-relative path, so it only narrows the lane.)
+[ -n "$BACKLOG_DIR" ] || BACKLOG_DIR="roadmap/"
 
 mode="${1:-}"
 [ -n "$mode" ] || { echo "usage: ci-lane.sh --files <path>... | --files0 | --base <ref>" >&2; exit 2; }

@@ -563,6 +563,22 @@ may ADD dimensions it judges necessary; it may not remove tagged ones.
     `0`), so a PR whose `e2e` had FAILED got merged and briefly broke `main`. The
     hook removes the human-reads-the-output link. This *strengthens* the gate and
     never weakens it — the hook only ever denies, never auto-approves.
+- **Waiting discipline (upstream of the gate).** The gate decides at merge time;
+  the waiting before it is where runs have burned the most time. Four rules,
+  each bought by a documented incident (consumer A 2026-08-21/22, one run):
+  **(1) Absence is not a pass.** A check that has not been reported is not
+  green: wait on the expected set being *present and succeeded*, never on
+  "nothing is pending" — an empty rollup satisfies `all(…)`-style predicates
+  vacuously, and a just-pushed head has no checks at all for a window.
+  **(2) Pin to the head SHA.** Re-resolve the PR's head each poll; a force-push
+  silently retargets a branch-pinned waiter onto history.
+  **(3) Own your liveness signal.** Wait on a PID or run-id you own, never a
+  `pgrep -f` pattern — it matches the waiting loop's own command line.
+  **(4) Retry discipline lives INSIDE the loop.** Only re-run a workflow run
+  whose status is `completed` (GitHub refuses otherwise, and a refusal with
+  discarded stderr inside a sleep-loop is a livelock — #189 went to attempt 41);
+  re-run ONCE as diagnosis, never retry-until-green; stop if the same check is
+  red on the base branch. One watcher per PR, owned by the session that merges.
 - **Merging a green PR is pre-authorized — do not ask.** Once `gh pr checks <n>`
   is green (every check, including `review`), merging an unblocked item's PR is a
   standing authorization: `gh pr merge <n> --squash` with no confirmation prompt.

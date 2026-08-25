@@ -82,6 +82,13 @@ case "$mode" in
       {"__typename":"CheckRun","name":"review","status":"COMPLETED","conclusion":"SUCCESS"},
       {"__typename":"CheckRun","name":"audit-gate","status":"COMPLETED","conclusion":"SUCCESS"}
     ],"mergeStateStatus":"CLEAN","baseRefName":"main","headRefOid":"deadbeef","mergeCommit":{"oid":"deadbeef"},"files":%s}\n' "${GH_FILES_JSON:-[]}" ;;
+  greenfull)  # green including the ci-status aggregator (presence-check shape)
+    printf '{"statusCheckRollup":[
+      {"__typename":"CheckRun","name":"lint","status":"COMPLETED","conclusion":"SUCCESS"},
+      {"__typename":"CheckRun","name":"e2e","status":"COMPLETED","conclusion":"SUCCESS"},
+      {"__typename":"CheckRun","name":"ci-status","status":"COMPLETED","conclusion":"SUCCESS"},
+      {"__typename":"CheckRun","name":"review","status":"COMPLETED","conclusion":"SUCCESS"}
+    ],"mergeStateStatus":"CLEAN","baseRefName":"main","headRefOid":"deadbeef","mergeCommit":{"oid":"deadbeef"},"files":%s}\n' "${GH_FILES_JSON:-[]}" ;;
   gateskipped)  # a gate check that may NEVER skip reports SKIPPED (misconfigured workflow)
     printf '{"statusCheckRollup":[
       {"__typename":"CheckRun","name":"lint","status":"COMPLETED","conclusion":"SUCCESS"},
@@ -192,6 +199,21 @@ else bad "a5) e2e skipped + workflow edit -> deny" "got: $out"; fi
 out="$(GH_FILES_JSON='[]' run_gate e2eskipped 'gh pr merge 42 --squash')"
 if is_deny "$out" && reason "$out" | grep -q "no changed files"; then ok "a6) e2e skipped + no files -> deny (fail closed)"
 else bad "a6) e2e skipped + no files -> deny" "got: $out"; fi
+
+# (a7-a9) ci-status PRESENCE: required iff the repo's own workflows declare the job.
+# A ci.yml that never triggers reports nothing; audit-gate+review alone would read
+# all-green. The gate must notice the aggregator is MISSING, not merely non-red.
+DECL="$WORK/decl"; mkdir -p "$DECL/.github/workflows"
+printf 'jobs:\n  lint:\n    runs-on: x\n  ci-status:\n    needs: [lint]\n' > "$DECL/.github/workflows/ci.yml"
+out="$(run_gate green 'gh pr merge 42 --squash' "$DECL")"
+if is_deny "$out" && reason "$out" | grep -q "no 'ci-status' check"; then ok "a7) repo declares ci-status, rollup lacks it -> deny (absence != pass)"
+else bad "a7) declared ci-status absent -> deny" "got: $out"; fi
+out="$(run_gate greenfull 'gh pr merge 42 --squash' "$DECL")"
+if is_deny "$out"; then bad "a8) declared + present green -> allow" "got deny: $(reason "$out")"
+else ok "a8) repo declares ci-status, rollup has it green -> allow"; fi
+out="$(run_gate green 'gh pr merge 42 --squash')"
+if is_deny "$out"; then bad "a9) repo without a ci-status job stays unaffected" "got deny: $(reason "$out")"
+else ok "a9) no ci-status declared -> presence not required (no regression)"; fi
 
 # (a7) a gate check that may never skip (audit-gate) reports SKIPPED -> DENY
 out="$(run_gate gateskipped 'gh pr merge 42 --squash')"

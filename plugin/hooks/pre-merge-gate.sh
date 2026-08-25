@@ -299,6 +299,28 @@ verify_pr() {
     emit_deny "merge-gate: PR #$pr has gate check(s) SKIPPED: $skipped_hard. Only e2e may skip (roadmap-only lane); a skipped lint/typecheck/test/review/audit-gate means the workflow is misconfigured (a job skipped by an if: reports success). Fix the workflow so the check runs, then re-run the merge."
     return 1
   fi
+  # ci-status PRESENCE (2026-08-24). The aggregator job (`needs:` every gate)
+  # is the one check whose presence proves the CI workflow actually ran on this
+  # head. Required only when the repo's own workflows declare a `ci-status` job
+  # (the CI template's contract) — a repo without the template is unaffected,
+  # and a repo with no checks at all is already denied above. Why presence and
+  # not just greenness: a ci.yml that never triggers (path filter, workflow
+  # parse error, bot-token push) reports NOTHING for its jobs, and audit-gate +
+  # review alone would read all-green — every check that exists passed, but the
+  # check set is not the expected one. The workflow files are read from the
+  # merging session's checkout; a PR that deletes the ci-status job is a
+  # CI-weakening PR (standing policy forbids it, and .github/ edits always run
+  # the code lane) — accepted residual. Greenness needs no extra check here:
+  # a present ci-status that is not SUCCESS was already denied as an offender
+  # or as a skipped contract check.
+  if grep -qsE '^[[:space:]]{2}ci-status:' .github/workflows/*.yml .github/workflows/*.yaml 2>/dev/null; then
+    if ! printf '%s' "$json" | jq -e '
+      any((.statusCheckRollup // [])[]; (.name // .context // "") == "ci-status")
+    ' >/dev/null 2>&1; then
+      emit_deny "merge-gate: PR #$pr has no 'ci-status' check on its head, but this repo's CI declares one. A check that has not been reported is not a passing check — the gate needs every expected check PRESENT and succeeded, never merely 'nothing pending'. Wait for CI to register on this head (or re-run the CI workflow), then re-run the merge."
+      return 1
+    fi
+  fi
   printf '%s' "$json" | jq -e '
     def norm:
       if (.__typename // "") == "CheckRun"

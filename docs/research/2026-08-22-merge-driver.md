@@ -63,13 +63,31 @@ The coordinator's own ledger, verbatim where it matters. These are the six
 |---|---|---|---|
 | 1 | `gatewait.sh` predicate was "no check is pending"; "fired green on a rebased head where CI's six jobs had **not been created at all**" | absence read as pass | (3), (1) |
 | 2 | `gatewait.sh` "requires all EIGHT expected checks present" — CI had changed to five (`checks`, `e2e`, `ci-status`, `review`, `audit-gate`) | hardcoded set went stale | (2) |
-| 3 | `drain.sh` re-ran in-progress runs → livelock, #189 stalled ~50 min | acting on a non-terminal run | (1) |
+| 3 | `drain.sh` re-ran the failing run to attempt 41 (retry-until-green, stderr discarded) → livelock, #189 stalled ~50 min — *see erratum* | unbounded retry loop | (1) |
 | 4 | `git checkout -- <file>` as restore advice; FN.4's worker "**wiped its own fix**"; "`git status --porcelain` reads CLEAN afterwards, so the verification step I prescribed actively confirms the wrong thing" | restore from HEAD over uncommitted work | (5) |
 | 5 | FM.9's spec named a fix shape (`if (purgeTarget?.id !== target.id) return`) that "**would have shipped a no-op**" — FM.8's exact defect family | spec prescribes the how | doctrine line (§8) |
 | 6 | Widened to 4 workers: "6 open PRs (#185-#190) on 3 runners at load average 17.5 … produced false reds I then spent turns diagnosing" | worker width ≠ CI width | (4) |
 | w1 | FK.9: `pgrep -f playwright` "**matches the waiting loop's own command line**" — three until-loops could never exit | self-matching liveness check | (1) |
 | w2 | FN.2/FN.3: "monitors pinned to **superseded commits**, re-reporting `build: success` for heads that no longer existed" | pinned to a dead SHA | (1) |
 | w3 | FJ.7: "chained polls that kept resolving to pre-CI-start snapshots — five consecutive stale notifications" | stale snapshot | (1) |
+
+> **Erratum (2026-08-24).** Row 3 originally read "re-ran in-progress runs →
+> livelock", following the coordinator's self-diagnosis. Attempt-level API data
+> for run 32582950754 (fetched 2026-08-24) contradicts it: the run ended at
+> attempt 41 and every sampled attempt (1, 2, 10, 25, 40) was `completed
+> failure` at the moment it was re-run — GitHub refuses reruns of unfinished
+> runs (cli/cli #9221), and drain.sh v1's own selector (`.conclusion ==
+> "failure"`) cannot even match an in-progress run (`conclusion: null`). The
+> real defect was an unbounded retry-until-green loop with stderr discarded,
+> violating doctrine the board already carried ("Re-run ONCE as diagnosis").
+> §3's "never act on a non-terminal run" invariant stands on the cited prior
+> art; this incident is evidence for a different rule — an attempt cap and a
+> completed-check *inside* the loop. A refutation round on 2026-08-24 (five
+> adversarial agents) also revised §9: the expected-checks manifest, the thin
+> waiter script, and a rerun-deny hook were refuted; what survived and shipped
+> instead: a fail-closed `ci-lane.sh` config read, a hardened `ci-status`
+> aggregator, a ci-status presence check in the gate, and the playbook's
+> waiting-discipline rules.
 
 Two facts from the same ledger frame everything below. First, the measured
 cause of the "false reds": `#181 e2e, ALL THREE RUNNERS OTHERWISE IDLE: 8m54s
@@ -151,7 +169,10 @@ as the original ([re-running workflows](https://docs.github.com/en/actions/how-t
 — so re-running after a force-push tests the wrong commit even when it
 succeeds. Check-run `conclusion` is `null` until `status == completed`; only then
 is it meaningful ([REST check runs](https://docs.github.com/en/rest/checks/runs)).
-`drain.sh`'s livelock is the consequence of skipping that one predicate.
+`drain.sh`'s livelock looked like the consequence of skipping that predicate
+(see the §1 erratum: attempt-level data shows the loop re-ran *completed*
+failures — the missing discipline was an attempt cap and a completed-check
+inside the loop).
 
 **Test what will actually land.** Zuul tests each change "applied to the tip of
 the branch exactly as it is going to be merged"; SubmitQueue's guarantee is

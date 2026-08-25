@@ -161,8 +161,14 @@ jobs:
           if-no-files-found: ignore
 
   ci-status:
-    needs: [lint, typecheck, test, e2e]
-    # `skipped` is not a failure here: e2e skips on the roadmap-only lane by design.
+    needs: [changes, lint, typecheck, test, e2e]
+    # `if: always()` so this job exists (and can fail) whatever happened above —
+    # it is the aggregator whose PRESENCE the merge gate requires. Skipped is
+    # NOT a pass here: every gate must be `success`, except e2e, which may be
+    # `skipped` only when the `changes` job classified this PR `roadmap-only`
+    # (a needs-result of `skipped` for any other reason — a mis-globbed `if:`,
+    # a failed dependency — fails this job, because a job skipped by an `if:`
+    # reports SUCCESS to required checks; audit-gate.yml's first hard rule).
     if: always()
     runs-on: ${{ vars.RUNNER_LABEL || 'ubuntu-24.04' }}
     timeout-minutes: 5
@@ -173,6 +179,11 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       # <fill in for your stack>: write .github/scripts/ci-summary.sh (not shipped)
       - run: bash .github/scripts/ci-summary.sh >> "$GITHUB_STEP_SUMMARY"
-      - name: Fail if any gate failed
-        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+      - name: Fail unless every gate succeeded (e2e may skip only on the roadmap-only lane)
+        if: >-
+          contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+          || needs.lint.result != 'success'
+          || needs.typecheck.result != 'success'
+          || needs.test.result != 'success'
+          || (needs.e2e.result != 'success' && !(needs.e2e.result == 'skipped' && needs.changes.outputs.lane == 'roadmap-only'))
         run: exit 1

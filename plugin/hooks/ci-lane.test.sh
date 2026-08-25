@@ -42,6 +42,13 @@ want "configured backlog.dir honoured"   roadmap-only "$( (cd "$WORK/cfg" && bas
 want "override: a non-md file under the old dir is code" code "$( (cd "$WORK/cfg" && bash "$LANE" --files roadmap/F1.2.json) )"
 want "override: a non-md file under the new dir is roadmap-only" roadmap-only "$( (cd "$WORK/cfg" && bash "$LANE" --files items/F1.2.json) )"
 
+# --- degenerate backlog.dir values fail closed (2026-08-24 finding) ------------
+mkdir -p "$WORK/cfg2" && printf '## sweap config\n```\nbacklog.dir:      ./\n```\n' > "$WORK/cfg2/CLAUDE.md"
+want "backlog.dir ./ : code file stays code"       code "$( (cd "$WORK/cfg2" && bash "$LANE" --files src/a.ts) )"
+want "backlog.dir ./ : falls back to default dir"  roadmap-only "$( (cd "$WORK/cfg2" && bash "$LANE" --files roadmap/F1.2.md) )"
+mkdir -p "$WORK/cfg3" && printf '## sweap config\n```\nbacklog.dir:      .\n```\n' > "$WORK/cfg3/CLAUDE.md"
+want "backlog.dir . : code file stays code"        code "$( (cd "$WORK/cfg3" && bash "$LANE" --files packages/api/x.go) )"
+
 # --- --base against a real repo -----------------------------------------------
 R="$WORK/repo"; mkdir -p "$R/roadmap" "$R/src"
 git -C "$R" init -q && git -C "$R" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
