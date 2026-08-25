@@ -91,19 +91,87 @@ in_baseline() { local m; for m in $BASELINE; do [ "$m" = "$1" ] && return 0; don
 # item files) and compute complete milestones: milestone = id minus last dot
 # segment (parity with sweap-board.lib.mjs#milestoneOf); complete = every item
 # under the prefix is done. awk aggregation keeps this bash-3.2 safe.
-item_rows() { # item_rows [dir] -> "<milestone> <status>" per item file
-  local dir="${1:-$BACKLOG_DIR}" f id status
+#
+# ONE awk pass over every item file, and why: the old shape spawned `basename`
+# plus two `fm_get` (each awk | sed | head | sed) PER ITEM FILE — ~9 processes
+# times every item, and the whole loop ran twice (COMPLETE here, BASE_COMPLETE
+# against the anchor tree) plus once more inside every validate_record. On a
+# 165-item roadmap that is ~1,500 spawns and ~8 s, and --files is on the merge
+# gate's critical path: pre-merge-gate charges it against the PR's remaining
+# per-PR budget through a bounded watchdog and DENIES on overrun, so a roadmap
+# that merely grows starts refusing good PRs. This scan reads each file once,
+# in-process.
+#
+# fm_get/frontmatter stay exactly as they are for the ~30 single-key lookups
+# elsewhere (records, referenced follow-ups): one file, one key, no fan-out.
+#
+# Row format: TAB-separated `<followup?>\t<milestone>\t<id>\t<status>`, with the
+# only free-form field (status) LAST so a value containing a tab can never shift
+# the filename-derived fields. Parsing is byte-identical to frontmatter+fm_get:
+#   - frontmatter is the block between a `---` on line 1 and the next `---`; a
+#     file whose line 1 is not `---` has NO frontmatter (getline loop breaks),
+#   - `\r$` is stripped before anything is compared or captured (CRLF checkouts),
+#   - FIRST-wins on a duplicate key (the `| head -1` in fm_get; this repo
+#     deliberately differs from last-wins elsewhere) — the `gs`/`gf` latches,
+#   - leading whitespace after the colon and trailing whitespace are stripped,
+#   - a missing/empty status renders `unknown` (fm_get's `${status:-unknown}`).
+# Paths are consumed from ARGV inside BEGIN and opened with `getline < path`, so
+# awk never treats them as data files or as `var=value` assignments: a filename
+# with spaces is safe, and an UNREADABLE file returns getline -1, i.e. "no
+# frontmatter" -> `unknown`, exactly what the old fm_get produced for it (the
+# only difference is that the old form also wrote awk's "can't open" to stderr).
+# Portable awk only: no gensub/asort/length(array)/ENVIRON.
+TAB=$'\t'   # the row separator below, as an IFS value for `read`
+ITEM_SCAN_AWK='
+BEGIN {
+  for (i = 1; i < ARGC; i += 3) {
+    ms = ARGV[i]; id = ARGV[i+1]; path = ARGV[i+2]
+    st = ""; fu = ""; gs = 0; gf = 0; n = 0
+    while ((getline ln < path) > 0) {
+      sub(/\r$/, "", ln)
+      n++
+      if (n == 1) { if (ln != "---") break; continue }
+      if (ln == "---") break
+      if (!gs && index(ln, "status:") == 1) {
+        st = substr(ln, 8)
+        sub(/^[[:space:]]*/, "", st); sub(/[[:space:]]*$/, "", st); gs = 1
+      } else if (!gf && index(ln, "followup_of:") == 1) {
+        fu = substr(ln, 13)
+        sub(/^[[:space:]]*/, "", fu); sub(/[[:space:]]*$/, "", fu); gf = 1
+      }
+    }
+    close(path)
+    printf "%s\t%s\t%s\t%s\n", (fu == "" ? "0" : "1"), ms, id, (st == "" ? "unknown" : st)
+  }
+  exit
+}'
+item_scan() { # item_scan [dir] -> "<followup?>\t<milestone>\t<id>\t<status>" per item file
+  local dir="${1:-$BACKLOG_DIR}" f id
+  local -a args=()
   for f in "${dir}"*.md; do
     [ -f "$f" ] || continue
-    id="$(basename "$f" .md)"
+    id="${f##*/}"; id="${id%.md}"                 # `basename "$f" .md`, without the spawn
     case "$id" in *.*) : ;; *) continue ;; esac   # no dot => not an item file
-    status="$(fm_get "$f" status)"
-    # Follow-up/blocked items created by an audit's triage are DEBT OF the
-    # milestone, not members of it — they must not flip it back to incomplete
-    # (they drain in the next /milestone run per the playbook).
-    [ -n "$(fm_get "$f" followup_of)" ] && continue
-    printf '%s %s\n' "${id%.*}" "${status:-unknown}"
+    args+=("${id%.*}" "$id" "$f")
   done
+  [ "${#args[@]}" -gt 0 ] || return 0
+  # Chunked (3 argv entries per item, so 1500 = 500 files per exec): a roadmap
+  # large enough to matter must not be able to push the arg vector past ARG_MAX.
+  local i
+  for (( i = 0; i < ${#args[@]}; i += 1500 )); do
+    awk "$ITEM_SCAN_AWK" "${args[@]:i:1500}"
+  done
+}
+# The working tree is scanned ONCE per run and reused by every consumer below
+# (COMPLETE, validate_record's done-item loop, the attended/blocked sweeps).
+# Safe to memoize: this script only ever READS the tree.
+ITEMS="$(item_scan)"
+item_rows() { # item_rows [dir] -> "<milestone> <status>" per item file
+  # Follow-up/blocked items created by an audit's triage are DEBT OF the
+  # milestone, not members of it — they must not flip it back to incomplete
+  # (they drain in the next /milestone run per the playbook).
+  { if [ $# -gt 0 ]; then item_scan "$1"; else printf '%s' "$ITEMS"; fi; } \
+    | awk -F'\t' '$1 == "0" { print $2 " " $4 }'
 }
 complete_from() { item_rows "$@" | awk '{tot[$1]++; if($2=="done") d[$1]++} END{for(m in tot) if(d[m]==tot[m]) print m}' | sort; }
 COMPLETE="$(complete_from)"
@@ -204,21 +272,32 @@ validate_record() { # validate_record <milestone> <file> ; 0 = valid
       # the commit that introduced its `status: done` (oldest -S hit) must be
       # reachable from range_head. This is what makes "audited F1's real
       # merges" checkable — an audit of a stale range fails structurally.
-      for f in "${BACKLOG_DIR}"*.md; do
-        [ -f "$f" ] || continue
-        id="$(basename "$f" .md)"
-        case "$id" in *.*) [ "${id%.*}" = "$m" ] || continue ;; *) continue ;; esac
-        # Follow-up items created by an audit's triage are DEBT OF the milestone,
-        # not members of it — their later completion must not retroactively fail the record.
-        [ -n "$(fm_get "$f" followup_of)" ] && continue
-        [ "$(fm_get "$f" status)" = "done" ] || continue
+      #
+      # The item set comes from the single ITEMS scan above (same files, same
+      # glob order) — the follow-up exclusion and the done filter are the same
+      # two predicates, applied to already-parsed rows instead of re-spawning
+      # basename+fm_get per file. Follow-up items created by an audit's triage
+      # are DEBT OF the milestone, not members of it, so their later completion
+      # must not retroactively fail the record.
+      #
+      # The git calls below are LEFT ALONE on purpose: `-S` over a directory
+      # plus --name-only is not the same question as `-S` per path (see the
+      # report), so batching them would trade a provable check for a plausible
+      # one. Only the spawn overhead around them is gone.
+      local done_ids
+      done_ids="$(printf '%s' "$ITEMS" | awk -F'\t' -v m="$m" '$1 == "0" && $2 == m && $4 == "done" { print $3 }')"
+      while IFS= read -r id; do
+        [ -n "$id" ] || continue
+        f="${BACKLOG_DIR}${id}.md"
         flip="$(git log --format=%H -S'status: done' -- "$f" 2>/dev/null | tail -1)"
         if [ -z "$flip" ]; then
           fail "record $rec: cannot locate the commit that completed $id (uncommitted flip?) — fail closed"; ok=0
         elif ! git merge-base --is-ancestor "$flip" "$head" 2>/dev/null; then
           fail "record $rec: $id completed outside the audited range (flip $flip not reachable from range_head)"; ok=0
         fi
-      done
+      done <<DONE_ITEMS_EOF
+$done_ids
+DONE_ITEMS_EOF
     fi
   fi
 
@@ -443,17 +522,21 @@ COMPLETE_EOF
 # tree before they are ever committed, and an unborn item has no provenance to
 # judge. CI runs this on the PR's own checkout, where the commits do exist.
 if [ "$MODE" = "--check" ]; then
-  for f in "${BACKLOG_DIR}"*.md; do
-    [ -f "$f" ] || continue
-    id="$(basename "$f" .md)"
-    case "$id" in *.*) : ;; *) continue ;; esac
-    [ "$(fm_get "$f" status)" = "attended" ] || continue
+  # Same item set as before (ITEMS is the one scan of the working tree, in glob
+  # order); only the per-file status lookup moved into that scan. Follow-up
+  # items are NOT excluded here — a hand-off is judged wherever it lives.
+  while IFS="$TAB" read -r _fu _ms id status; do
+    [ -n "$id" ] || continue
+    [ "$status" = "attended" ] || continue
+    f="${BACKLOG_DIR}${id}.md"
     added="$(git log --diff-filter=A --format=%H -- "$f" 2>/dev/null | tail -1)"
     became="$(git log --format=%H -S'status: attended' -- "$f" 2>/dev/null | tail -1)"
     [ -n "$added" ] && [ -n "$became" ] || continue   # not committed yet — nothing to judge
     [ "$added" = "$became" ] && continue
     fail "hand-off $id: status: attended was introduced by $became but the item file was added by $added — an attended item is AUTHORED, never transitioned into (an agent must not relabel stuck work as human work; stuck work is [blocked]). If this is a deliberate re-assignment, archive $id with a dropped_reason: and author the hand-off as a new item."
-  done
+  done <<ATTENDED_EOF
+$ITEMS
+ATTENDED_EOF
 
   # --- blocked-question aging: INFORMATIONAL, never a failure ------------------
   # A [blocked] item is a question waiting on a human. Unlike audit debt, an
@@ -473,11 +556,10 @@ if [ "$MODE" = "--check" ]; then
   # It is surfacing, not enforcement, and deliberately so: skipping the carry
   # increment buys an agent nothing it wants, so it is not the shortcut shape
   # that earns a mechanism here (contrast the hand-off provenance check above).
-  for f in "${BACKLOG_DIR}"*.md; do
-    [ -f "$f" ] || continue
-    id="$(basename "$f" .md)"
-    case "$id" in *.*) : ;; *) continue ;; esac
-    [ "$(fm_get "$f" status)" = "blocked" ] || continue
+  while IFS="$TAB" read -r _fu _ms id status; do
+    [ -n "$id" ] || continue
+    [ "$status" = "blocked" ] || continue
+    f="${BACKLOG_DIR}${id}.md"
     carried="$(fm_get "$f" carried)"
     case "$carried" in ""|*[!0-9]*) carried=0 ;; esac
     # `blocked:` is usually written already-quoted (the question contains colons
@@ -489,7 +571,9 @@ if [ "$MODE" = "--check" ]; then
     else
       printf 'AGING: blocked %s — carried %s milestone boundary(ies): "%s…". Answer it with /unblock %s; at carried 2 it stops being optional.\n' "$id" "$carried" "$q" "$id"
     fi
-  done
+  done <<BLOCKED_EOF
+$ITEMS
+BLOCKED_EOF
 
   exit "$fails"
 fi

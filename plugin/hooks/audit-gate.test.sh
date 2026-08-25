@@ -840,5 +840,111 @@ commit_all "$R" record
 run_gate "$R" --check
 check "a zero UI axis needs no ui.finders_reporting" 0
 
+# --- item-file frontmatter parsing -----------------------------------------------
+# The item scan (audit-gate.sh's ITEM_SCAN_AWK) replaced a per-file
+# basename+fm_get fan-out with one awk pass, so the parsing rules the old shape
+# got for free from `frontmatter | sed | head -1 | sed` are now this scan's job.
+# Each case below pins one of them THROUGH OBSERVABLE GATE BEHAVIOUR: a
+# milestone is complete iff every one of its non-follow-up items reads `done`,
+# and a complete milestone with no record is debt. So "this file parsed as done"
+# and "this file did not" are exactly distinguishable by the exit code.
+
+# T60: FIRST-wins on a duplicate key (fm_get's `| head -1`). This repo
+# deliberately differs from last-wins parsers elsewhere; sweap-board.test.mjs
+# pins the same rule on the JS side. `done` first, `todo` second => done.
+R="$(new_repo t60)"
+printf -- '---\nid: F1.1\nstatus: done\nstatus: todo\n---\n\n# F1.1\n' > "$R/roadmap/F1.1.md"
+commit_all "$R"
+run_gate "$R" --check
+check "duplicate status: first wins (done, then todo => done)" 1
+check_out "first-wins completes the milestone" "FAIL: milestone F1 .*no audit record"
+
+# T61: and the other direction, which is what a last-wins parser would get
+# wrong in the DANGEROUS direction (inventing a completion).
+R="$(new_repo t61)"
+printf -- '---\nid: F1.1\nstatus: todo\nstatus: done\n---\n\n# F1.1\n' > "$R/roadmap/F1.1.md"
+commit_all "$R"
+run_gate "$R" --check
+check "duplicate status: first wins (todo, then done => todo)" 0
+
+# T62: a file whose line 1 is not `---` has NO frontmatter at all — keys in its
+# body are not frontmatter and must not be read (the old `frontmatter` awk
+# exited at NR==1; the scan breaks out of its getline loop).
+R="$(new_repo t62)"
+mk_item "$R" F1.1 'done'
+printf '# F1.2\n\n---\nid: F1.2\nstatus: done\n---\n' > "$R/roadmap/F1.2.md"
+commit_all "$R"
+run_gate "$R" --check
+check "no frontmatter => unknown, body keys not read" 0
+
+# T63: a CRLF checkout still parses — `\r$` is stripped before anything is
+# compared, so line 1 `---\r` is still the frontmatter opener (without the
+# strip this file would read as having no frontmatter, i.e. `unknown`).
+R="$(new_repo t63)"
+printf -- '---\r\nid: F1.1\r\nstatus: done\r\n---\r\n\r\n# F1.1\r\n' > "$R/roadmap/F1.1.md"
+commit_all "$R"
+run_gate "$R" --check
+check "CRLF item file parses (\\r stripped)" 1
+check_out "CRLF item counts toward completion" "FAIL: milestone F1 .*no audit record"
+
+# T64: a filename with no dot is not an item file (`case "$id" in *.*)`).
+# roadmap/F1.md is a milestone-level note, not an item — if it were counted its
+# `todo` would hold F1 open forever.
+R="$(new_repo t64)"
+mk_item "$R" F1.1 'done'
+printf -- '---\nid: F1\nstatus: todo\n---\n\n# F1\n' > "$R/roadmap/F1.md"
+commit_all "$R"
+run_gate "$R" --check
+check "dotless filename is not an item file" 1
+check_out "dotless file did not hold the milestone open" "FAIL: milestone F1 .*no audit record"
+
+# T65: a present-but-empty `status:` renders `unknown`, exactly like a missing
+# one — not `done`, and not a crash.
+R="$(new_repo t65)"
+mk_item "$R" F1.1 'done'
+printf -- '---\nid: F1.2\nstatus:\n---\n\n# F1.2\n' > "$R/roadmap/F1.2.md"
+commit_all "$R"
+run_gate "$R" --check
+check "empty status: => unknown, not done" 0
+
+# T66: a non-empty followup_of: excludes the item from its milestone entirely —
+# triage debt OF a milestone is not a member of it, so it must not hold the
+# milestone open.
+R="$(new_repo t66)"
+mk_item "$R" F1.1 'done'
+mk_item "$R" F1.2 todo 'followup_of: F1'
+commit_all "$R"
+run_gate "$R" --check
+check "followup_of: excludes the item from its milestone" 1
+check_out "follow-up did not hold the milestone open" "FAIL: milestone F1 .*no audit record"
+
+# T67: a filename containing a space is still an item file. The scan hands paths
+# to awk as argv entries it opens itself, so nothing word-splits: this item's
+# `todo` must still hold F1 open (a dropped path would read as a completion).
+R="$(new_repo t67)"
+mk_item "$R" F1.1 'done'
+printf -- '---\nid: F1.2\nstatus: todo\n---\n\n# F1.2\n' > "$R/roadmap/F1.2 note.md"
+commit_all "$R"
+run_gate "$R" --check
+check "filename with a space is still read" 0
+
+# T68: an UNREADABLE item file yields no frontmatter, i.e. `unknown` — it is NOT
+# silently dropped from its milestone (dropping it would manufacture a
+# completion out of a permissions problem). Root ignores the mode bits, so the
+# assertion follows what this process can actually read; the suite stays green
+# either way and the pass count is stable.
+R="$(new_repo t68)"
+mk_item "$R" F1.1 'done'
+mk_item "$R" F1.2 'done'
+commit_all "$R"
+chmod 000 "$R/roadmap/F1.2.md"
+run_gate "$R" --check
+if [ -r "$R/roadmap/F1.2.md" ]; then
+  check "unreadable item file => unknown, not skipped (readable as root: parses)" 1
+else
+  check "unreadable item file => unknown, not skipped" 0
+fi
+chmod 644 "$R/roadmap/F1.2.md"
+
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" = 0 ]
