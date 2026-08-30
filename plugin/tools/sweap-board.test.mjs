@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, existsSync
 import { tmpdir } from "node:os";
 import { join, basename } from "node:path";
 import http from "node:http";
-import { parseFrontmatter, parseList, readConfig, loadItems, refMatchesId, slugify, writeIdea, loadIdeas } from "./sweap-board.lib.mjs";
+import { parseFrontmatter, parseList, readConfig, loadItems, refMatchesId, slugify, writeIdea, loadIdeas, loadSessions, sessionStats, resolveTestTarget, writeSession } from "./sweap-board.lib.mjs";
 
 function fixture(files) {
   const dir = mkdtempSync(join(tmpdir(), "swb-"));
@@ -1258,4 +1258,166 @@ test("tick keeps its three error lanes apart and keeps polling", async () => {
   assert.match(p.el("updated").textContent, /^updated /);
   assert.equal(p.el("updated").className, "");
   rmSync(dir, { recursive: true });
+});
+
+// --- the acceptance pass ------------------------------------------------------
+
+const sess = (milestone, date, extra = {}) =>
+  `---\nsweap_format: 1\nmilestone: ${milestone}\ndate: ${date}\nwalked: 6\ngaps: ${extra.gaps ?? 0}\ndirections: ${extra.directions ?? 0}\nideas: ${extra.ideas ?? 0}\nverdict: ${extra.verdict ?? "accepted"}\n---\n\n# ${milestone} session\n`;
+
+test("loadSessions reads the sheets newest-date first", () => {
+  const dir = fixture({
+    "roadmap/sessions/F9-2026-08-10.md": sess("F9", "2026-08-10", { gaps: 1 }),
+    "roadmap/sessions/F11-2026-08-26.md": sess("F11", "2026-08-26", { gaps: 3, directions: 2, ideas: 1 }),
+  });
+  const out = loadSessions(dir, "roadmap/");
+  assert.deepEqual(out.map((s) => s.milestone), ["F11", "F9"]);
+  assert.equal(out[0].gaps, 3);
+  assert.equal(out[0].directions, 2);
+  assert.equal(out[0].verdict, "accepted");
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("loadSessions is empty (not throwing) when sessions/ does not exist", () => {
+  const dir = fixture({ "roadmap/F1.1.md": "---\nid: F1.1\nstatus: done\n---\n" });
+  assert.deepEqual(loadSessions(dir, "roadmap/"), []);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("loadSessions marks an unparseable sheet malformed rather than barren", () => {
+  const dir = fixture({ "roadmap/sessions/junk.md": "not a sheet\n" });
+  const out = loadSessions(dir, "roadmap/");
+  assert.equal(out.length, 1);
+  assert.equal(out[0].milestone, null);
+  assert.equal(out[0].malformed, true);
+  // and it must NOT argue for deleting the command
+  const s = sessionStats(out);
+  assert.equal(s.dry, 0, "a formatting slip is not a session that found nothing");
+  assert.equal(s.malformed, 1);
+  assert.equal(s.sessions, 0);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("sessionStats measures yield, and dry counts only the most recent barren run", () => {
+  // newest first, as loadSessions returns them
+  const s = sessionStats([
+    { gaps: 0, directions: 1, ideas: 0 },
+    { gaps: 0, directions: 0, ideas: 0 },
+    { gaps: 4, directions: 1, ideas: 1 },
+  ]);
+  assert.equal(s.sessions, 3);
+  assert.equal(s.gaps, 4);
+  assert.equal(s.notes, 7);
+  assert.equal(s.dry, 2, "the two most recent sessions found no gap; the older one did");
+});
+
+test("sessionStats on no sessions is all zeros, not NaN", () => {
+  assert.deepEqual(sessionStats([]), { sessions: 0, malformed: 0, gaps: 0, notes: 0, dry: 0, notesPerSession: 0 });
+});
+
+const idx = (...ids) => ids.map((id) => ({ id, goal: id, sketch: false }));
+
+test("resolveTestTarget picks the LAST complete milestone in index order", () => {
+  const items = [mk("F1.1", "done"), mk("F1.2", "done"), mk("F2.1", "done"), mk("F3.1", "todo")];
+  const t = resolveTestTarget({ items, index: idx("F1", "F2", "F3"), sessions: [] });
+  assert.equal(t.milestone, "F2");
+  assert.equal(t.items, 1);
+  assert.match(t.source, /no session sheet/);
+});
+
+test("resolveTestTarget honours INDEX order, not id order", () => {
+  const items = [mk("F1.1", "done"), mk("DS.5.1", "done")];
+  // the index deliberately puts DS.5 after F1 — the human's stated priority
+  const t = resolveTestTarget({ items, index: idx("F1", "DS.5"), sessions: [] });
+  assert.equal(t.milestone, "DS.5");
+});
+
+test("resolveTestTarget skips a milestone that already has a session", () => {
+  const items = [mk("F1.1", "done"), mk("F2.1", "done")];
+  const t = resolveTestTarget({ items, index: idx("F1", "F2"), sessions: [{ milestone: "F2" }] });
+  assert.equal(t.milestone, "F1");
+  assert.equal(t.untested, 1);
+});
+
+test("resolveTestTarget falls back to the last complete milestone when all are walked, and SAYS so", () => {
+  const items = [mk("F1.1", "done"), mk("F2.1", "done")];
+  const t = resolveTestTarget({ items, index: idx("F1", "F2"), sessions: [{ milestone: "F1" }, { milestone: "F2" }] });
+  assert.equal(t.milestone, "F2");
+  assert.equal(t.sessions, 1);
+  assert.match(t.source, /already has a session/);
+});
+
+test("resolveTestTarget: an open attended item keeps its milestone incomplete", () => {
+  const items = [mk("F1.1", "done"), mk("F2.1", "done"), mk("F2.2", "attended", [], { handoff: "walk it" })];
+  const t = resolveTestTarget({ items, index: idx("F1", "F2"), sessions: [] });
+  assert.equal(t.milestone, "F1", "F2 cannot be complete while a hand-off is open");
+});
+
+test("resolveTestTarget: a followup_of family is debt, never a milestone", () => {
+  const items = [
+    mk("F11.1", "done"),
+    mk("FN.1", "todo", [], { followupOf: "F11" }),
+    mk("FN.2", "done", [], { followupOf: "F11" }),
+  ];
+  const t = resolveTestTarget({ items, index: idx("F11"), sessions: [] });
+  assert.equal(t.milestone, "F11", "FN is a family keyed by followup_of, so it is never picked");
+});
+
+test("resolveTestTarget: an outstanding follow-up does NOT block its milestone from being walked", () => {
+  const items = [mk("F11.1", "done"), mk("FN.1", "todo", [], { followupOf: "F11" })];
+  const t = resolveTestTarget({ items, index: idx("F11"), sessions: [] });
+  assert.equal(t.milestone, "F11");
+  assert.equal(t.items, 1, "the follow-up is not counted as a member");
+});
+
+test("resolveTestTarget returns null when nothing is complete", () => {
+  assert.equal(resolveTestTarget({ items: [mk("F1.1", "todo")], index: idx("F1"), sessions: [] }), null);
+  assert.equal(resolveTestTarget({ items: [], index: [], sessions: [] }), null);
+});
+
+test("resolveTestTarget sorts milestones the index never lists AFTER the ones it does", () => {
+  const items = [mk("F1.1", "done"), mk("ZZ.1", "done")];
+  const t = resolveTestTarget({ items, index: idx("F1"), sessions: [] });
+  assert.equal(t.milestone, "ZZ", "unlisted sorts last, so it is the last complete one");
+});
+
+test("writeSession owns the format, and loadSessions round-trips it", () => {
+  const dir = fixture({ "roadmap/F1.1.md": "---\nid: F1.1\nstatus: done\n---\n" });
+  const out = writeSession(dir, "roadmap/", {
+    milestone: "F11",
+    date: "2026-08-26",
+    viewports: ["desktop", "360"],
+    counts: { duration_min: 34, charter: 7, walked: 6, skipped: 1, gaps: 4, directions: 2, ideas: 1, answered: 2, verdict: "accepted-with-followups" },
+    body: "## 1. the template editor doesn't say what the placeholders are\n→ discovered/x.md\n",
+  });
+  assert.equal(out.file, "roadmap/sessions/F11-2026-08-26.md");
+  const [s] = loadSessions(dir, "roadmap/");
+  assert.equal(s.malformed, false);
+  assert.equal(s.milestone, "F11");
+  assert.equal(s.gaps, 4);
+  assert.equal(s.verdict, "accepted-with-followups");
+  assert.match(readFileSync(join(dir, out.file), "utf8"), /^viewports: \[desktop, 360\]$/m);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("writeSession is create-only and never clobbers a second session the same day", () => {
+  const dir = fixture({ "roadmap/F1.1.md": "---\nid: F1.1\nstatus: done\n---\n" });
+  const a = writeSession(dir, "roadmap/", { milestone: "F11", date: "2026-08-26" });
+  const b = writeSession(dir, "roadmap/", { milestone: "F11", date: "2026-08-26" });
+  assert.equal(a.file, "roadmap/sessions/F11-2026-08-26.md");
+  assert.equal(b.file, "roadmap/sessions/F11-2026-08-26-2.md");
+  assert.equal(loadSessions(dir, "roadmap/").length, 2);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("writeSession rejects a missing milestone, a bad date, and a bogus verdict", () => {
+  const dir = fixture({ "roadmap/F1.1.md": "---\nid: F1.1\nstatus: done\n---\n" });
+  assert.throws(() => writeSession(dir, "roadmap/", { milestone: "", date: "2026-08-26" }), /milestone required/);
+  assert.throws(() => writeSession(dir, "roadmap/", { milestone: "F11", date: "26-08-2026" }), /date required/);
+  const out = writeSession(dir, "roadmap/", { milestone: "F11", date: "2026-08-26", counts: { verdict: "great", gaps: -3 } });
+  const [s] = loadSessions(dir, "roadmap/");
+  assert.equal(s.verdict, "accepted-with-followups", "an unknown verdict falls back, never lands");
+  assert.equal(s.gaps, 0, "a negative count is clamped, not written");
+  assert.ok(out.file);
+  rmSync(dir, { recursive: true, force: true });
 });

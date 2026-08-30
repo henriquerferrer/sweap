@@ -197,6 +197,51 @@ Two exits from this, both narrow:
   command's steps by name rather than copying its templates, so this file is
   the only place the goal text lives.
 
+Acceptance offer (see `/walkthrough`). After the hand-off fork resolves and before any
+goal is printed, ask the lib whether a shipped milestone has never been walked:
+
+```bash
+node --input-type=module -e '
+const lib = await import("file://" + process.argv[1]);
+const { backlogFile, backlogDir } = lib.readConfig(process.cwd());
+const items = lib.loadItems(process.cwd(), backlogDir);
+const sessions = lib.loadSessions(process.cwd(), backlogDir);
+const t = lib.resolveTestTarget({ items, index: lib.readMilestoneIndex(process.cwd(), backlogFile), sessions });
+console.log(JSON.stringify({ target: t, stats: lib.sessionStats(sessions) }, null, 2));
+' "${CLAUDE_PLUGIN_ROOT}/tools/sweap-board.lib.mjs"
+```
+
+If it names a milestone with `sessions: 0`, **offer once**, with the cost stated
+on both arms, and take either answer without argument:
+
+```
+<Mprev> shipped <n> items and nobody has looked at it.
+
+  Test it now  → ~35 min. Findings land as debt and drain FIRST in this run.
+  Later        → the run starts now; <Mprev>'s findings, if any, arrive a
+                 milestone late and cost a second drain.
+```
+
+The timing is the whole argument: a finding caught before the run becomes that
+run's debt and drains at the front of the frontier; caught after, it is a
+milestone late. On "now", run `/walkthrough <Mprev>` inline here, then re-resolve from
+the top (every scan above is stateless) and print the goal that then applies.
+
+**Offer it every time and escalate never.** This is deliberately NOT the
+`carried: ≥2` shape the blocked queue uses, and the difference is evidenced: a
+mandate is the one variable with a large null result against it (an identical
+checklist mandated across 101 hospitals and 215,711 procedures moved outcomes at
+P = 0.13), and checklist *completion* decays invisibly beneath stable *usage*
+(81.7% → 53.2%) — so the presence of a session sheet, the only thing an
+escalation could key on, is exactly the signal that cannot detect the failure.
+What is watched instead is yield: if `stats.dry` reaches 3, say so and recommend
+cutting `/walkthrough` back to a UI-only spot-check rather than offering it harder.
+
+Non-interactive kickoffs — `/loop-schedule` and any headless driver — skip this
+entirely and name the skip in their notification, exactly as they do for
+`/handoff`; `/walkthrough` requires a human in the session and must never run
+unattended.
+
 Environment pre-flight (parity — see the playbook's "Environment parity"
 section). Do this **yourself** — the user should never bring up services by
 hand. Check whether `services.up` is declared in the `## sweap config` block in

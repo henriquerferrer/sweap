@@ -517,6 +517,144 @@ export function deriveBacklog(items) {
 
 // --- the running-milestone card -------------------------------------------------
 // The board could always answer "which items are moving"; it could never answer
+// --- the acceptance pass (session sheets, and what /walkthrough should walk) --------
+// A session sheet is the record that a HUMAN exercised a shipped milestone.
+// It lives at <backlogDir>sessions/<M>-<YYYY-MM-DD>.md and is deliberately a
+// third inbox subdir rather than an item: audit-gate.sh's "other subdirs" arm
+// already classifies anything under <backlogDir>*/* as non-item, so a session
+// PR is not backlog-advancing (it lands during audit debt) and rides the
+// roadmap-only CI lane. No gate change was needed to add this.
+//
+// Why a durable record at all, when the blocked-queue research
+// (docs/research/2026-08-16-blocked-question-queue.md §7) is explicit that
+// "more surfacing" changes nothing: because a CONTROL reads it. /milestone's
+// kickoff fork decides off it. That is the same test the playbook applies to
+// .claude/sweap-run.md, which it demotes precisely because "nothing in the loop
+// reads it to decide anything".
+// The lib owns this format, exactly as writeIdea owns the idea file's — and for
+// a sharper reason than symmetry. `gaps: 0` is what trips the kill condition
+// (`dry` below), and an unparseable sheet would otherwise read as a session that
+// found nothing, i.e. a formatting slip would argue for deleting the command.
+// So sheets are written through here, and a sheet that cannot be parsed is
+// marked `malformed` rather than silently counted as barren — the same
+// convention loadItems already uses for an item file it cannot read.
+export function writeSession(projectDir, backlogDir, { milestone, date, counts = {}, body = "", viewports = [] }) {
+  const m = String(milestone || "").trim();
+  const d = String(date || "").trim();
+  if (!m || !/^[A-Za-z][A-Za-z0-9.]*$/.test(m)) throw new Error("milestone required (a plain milestone tag)");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) throw new Error("date required (YYYY-MM-DD)");
+  const num = (v) => { const n = Number(v); return Number.isFinite(n) && n >= 0 ? Math.trunc(n) : 0; };
+  const keys = ["duration_min", "charter", "walked", "skipped", "on_charter", "on_opportunity", "observations", "gaps", "directions", "ideas", "answered"];
+  const verdicts = ["accepted", "accepted-with-followups", "rejected"];
+  const verdict = verdicts.includes(counts.verdict) ? counts.verdict : "accepted-with-followups";
+  const dir = join(projectDir, backlogDir, "sessions");
+  mkdirSync(dir, { recursive: true });
+  let file = `${m}-${d}.md`;
+  for (let n = 2; existsSync(join(dir, file)); n++) file = `${m}-${d}-${n}.md`;
+  const fm = ["sweap_format: 1", `milestone: ${m}`, `date: ${d}`]
+    .concat(`viewports: [${(viewports || []).map((v) => String(v).trim()).filter(Boolean).join(", ")}]`)
+    .concat(keys.map((k) => `${k}: ${num(counts[k])}`))
+    .concat(`verdict: ${verdict}`);
+  writeFileSync(join(dir, file), `---\n${fm.join("\n")}\n---\n\n${String(body || "").trim()}\n`, { flag: "wx" });
+  return { file: join(backlogDir, "sessions", file) };
+}
+
+export function loadSessions(projectDir, backlogDir) {
+  const dir = join(projectDir, backlogDir, "sessions");
+  let files;
+  try { files = readdirSync(dir).filter((f) => f.endsWith(".md")); } catch { return []; }
+  const num = (v) => { const n = Number(v); return Number.isFinite(n) && n >= 0 ? n : 0; };
+  return files
+    .map((f) => {
+      let fm = null;
+      try { fm = parseFrontmatter(readFileSync(join(dir, f), "utf8")).fm; } catch { /* unreadable — malformed, below */ }
+      if (!fm || !fm.milestone) {
+        return { file: f, milestone: (fm && fm.milestone) || null, date: (fm && fm.date) || null, verdict: null, walked: 0, gaps: 0, directions: 0, ideas: 0, malformed: true };
+      }
+      return {
+        file: f,
+        milestone: fm.milestone,
+        date: fm.date || null,
+        verdict: fm.verdict || null,
+        walked: num(fm.walked),
+        gaps: num(fm.gaps),
+        directions: num(fm.directions),
+        ideas: num(fm.ideas),
+        malformed: false,
+      };
+    })
+    .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")) || b.file.localeCompare(a.file));
+}
+
+// The instrumentation A13 demanded, and the only number that decides whether
+// /walkthrough keeps existing. Urbach (mandating an identical checklist across 215,711
+// procedures moved outcomes at P=0.13) and Sendlhofer (usage held ~90% while
+// COMPLETION fell 81.7%→53.2%) are the same finding twice: "did it happen?" is
+// the one signal that decays invisibly, and a hollow session satisfies it
+// perfectly. So measure YIELD, never attendance.
+// `dry` counts the most recent consecutive sessions that produced no gap note —
+// at 3 the automated filters have caught up and the command should be cut back.
+export function sessionStats(sessions = []) {
+  // A malformed sheet is a bug in the writer, not a barren session. Counting it
+  // toward `dry` would let a formatting slip argue for deleting the command,
+  // so it is excluded from the yield maths and surfaced on its own.
+  const ok = sessions.filter((s) => !s.malformed);
+  const gaps = ok.reduce((n, s) => n + s.gaps, 0);
+  const notes = ok.reduce((n, s) => n + s.gaps + s.directions + s.ideas, 0);
+  let dry = 0;
+  for (const s of ok) { if (s.gaps > 0) break; dry++; }
+  return {
+    sessions: ok.length,
+    malformed: sessions.length - ok.length,
+    gaps,
+    notes,
+    dry,
+    notesPerSession: ok.length ? notes / ok.length : 0,
+  };
+}
+
+// Which milestone /walkthrough should walk, and — always — WHY it picked that one.
+// There is no existing implementation of "the most recently completed
+// milestone" to borrow: workflows/milestone-audit.js falls back to that literal
+// phrase inside an LLM prompt, and the playbook records that this once audited
+// the WRONG milestone. So this resolves mechanically and carries a `source`,
+// under the same rule buildMilestoneCard follows — an inference must never be
+// readable as a fact.
+//
+// Complete = every non-follow-up item in the group is done, and the group holds
+// at least one non-follow-up item (a `followup_of:` family like FN is debt OF a
+// milestone, never a milestone — audit-gate.sh:169-176 draws the same line).
+// Order = the INDEX's order, not the id's; unlisted milestones sort last.
+export function resolveTestTarget({ items = [], index = [], sessions = [] } = {}) {
+  const byMilestone = new Map();
+  for (const i of items) { const m = milestoneOf(i.id); if (!byMilestone.has(m)) byMilestone.set(m, []); byMilestone.get(m).push(i); }
+
+  const rank = new Map(index.map((m, n) => [m.id, n]));
+  const order = (m) => (rank.has(m) ? rank.get(m) : Number.MAX_SAFE_INTEGER);
+  const compareMs = (a, b) => (order(a) - order(b)) || compareItems({ id: a + ".0", followupOf: null }, { id: b + ".0", followupOf: null });
+
+  const members = (m) => (byMilestone.get(m) || []).filter((i) => !i.followupOf);
+  const complete = [...byMilestone.keys()]
+    .filter((m) => members(m).length > 0 && members(m).every((i) => i.status === "done"))
+    .sort(compareMs);
+  if (!complete.length) return null;
+
+  const walked = new Set(sessions.map((s) => s.milestone).filter(Boolean));
+  const untested = complete.filter((m) => !walked.has(m));
+  const pick = untested.length ? untested[untested.length - 1] : complete[complete.length - 1];
+  const priors = sessions.filter((s) => s.milestone === pick);
+
+  return {
+    milestone: pick,
+    items: members(pick).length,
+    sessions: priors.length,
+    source: priors.length
+      ? `last complete milestone in index order; every complete milestone already has a session (${pick} has ${priors.length})`
+      : "last complete milestone in index order with no session sheet",
+    untested: untested.length,
+  };
+}
+
 // "which MILESTONE is moving, and what stands between it and done". Nothing on
 // disk recorded that, so nothing could show it. This derives it.
 //
