@@ -890,7 +890,7 @@ expect_launch_ok() {  # $1=label $2=cmd
 }
 expect_launch_deny() {  # $1=label $2=cmd $3=var named in the reason
   local out; out="$(run_gate green "$2")"
-  if is_deny "$out" && reason "$out" | grep -qF -- "refusing to launch sweap-merge.sh with an environment override ($3)"; then ok "$1"
+  if is_deny "$out" && reason "$out" | grep -qF -- "refusing to launch the sweap-merge driver with an environment override ($3)"; then ok "$1"
   else bad "$1" "got: $out"; fi
 }
 expect_launch_ok   "m1) plain launch -> untouched"                                  "$LAUNCH"
@@ -925,6 +925,23 @@ expect_launch_deny "m26) grep PATH= in the driver source -> deny (accepted over-
 expect_launch_deny "m27) comment mentioning env + launch -> deny (accepted over-deny)" "$LAUNCH # under env -i" 'env wrapper'
 expect_launch_ok   "m28) word 'environment' next to the driver is not the env wrapper -> untouched" "$LAUNCH # environment"
 expect_launch_ok   "m29) grep PATH (no '=') in the driver source -> untouched"      'grep -n PATH plugin/hooks/sweap-merge.sh'
+# The launch line a session actually types is the BARE command from the plugin's
+# bin/ (`sweap-merge watch <n>`) — it never contains the string "sweap-merge.sh",
+# so belt B has to recognise it as a whole token too, or the rename that made
+# the driver reachable would have made it unguarded.
+BARE='sweap-merge watch 7'
+expect_launch_ok   "m30) bare command, plain -> untouched"                          "$BARE"
+expect_launch_ok   "m31) bare status, plain -> untouched"                           'sweap-merge status'
+expect_launch_deny "m32) BASH_ENV= before the bare command -> deny"                 "BASH_ENV=/tmp/be.sh $BARE"   BASH_ENV
+expect_launch_deny "m33) PATH= before the bare command -> deny"                     "PATH=/evil:\$PATH $BARE"     PATH
+expect_launch_deny "m34) SWEAP_MERGE_GH= before the bare command -> deny"           "SWEAP_MERGE_GH=/evil/gh $BARE" 'SWEAP_MERGE_*'
+expect_launch_deny "m35) env wrapper on the bare command -> deny"                   "env -i $BARE"                'env wrapper'
+expect_launch_deny "m36) explicit path to the bin/ wrapper + GIT_DIR= -> deny"      'GIT_DIR=/f/.git plugin/bin/sweap-merge watch 7' GIT_DIR
+expect_launch_deny "m37) bare command after cd, with HOME= -> deny"                 "cd /repo && HOME=/evil $BARE" HOME
+# Whole-token matching: neither the driver's test suite nor its state dir is a
+# launch of the driver, so an env override next to them stays a no-op.
+expect_launch_ok   "m38) reading the state dir with PATH= -> no-op"                 'PATH=/x cat .claude/sweap-merge/7.json'
+expect_launch_ok   "m39) a sweap-merge-* named path with PATH= -> no-op"            'PATH=/x ls plugin/hooks/sweap-merge-fixtures/'
 
 echo
 printf 'RESULT: %d passed, %d failed\n' "$PASS" "$FAIL"

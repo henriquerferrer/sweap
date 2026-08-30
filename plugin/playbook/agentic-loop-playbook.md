@@ -254,7 +254,9 @@ the item is scoped too big — split it.
    the diff + the plan. Fix confirmed findings.
 4. **Conditional review dimensions** (from the item file's `review-dimensions`
    frontmatter — see below): run each required extra reviewer before the PR.
-5. **Merge, clean up (see End-of-run hygiene), next item.**
+5. **Merge with `sweap-merge watch <n>`** (the merge driver — it waits, gates,
+   merges and runs the post-merge hooks; it ends the turn while it waits),
+   clean up (see End-of-run hygiene), next item.
 
 **Discovered work — the three-lane rule.** Work you notice mid-item that is
 *not* the item goes in exactly one of three places, chosen by what kind of
@@ -264,12 +266,17 @@ change it is. Nothing else is sanctioned:
    go back to the item. Never build it; never author an item file for it:
 
    ```bash
-   node --input-type=module -e '
-   const lib = await import("file://" + process.argv[6]);
-   const { backlogDir } = lib.readConfig(process.cwd());
-   console.log(lib.writeDiscovered(process.cwd(), backlogDir, { title: process.argv[1], kind: process.argv[2], from: process.argv[3], why: process.argv[4], by: process.argv[5], now: Date.now() }).file);
-   ' "<title>" gap|direction "<item id you are on, or PR #n>" "<why: what is wrong or missing, and what done looks like>" "$(git branch --show-current)" "${CLAUDE_PLUGIN_ROOT}/tools/sweap-board.lib.mjs"
+   sweap-note discovered "<title>" gap|direction \
+     "<item id you are on, or PR #n>" \
+     "<why: what is wrong or missing, and what done looks like>" \
+     "$(git branch --show-current)"
    ```
+
+   (`sweap-note` is on your PATH whenever the sweap plugin is enabled — the
+   plugin's `bin/` is added to the Bash tool's PATH. Run it from the repo or
+   worktree root; it prints the file it created. Never write the file by hand:
+   the writer owns the slug, the hash suffix that lets the same title be
+   captured on two branches, and the create-only guarantee.)
 
    `kind` is the one judgment you make, on the line the milestone audit's
    triage already draws: failed-the-spec (a bug, a race, infra the spec
@@ -449,7 +456,7 @@ may ADD dimensions it judges necessary; it may not remove tagged ones.
   `<backlog.dir>discovered/` as non-item subdirs — so it lands even during
   audit debt, and it rides the roadmap-only CI lane, so it is cheap.)
 - **Before you abandon a branch, or stop on one, check it is not carrying
-  backlog files.** Run `bash ${CLAUDE_PLUGIN_ROOT}/hooks/stranded-roadmap.sh`:
+  backlog files.** Run `sweap-stranded`:
   one line per not-merged branch whose `<backlog.dir>` differs from main, with
   its PR state. `open` is a rider and fine; `closed` or `none` is **stranded**
   — invisible to the frontier, the board's backlog, the gate and `/roadmap`,
@@ -492,8 +499,10 @@ may ADD dimensions it judges necessary; it may not remove tagged ones.
   leaves the branch on **both** the local repo and origin. Running from the primary
   checkout does **not** fix this (verified: the branch is still checked out in its
   worktree either way). The reliable sequence, in order:
-  1. **Merge:** `gh pr merge <n> --squash` (the `--delete-branch` flag is a no-op
-     footgun here; omit it).
+  1. **Merge:** `sweap-merge watch <n>` — the merge driver (see "The merge
+     path" below); it waits, runs the gate, merges, and runs the post-merge hooks.
+     The driver ENDS THE TURN while it waits, so read its terminal word as the
+     result. (Its inner merge omits `--delete-branch`, the no-op footgun here.)
   2. **Fast-forward the primary** (`git -C <primary-checkout> pull --ff-only`) so
      `main` never drifts (`--ff-only` no-ops on local changes).
   3. **`git worktree remove <path>`** — this frees the branch from its worktree.
@@ -601,8 +610,24 @@ may ADD dimensions it judges necessary; it may not remove tagged ones.
   discarded stderr inside a sleep-loop is a livelock — #189 went to attempt 41);
   re-run ONCE as diagnosis, never retry-until-green; stop if the same check is
   red on the base branch. One watcher per PR, owned by the session that merges.
-- **Preferred merge path (0.13.0): `bash "${CLAUDE_PLUGIN_ROOT}/hooks/sweap-merge.sh" watch <n>`**,
-  run with Bash `run_in_background: true` (Monitor optional). It waits, verifies
+- **The merge path is `sweap-merge watch <n>`** — a bare command, and it is how
+  a PR lands. **Not `${CLAUDE_PLUGIN_ROOT}`:** that variable is exported for
+  HOOK execution only and is UNSET in a model-issued Bash call (verified —
+  `echo "[${CLAUDE_PLUGIN_ROOT:-UNSET}]"` prints `UNSET`), so 0.13.0's
+  advertised `bash "${CLAUDE_PLUGIN_ROOT}/hooks/sweap-merge.sh" watch <n>`
+  expanded to `bash /hooks/sweap-merge.sh` and could not run: the driver
+  appeared ZERO times in consumer A's first run that had it. What makes the bare
+  name work is that Claude Code adds **`<plugin-root>/bin` to the Bash tool's
+  PATH for every enabled plugin** (measured: enabled plugins with no `bin/` on
+  disk still contribute their bin path to `$PATH`), so the plugin ships
+  `bin/sweap-merge`, a wrapper that resolves the plugin root from its own real
+  path and execs `hooks/sweap-merge.sh`. Nothing is written per session and
+  nothing is copied out of the plugin. `sweap-merge status [<n>]` reports what
+  the driver is doing; `just merge <n>` / `just merge-status` are terminal
+  conveniences that call the same command.
+  Run it with Bash `run_in_background: true` (Monitor optional) — **it ends
+  the turn while it waits**, and its terminal word, not the tool call, is the
+  result. It waits, verifies
   conclusiveness from the base branch's workflows (expected set present and
   succeeded on the current head), runs the merge gate itself, merges pinned to
   that head, and runs the post-merge hooks. One terminal word: `merged`;
@@ -612,16 +637,27 @@ may ADD dimensions it judges necessary; it may not remove tagged ones.
   `timed_out` (deadline passed — a finding); `attended` (a check needs a human);
   `held-by:<owner>` (another live watcher owns the PR — don't start a second).
   On `failed`: `gh run rerun --failed <run-id>` once, by hand, with the reason
-  in the PR. Consumers must allow the script in project `settings.json`
-  (`Bash(${CLAUDE_PLUGIN_ROOT}/hooks/sweap-merge.sh:*)` or the plain path) —
-  Consumer A allows only `Bash(gh pr merge:*)` today.
+  in the PR. Consumers must allowlist it in project `.claude/settings.json`:
+  **`Bash(sweap-merge:*)`** — the `:*` suffix is the documented equivalent of a
+  trailing ` *`, so it matches `sweap-merge watch 12` and bare `sweap-merge`,
+  and the space it implies keeps it from matching some other `sweap-merge…`
+  program. That rule is writable only because the name is stable: a prefix
+  pattern against the script's own path is not, since the plugin cache path
+  carries a commit sha and changes on every version bump. The driver is
+  deliberately **not vendored** into `.github/scripts/` the way `audit-gate.sh`
+  is: it resolves the merge gate (`pre-merge-gate.sh`) and the post-merge hooks
+  from its own directory, so it must run from the plugin dir beside its
+  siblings. A copy in the consumer repo would find neither — `bin/` gives it a
+  stable name *without* moving the script out of the plugin dir.
 - **Merge from the consumer's own session.** The gate is a plugin hook scoped
   to the project the session was started in; `cd <other-repo> && gh pr merge`
   from a different project's session runs with no gate at all. Open the repo,
   then merge.
-- **Merging a green PR is pre-authorized — do not ask.** Once `gh pr checks <n>`
-  is green (every check, including `review`), merging an unblocked item's PR is a
-  standing authorization: `gh pr merge <n> --squash` with no confirmation prompt.
+- **Merging an unblocked item's PR is pre-authorized — do not ask.** You do not
+  wait for `gh pr checks <n>` to be green first; the driver's whole job is that
+  wait (and it fails closed on anything else). It is a
+  standing authorization: `sweap-merge watch <n>` with no confirmation prompt — the
+  driver does its own waiting and gating, and ends the turn while it waits.
   The *gate* is the control, not a human click; pausing to ask "may I merge?" is
   a judgment the gate already answered. (This is why some earlier runs prompted
   and some didn't — the confirm was a per-run judgment call, not a rule. Stating
@@ -634,7 +670,13 @@ may ADD dimensions it judges necessary; it may not remove tagged ones.
 - **Allowlist scope and its limit (`.claude/settings.json`).** The `gh` allowlist
   is scoped to the verbs the loop uses — reads plus the two intentional writes
   `gh pr create` and `gh pr merge` — so `gh pr close`, `gh issue close`,
-  `gh run delete`, etc. still prompt. Be aware it scopes *verbs, not flags*:
+  `gh run delete`, etc. still prompt. **`Bash(sweap-merge:*)` belongs in that
+  list too** (plus `Bash(sweap-roadmap-lint:*)`, `Bash(sweap-stranded:*)` and
+  `Bash(sweap-note:*)` if those are to run unprompted): an allowlist that
+  names `Bash(gh pr merge:*)` and nothing for the driver makes the raw merge
+  the frictionless path and the driver the one that prompts — which is half of
+  why consumer A's first run with the driver available never used it. An advertised
+  preference loses to an allowlisted idiom every time. Be aware it scopes *verbs, not flags*:
   `Bash(gh pr merge:*)` also matches `gh pr merge --admin` (force-merge past
   checks) and `--repo <other>` (act on a different repo). Two things keep this
   from being a hole: **(1)** on the free plan there is *no branch protection*, so
@@ -904,10 +946,12 @@ shape as the audit.
    recommended default. It flags; it never rewrites or expands scope. (Distilled
    from the product-management `write-spec` lens so we own it with no plugin
    dependency.)
-   For a **UI-heavy milestone**, this phase also locks the **surface contract**
-   — the cross-screen invariants every screen will share (`ui-design` §2). It
-   belongs here and nowhere else: a contract settled item-by-item is not a
-   contract, because whichever item merges first silently becomes the standard.
+   For a **UI-heavy milestone**, the **surface contract** — the cross-screen
+   invariants every screen will share (`ui-design` §2) — is locked with the human
+   in the *decide* phase above, not here; this phase only flags contract forks
+   the brainstorm missed, like any other fork. It belongs in the direction loop
+   and nowhere else: a contract settled item-by-item is not a contract, because
+   whichever item merges first silently becomes the standard.
    Cut the work by that contract too — **one item per invariant applied across
    the whole inventory**, not one item per screen. Per-screen items re-apply the
    very unit that let the screens drift apart, and yield N individually-plausible
@@ -1397,7 +1441,7 @@ an in-flight branch at width 1 too, and a Free-plan repo never reports BEHIND.
 | `claude --continue` / `--resume` | Reopen a session after a crash/reboot from its on-disk transcript. Not run protection: default auto-compact on 1M models fires near the limit, after quality has degraded — end runs via `turns`/frontier | User |
 | `/board` (read-only viewer) | Local loopback page showing the live run (frontier/in-flight/open-PRs/hand-offs/blocked) + backlog + dep graph; derives state from item files + git + PRs, never writes | User runs; safe during autonomous runs |
 | `/handoff <id>` | Walks one `[attended]` hand-off with the human, then flips it to done through a gated PR on their explicit confirmation | User runs; interactive only |
-| `sweap-merge.sh watch <n>` | Background merge driver for one PR: waits on the base branch's expected checks pinned to the head, runs the merge gate, merges, runs the post-merge hooks; exits with one terminal word. Run via Bash `run_in_background: true`; Monitor optional | Claude (the session that owns the PR) |
+| `sweap-merge watch <n>` (`sweap-merge status`) | Background merge driver for one PR: waits on the base branch's expected checks pinned to the head, runs the merge gate, merges, runs the post-merge hooks; exits with one terminal word. Run via Bash `run_in_background: true`; Monitor optional. A bare command because the plugin's `bin/` is on the Bash tool's PATH — `$CLAUDE_PLUGIN_ROOT` is unset in a model-issued Bash call. Allowlist `Bash(sweap-merge:*)` | Claude (the session that owns the PR) |
 | `/unblock <id>` | Walks one `[blocked]` question with the human — prepares the fork, never answers it — then closes it through a gated PR (`todo` + authored spec, or `done`) | User runs; interactive only |
 
 ## Model policy
@@ -1428,6 +1472,15 @@ an in-flight branch at width 1 too, and a Free-plan repo never reports BEHIND.
   the human's own work. Hand-offs are authored with the human present, in
   `/roadmap`. (Mechanically enforced by `audit-gate.sh --check`; the rule is
   here so the mechanism never has to fire.)
+- **Never spawn background CPU load generators.** If a test genuinely needs
+  load, put a unique marker in the command (`yes > /dev/null # sweap-load-<id>`),
+  kill by that marker, and VERIFY zero survivors — `pgrep -f <pat>` matches the
+  waiting loop's own command line and `jobs -p` is empty in a non-interactive
+  shell, so both produce silent no-op cleanup loops. Orphans reparent to init
+  and outlive the session: consumer A burned ~4h35m at load average 111 on three
+  stray `yes`, where one PR's checks took 7m44s and failed vs 2m4s and passed
+  after the kill. A run that leaks them poisons every later timing measurement
+  and every CI run on the machine.
 - Report honestly: failing output verbatim, skipped steps named.
 
 ## Standing preferences (pre-answered skill checkpoints)

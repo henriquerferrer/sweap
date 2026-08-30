@@ -19,6 +19,25 @@ Install sweap in your current project:
 
 This initializes the agentic-dev loop, enabling per-feature isolation, automated gating, and cron-driven roadmap management.
 
+### Commands on your PATH
+
+While the plugin is enabled, Claude Code adds `plugin/bin/` to the Bash tool's
+PATH, so a session (and you, in a session's terminal) can run these by name:
+
+| Command | What it does |
+| --- | --- |
+| `sweap-merge watch <n>` / `sweap-merge status [<n>]` | The merge driver: waits on the base branch's expected checks pinned to the head, runs the merge gate, merges, runs the post-merge hooks |
+| `sweap-roadmap-lint <file>` | The per-item spec gate — a failing `todo` item is not runnable |
+| `sweap-stranded` | Lists not-merged branches carrying backlog files nothing will land |
+| `sweap-note discovered …` / `sweap-note idea …` | Writes a discovered note / an idea into the capture inboxes |
+
+Add **`Bash(sweap-merge:*)`** to your project's `.claude/settings.json`
+`permissions.allow` (and the other three if they should run unprompted).
+Without it the driver prompts while `Bash(gh pr merge:*)` does not, and every
+run routes around the driver. These are the plugin's only model-facing entry
+points: `${CLAUDE_PLUGIN_ROOT}` is exported for *hook* execution only and is
+unset in a model-issued Bash call, so it cannot be used in a launch line.
+
 ## Features
 
 - Per-feature agentic loop with merge gating
@@ -39,7 +58,8 @@ bar — run it before every PR:
 It runs every `plugin/hooks/*.test.sh` suite serially with per-suite timings,
 `node --test plugin/tools/*.test.mjs plugin/workflows/*.test.mjs` (file globs —
 Node 21+ rejects a bare directory), and `shellcheck -S warning` over the hooks
-when shellcheck is installed (skipped with a message otherwise). Expect ~3-4
+and `plugin/bin/` when shellcheck is installed (skipped with a message
+otherwise). Expect ~3-4
 minutes; `pre-merge-gate.test.sh` is the slow one (it sleeps through real
 gh-timeout paths), which is what the per-suite seconds are for. Run one suite
 alone with `bash plugin/hooks/<x>.test.sh` or

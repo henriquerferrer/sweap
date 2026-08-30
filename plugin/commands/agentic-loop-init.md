@@ -49,12 +49,29 @@ This mechanically, idempotently:
 4. **Runtime gitignore rules:** ensures the project's `.gitignore` excludes
    sweap's runtime files — `post-merge-redcheck.sh`'s marker file
    (`.claude/main-red-*.flag`), the coordinator's parallel-runs board
-   (`.claude/sweap-board.md`), and the run file `/milestone` writes at kickoff
-   (`.claude/sweap-run.md`) — appending each line only if missing, creating
+   (`.claude/sweap-board.md`), the run file `/milestone` writes at kickoff
+   (`.claude/sweap-run.md`) and the merge driver's state dir
+   (`.claude/sweap-merge/`) — appending each line only if missing, creating
    `.gitignore` if absent, never duplicated. The scaffold self-heals these on
    every session start (the gitignore step runs before the already-scaffolded
    fast-guard), so an existing project gains a newly-added rule on its next
    session; this command is the manual repair path.
+
+**How a session reaches the plugin's scripts (no setup needed).** Claude Code
+adds `<plugin-root>/bin` to the Bash tool's PATH for every ENABLED plugin, so
+while sweap is enabled the project gets four bare commands: `sweap-merge` (the
+merge driver), `sweap-roadmap-lint` (the per-item spec gate), `sweap-stranded`
+(the stranded-branch detector) and `sweap-note` (the discovered/idea inbox
+writer). Nothing is written into the project and nothing is vendored. This is
+the *only* way a session can reach them: `${CLAUDE_PLUGIN_ROOT}` is exported
+for HOOK execution only and is UNSET in a model-issued Bash tool call, so the
+old `bash "${CLAUDE_PLUGIN_ROOT}/hooks/<x>.sh"` spelling expanded to
+`bash /hooks/<x>.sh` and silently could not run. The merge driver is
+deliberately **not vendored** into `.github/scripts/` the way `audit-gate.sh`
+is: it resolves the merge gate (`pre-merge-gate.sh`) and the post-merge hooks
+from its own directory, so it must run from the plugin dir beside its siblings
+— a vendored copy would find neither. `bin/` gives it a stable, allowlistable
+name *without* moving the script out of the plugin dir.
 
 Report back to the human exactly what the script's summary said it created,
 kept, or merged. Then walk through this checklist regardless of what the
@@ -82,7 +99,21 @@ script reported (these are the fill-ins the script cannot do for you):
      suite — unit + integration + e2e — it is the authoritative merge gate).
    - Fill in every `# <fill in for your stack>` stub in `justfile` (recipe
      bodies for `lint`, `typecheck`, `test`, `e2e`, and optionally
-     `services-up`/`services-down`).
+     `services-up`/`services-down`). Leave the `merge` / `merge-status`
+     recipes alone — they are complete.
+   - **Allowlist the merge driver** in the project's `.claude/settings.json`:
+     add **`Bash(sweap-merge:*)`** to `permissions.allow` — and, if they should
+     also run unprompted, `Bash(sweap-roadmap-lint:*)`,
+     `Bash(sweap-stranded:*)` and `Bash(sweap-note:*)`. The `:*` suffix is the
+     documented equivalent of a trailing ` *`, so `Bash(sweap-merge:*)` matches
+     `sweap-merge watch 12` and bare `sweap-merge`, and the space it implies
+     stops it matching some unrelated `sweap-merge…` program. Without the rule
+     the driver prompts while `Bash(gh pr merge:*)` does not, so every run
+     routes around it — that is exactly how consumer A's first run with the driver
+     installed used it zero times. Allowlisting is only possible because the
+     name is stable: a prefix pattern against the script's own path is not,
+     since the plugin cache path carries a commit sha and changes on every
+     version bump.
    - Fill in every `<fill in for your stack>` step in
      `.github/workflows/ci.yml` (toolchain setup, e2e prerequisites, optional
      `services:` blocks, the e2e artifact path).

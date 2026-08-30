@@ -21,13 +21,12 @@ decided later by `/roadmap` at triage.
    Do NOT write the file by hand and do NOT edit existing idea files:
 
    ```bash
-   node --input-type=module -e '
-   const lib = await import("file://" + process.argv[3]);
-   const { backlogDir } = lib.readConfig(process.cwd());
-   const out = lib.writeIdea(process.cwd(), backlogDir, { title: process.argv[1], body: process.argv[2], now: Date.now() });
-   console.log(out.file);
-   ' "<title>" "<body>" "${CLAUDE_PLUGIN_ROOT}/tools/sweap-board.lib.mjs"
+   sweap-note idea "<title>" "<body>"
    ```
+
+   (`sweap-note` is a bare command: the sweap plugin's `bin/` is on the Bash
+   tool's PATH while the plugin is enabled. Run it from the repo or worktree
+   root; it prints the file it created.)
 
 5. **Land it.** An idea that exists only in the working tree is not captured,
    it is exposed: `git clean`, a re-clone or a dead disk loses it, and no other

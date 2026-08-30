@@ -191,5 +191,33 @@ ok "m: heal path restores .claude/sweap-merge/" grep -qF '.claude/sweap-merge/' 
 ok "m: heal message names the rule" grep -q 'appended sweap runtime ignore rules.*sweap-merge/' <<<"$out"
 want "m: rule appears exactly once" "1" "$(grep -cF '.claude/sweap-merge/' "$M/proj/.gitignore")"
 
+# --- n. the template justfile's merge convenience recipes ---------------------
+# `sweap-merge` is the primary surface (the plugin's bin/ is on the Bash tool's
+# PATH); these recipes are the terminal convenience, so they must forward to the
+# bare command — never to a path — and must fail with a repair instruction when
+# the plugin is not enabled, rather than with a bare "command not found".
+if command -v just >/dev/null 2>&1; then
+  J="$WORK/fj"; mkdir -p "$J/stub"
+  cp "$HERE/../templates/justfile" "$J/justfile"
+  ok "n: template justfile parses" bash -c "cd '$J' && just --summary >/dev/null 2>&1"
+  ok "n: it exposes merge + merge-status" bash -c "cd '$J' && just --summary 2>/dev/null | grep -qw merge && cd '$J' && just --summary 2>/dev/null | grep -qw merge-status"
+
+  # plugin not enabled -> the recipe says how to repair it, and never runs a merge.
+  # A minimal PATH that still carries `just` itself, so the absence under test is
+  # sweap-merge's and not the runner's.
+  mkdir -p "$J/bare"; ln -sf "$(command -v just)" "$J/bare/just"
+  out="$(cd "$J" && PATH="$J/bare:/usr/bin:/bin" just merge 1 2>&1)"
+  ok "n: missing sweap-merge gives the repair message" grep -q 'sweap-merge is not on PATH' <<<"$out"
+  ok "n: the repair message names the install command" grep -q 'claude plugin update sweap@sweap --scope project' <<<"$out"
+
+  # with the plugin's bin/ on PATH the recipes forward the driver's own subcommands
+  printf '#!/bin/sh\nprintf "STUB %%s\\n" "$*"\n' > "$J/stub/sweap-merge"; chmod 755 "$J/stub/sweap-merge"
+  want "n: merge forwards 'watch <PR>'" "STUB watch 7" "$(cd "$J" && PATH="$J/stub:$PATH" just merge 7 2>&1)"
+  want "n: merge-status forwards 'status <PR>'" "STUB status 7" "$(cd "$J" && PATH="$J/stub:$PATH" just merge-status 7 2>&1)"
+  want "n: merge-status defaults to every watched PR" "STUB status" "$(cd "$J" && PATH="$J/stub:$PATH" just merge-status 2>&1)"
+else
+  echo "  SKIP  n: just is not installed"
+fi
+
 printf 'RESULT: %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

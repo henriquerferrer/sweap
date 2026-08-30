@@ -1,0 +1,32 @@
+#!/bin/sh
+# sweap-note — bare-name entry point for the two capture inboxes: the
+# discovered-note writer (the playbook's three-lane rule) and the idea writer
+# (`/idea`). Both were spelled as `node --input-type=module -e '…'` one-liners
+# whose last argument was `${CLAUDE_PLUGIN_ROOT}/tools/sweap-board.lib.mjs` —
+# UNSET in a model-issued Bash call, so both wrote nothing.
+#
+#   sweap-note discovered <title> <gap|direction> <from> <why> <by>
+#   sweap-note idea <title> [body]
+#
+# The positional order is the one the playbook's one-liner already used, so the
+# call sites change only in spelling. Same resolution mechanism as
+# bin/sweap-merge (read its header).
+set -u
+
+self=$0
+case $self in
+  */*) ;;
+  *) self=$(command -v -- "$self") || exit 127 ;;
+esac
+n=0
+while [ -L "$self" ] && [ "$n" -lt 40 ]; do
+  link=$(readlink "$self") || break
+  case $link in
+    /*) self=$link ;;
+    *) self=$(dirname "$self")/$link ;;
+  esac
+  n=$((n + 1))
+done
+root=$(CDPATH='' cd -P -- "$(dirname "$self")/.." && pwd -P) || exit 1
+
+exec node "$root/tools/sweap-note.mjs" "$@"

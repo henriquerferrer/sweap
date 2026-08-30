@@ -162,7 +162,7 @@ cwd="$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null)"
 # The driver (sweap-merge.sh) re-execs itself under `env -i` + `bash -p` (belt
 # A), but its FIRST process has already sourced $BASH_ENV by then, so a file that
 # shadows `exec`/`env` there defeats belt A. This rule refuses the launch LINE:
-# any command that names `sweap-merge.sh` AND carries an environment override —
+# any command that names the driver AND carries an environment override —
 # an interpreter knob (BASH_ENV, ENV, SHELLOPTS, BASHOPTS), a lookup knob (PATH,
 # CDPATH, HOME), a repo re-anchor (GIT_DIR, GIT_WORK_TREE, GIT_CONFIG_GLOBAL),
 # a loader hook (LD_PRELOAD, DYLD_INSERT_LIBRARIES), a SWEAP_MERGE_* test seam,
@@ -170,8 +170,22 @@ cwd="$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null)"
 # comment or `echo` that mentions the driver next to `PATH=` is over-denied
 # (re-issue without the mention). Independent of the parser lib (runs before
 # it is needed) and of the merge/push branches (a deny here is final).
-case "$cmd" in
-  *sweap-merge.sh*)
+#
+# "Names the driver" is TWO spellings, because the model's launch line is now
+# the bare command from the plugin's bin/ (`sweap-merge watch <n>`) and only a
+# maintainer types the script path. The second pattern matches `sweap-merge` as
+# a whole token — end of word — so the driver's own test suite
+# (`sweap-merge.test.sh`) and its state dir (`.claude/sweap-merge/`) do not trip
+# it, while an explicit path to the wrapper (`plugin/bin/sweap-merge`) does. A
+# rename that reached only the first spelling would have left the new primary
+# launch line unguarded.
+ml_named=0
+case "$cmd" in *sweap-merge.sh*) ml_named=1 ;; esac
+if [ "$ml_named" = "0" ] && printf '%s' "$cmd" | grep -Eq '(^|[^A-Za-z0-9_-])[^[:space:]]*sweap-merge([[:space:]]|$)'; then
+  ml_named=1
+fi
+case "$ml_named" in
+  1)
     ml_hit=""
     for ml_v in BASH_ENV ENV SHELLOPTS BASHOPTS PATH CDPATH HOME GIT_DIR GIT_WORK_TREE GIT_CONFIG_GLOBAL LD_PRELOAD DYLD_INSERT_LIBRARIES; do
       if printf '%s' "$cmd" | grep -Eq "(^|[^A-Za-z0-9_])${ml_v}="; then ml_hit="$ml_v"; break; fi
@@ -179,7 +193,7 @@ case "$cmd" in
     if [ -z "$ml_hit" ] && printf '%s' "$cmd" | grep -Eq '(^|[^A-Za-z0-9_])SWEAP_MERGE_[A-Za-z0-9_]*='; then ml_hit="SWEAP_MERGE_*"; fi
     if [ -z "$ml_hit" ] && printf '%s' "$cmd" | grep -Eq '(^|[^A-Za-z0-9_.-])env[[:space:]]'; then ml_hit="env wrapper"; fi
     if [ -n "$ml_hit" ]; then
-      emit_deny "merge-driver: refusing to launch sweap-merge.sh with an environment override ($ml_hit). Run it plainly: bash \"\${CLAUDE_PLUGIN_ROOT}/hooks/sweap-merge.sh\" watch <n>"
+      emit_deny "merge-driver: refusing to launch the sweap-merge driver with an environment override ($ml_hit). Run it plainly: sweap-merge watch <n>"
       exit 0
     fi
     ;;

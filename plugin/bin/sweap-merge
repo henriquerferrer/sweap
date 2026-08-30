@@ -1,0 +1,46 @@
+#!/bin/sh
+# sweap-merge — bare-name entry point for the merge DRIVER (hooks/sweap-merge.sh).
+#
+# Why this file exists. Claude Code adds `<plugin-root>/bin` to the Bash tool's
+# PATH for every ENABLED plugin, unconditionally — the directory need not even
+# exist (measured: two enabled plugins with no bin/ on disk still contribute
+# their bin path to $PATH). So a file dropped here is a bare command a session
+# can type, and — crucially — a stable string a project can allowlist:
+# `Bash(sweap-merge:*)`. See https://code.claude.com/docs/en/plugins-reference.md
+# ("bin/ Directory").
+#
+# Why NOT `${CLAUDE_PLUGIN_ROOT}`. That variable is exported for HOOK execution
+# only; in a model-issued Bash tool call it is UNSET, so every documented
+# `bash "${CLAUDE_PLUGIN_ROOT}/hooks/<x>.sh"` expanded to `bash /hooks/<x>.sh`
+# and could not run. That is the bug this wrapper exists to fix, so it must not
+# reintroduce it: the plugin root is recovered from THIS script's own real path.
+#
+# Why a wrapper and not a symlink, and why not a vendored copy. The driver
+# resolves the merge gate (pre-merge-gate.sh) and the post-merge hooks from its
+# OWN directory (`SM_HOOKS_DIR`), and re-execs itself under `/bin/bash -p`
+# before anything else runs. Handing it its real path under hooks/ keeps both
+# facts true; it stays beside its siblings and nothing is copied out of the
+# plugin.
+set -u
+
+self=$0
+# argv[0] carries the full path when a shell resolves the command through PATH;
+# this branch is the cheap survival case if some caller passes a bare name.
+case $self in
+  */*) ;;
+  *) self=$(command -v -- "$self") || exit 127 ;;
+esac
+# Follow symlinks by hand: macOS / bash 3.2 has no `readlink -f`. Same shape as
+# the driver's own sm_realpath.
+n=0
+while [ -L "$self" ] && [ "$n" -lt 40 ]; do
+  link=$(readlink "$self") || break
+  case $link in
+    /*) self=$link ;;
+    *) self=$(dirname "$self")/$link ;;
+  esac
+  n=$((n + 1))
+done
+root=$(CDPATH='' cd -P -- "$(dirname "$self")/.." && pwd -P) || exit 1
+
+exec /bin/bash "$root/hooks/sweap-merge.sh" "$@"

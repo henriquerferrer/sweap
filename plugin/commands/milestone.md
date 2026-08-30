@@ -232,9 +232,19 @@ why the project declared it. The printed goal line is IDENTICAL either way —
 the mode changes how the run executes, not its definition of done.
 
 Before any dispatch (either mode, serial included), run the spec gate on the
-item: `bash ${CLAUDE_PLUGIN_ROOT}/hooks/roadmap-lint.sh <backlog.dir>/<ID>.md`
+item: `sweap-roadmap-lint <backlog.dir>/<ID>.md` (a bare command — the sweap
+plugin's `bin/` is on the Bash tool's PATH while the plugin is enabled)
 — a failing todo item is not runnable (fix mechanically or escalate), per the
 playbook's "Backlog format (file-per-item)" section.
+
+**How a dispatched item's PR lands: `sweap-merge watch <n>`** — the merge
+driver, in both modes. It is a bare command (the sweap plugin's `bin/` is on
+the Bash tool's PATH while the plugin is enabled). It waits on the base
+branch's expected checks pinned to the head, runs the merge gate, merges and
+runs the post-merge hooks, and ends the turn while it waits;
+`sweap-merge status` reports what it is doing. Never hand-roll the wait, and
+never reach for `gh pr merge` instead. Allowlist `Bash(sweap-merge:*)` in the
+project's `.claude/settings.json`.
 
 Record the run. Write `.claude/sweap-run.md` (gitignored; the scaffold adds the
 rule) with exactly the resolution above — this is the only place the run's

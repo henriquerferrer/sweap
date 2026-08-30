@@ -285,9 +285,61 @@ launch-hygiene belt B of the threat model (§7): a Bash call that names
 any parse; a plain `bash "${CLAUDE_PLUGIN_ROOT}/hooks/sweap-merge.sh" watch
 <n>` is untouched. The merge and push branches are unchanged. The driver is
 the recommended path; a session-issued `gh pr merge` still meets the same gate.
-Consumers add `Bash(${CLAUDE_PLUGIN_ROOT}/hooks/sweap-merge.sh:*)` (or the
-plain script path) to their project `settings.json` allowlist — consumer A allows
-only `Bash(gh pr merge:*)` today (E11).
+**Reachability (0.13.1, measured).** `${CLAUDE_PLUGIN_ROOT}` is exported for
+HOOK execution only: in a model-issued Bash tool call it is UNSET (verified —
+`echo "[${CLAUDE_PLUGIN_ROOT:-UNSET}]"` prints `UNSET`), so the launch line
+above expanded to `bash /hooks/sweap-merge.sh` and could not run. Consumer A's first
+run with 0.13.0 installed mentions `sweap-merge` zero times across the run file
+and a 1030-line board, and never created a state dir. The fix is the plugin's
+own `bin/` directory:
+
+- **Measured mechanism.** Claude Code adds `<plugin-root>/bin` to the Bash
+  tool's session PATH for every ENABLED plugin, unconditionally — the directory
+  need not exist on disk (verified on this machine: `echo $PATH` in a
+  model-issued Bash call contains the bin path of two enabled plugins that have
+  no `bin/` at all). Documented at
+  https://code.claude.com/docs/en/plugins-reference.md ("bin/ Directory"):
+  "Executables added to the Bash tool's `PATH` and invokable as bare commands
+  while the plugin is enabled."
+- `plugin/bin/` ships four wrappers — `sweap-merge`, `sweap-roadmap-lint`,
+  `sweap-stranded`, `sweap-note` — each of which resolves the plugin root from
+  its OWN real path (symlinks followed by hand; macOS `readlink` has no `-f`)
+  and execs the real script under `hooks/` (or `tools/sweap-note.mjs`). They
+  never read `${CLAUDE_PLUGIN_ROOT}`, which is the whole point. The driver's
+  `SM_HOOKS_DIR` therefore still resolves to `plugin/hooks/` and it finds
+  `pre-merge-gate.sh` and the post-merge hooks beside it (verified end to end
+  from a consumer checkout with only `plugin/bin` prepended to PATH).
+- Consumers allowlist **`Bash(sweap-merge:*)`** in project `settings.json`
+  (plus `Bash(sweap-roadmap-lint:*)`, `Bash(sweap-stranded:*)`,
+  `Bash(sweap-note:*)` for the rest). Per the permissions reference, "The `:*`
+  suffix is an equivalent way to write a trailing wildcard, so `Bash(ls:*)`
+  matches the same commands as `Bash(ls *)`", and "A `*` at the end, with a
+  space before it, also matches the bare command" — so the rule covers
+  `sweap-merge watch 12` and bare `sweap-merge`, and the implied space stops it
+  matching an unrelated `sweap-merge…` program. A prefix pattern against the
+  script path is not writable — it contains the commit sha. Consumer A allowed only
+  `Bash(gh pr merge:*)` (E11), so the raw merge was the frictionless path and
+  the driver the one that prompts: a preference is not a mechanism.
+- `templates/justfile` keeps `merge PR` / `merge-status PR=""` as terminal
+  conveniences, reimplemented as thin `sweap-merge watch {{PR}}` /
+  `sweap-merge status {{PR}}` calls that fail with an install instruction when
+  the command is not on PATH. They are no longer the primary surface.
+
+*Rejected: a plugin-root pointer file.* An earlier pass had `scaffold.sh` write
+`$CLAUDE_PLUGIN_ROOT` to `<proj>/.claude/sweap-plugin-root` for `just merge` to
+read back. `bin/` is strictly better: no per-session write into the consumer
+repo, no gitignore rule, no `just` dependency, and the allowlistable string is
+the command itself rather than a `just` recipe name.
+
+**Why not vendored.** `audit-gate.sh` is copied into `.github/scripts/` because
+CI must run it without cross-repo access. The driver may NOT be: it resolves
+`pre-merge-gate.sh` and the post-merge hooks from `SM_HOOKS_DIR` — its own
+directory — so it must run from the plugin dir beside its siblings. A vendored
+copy would find neither, and its re-exec belt (`env -i` + `bash -p`) plus the
+gate's belt B both assume the plugin layout. `bin/` resolves the tension: it
+gives the driver a stable, allowlistable NAME without moving the script out of
+the plugin dir — the wrapper hands `hooks/sweap-merge.sh` its own real path, so
+every sibling lookup still lands.
 
 **0.14.0 (after ≥3 real driver merges on consumer A):** the gate additionally
 denies a session-issued `gh pr merge <n>` unless `<primary>/.claude/sweap-merge/<n>.json`
@@ -295,13 +347,36 @@ has `verdict.head == headRefOid`, `verdict.base_sha ==` the compare call's
 `.base_commit.sha`, `verdict.at` within 30 min, `state ∈ {green, merging}`.
 No adoption lane (E4).
 
-## 9. Playbook (0.13.0)
+## 9. Playbook (0.13.1)
 
-The merge bullet gains: "Preferred: `sweap-merge.sh watch <n>` in the
-background; it waits, verifies, runs the gate, merges, and runs the post-merge
-hooks. A `failed` result is a finding, not a retry; `gh run rerun --failed
-<run-id>` once, by hand, with the reason in the PR." The waiting-discipline
-rules stay as documentation of what the driver does.
+The merge bullet reads: "**The merge path is `sweap-merge watch <n>`** — it
+waits, verifies, runs the gate, merges, and runs the post-merge hooks, and it
+ENDS THE TURN while it waits, so the terminal word is the result. A `failed`
+result is a finding, not a retry; `gh run rerun --failed <run-id>` once, by
+hand, with the reason in the PR." No fallback spelling is needed: the command
+is on PATH wherever the plugin is enabled, and where it is not, nothing in the
+plugin runs anyway. The waiting-discipline rules stay as documentation of what
+the driver does.
+
+Three other model-issued launch lines were broken by the same
+`${CLAUDE_PLUGIN_ROOT}` expansion and are fixed the same way: the discovered
+note (`sweap-note discovered …`, playbook), the stranded-branch scan
+(`sweap-stranded`, playbook), the pre-dispatch spec gate
+(`sweap-roadmap-lint <file>`, `/milestone`) and the idea writer (`sweap-note
+idea …`, `/idea`). `${CLAUDE_PLUGIN_ROOT}` is left alone in `hooks.json` and in
+`/agentic-loop-init`'s scaffold invocation — those are hook contexts, where it
+is set and works.
+
+**One bullet is not a mechanism (0.13.0's second failure).** The 0.13.0 text
+was a single "preferred" bullet competing with a dozen established
+`gh pr merge` idioms elsewhere in the same file. 0.13.1 routes every
+*instructional* merge site through `sweap-merge watch <n>` — the per-feature loop's
+step 5, the end-of-run-hygiene cleanup sequence's step 1, the
+pre-authorized-merge bullet, the mechanisms table, and `/milestone`'s dispatch
+section — while every *descriptive* site keeps naming `gh pr merge`, because
+those describe what the gate hook fires on, what it denies, and what a human
+does from their own shell. Renaming a trigger would break the description of
+the control.
 
 ## 10. Tests (offline, stub `gh`; fixtures from the public runs reviewers found)
 

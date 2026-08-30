@@ -53,6 +53,26 @@ ci-local:
 ci-replay JOB:
     just {{ JOB }}
 
+# Convenience wrappers around the sweap merge driver, for a human at a terminal.
+# They are NOT the primary surface: the driver's own name is, because the sweap
+# plugin puts its `bin/` on the Bash tool's PATH while it is enabled, so a
+# session types `sweap-merge watch <n>` directly and the project allowlists
+# `Bash(sweap-merge:*)` — one stable string, no path with a commit sha in it.
+# The driver is NOT vendored into .github/scripts/ like audit-gate.sh: it
+# resolves the merge gate and the post-merge hooks from its own directory, so
+# it must run from the plugin dir beside its siblings. `bin/` gives it a stable
+# name without moving the script out of the plugin.
+
+# Merge a PR through the sweap merge driver: waits on the base branch's expected checks pinned to this head, runs the merge gate, merges, runs the post-merge hooks. One terminal word.
+merge PR:
+    @command -v sweap-merge >/dev/null 2>&1 || { echo "sweap-merge is not on PATH — the sweap plugin is not installed/enabled in this repo. Run: claude plugin update sweap@sweap --scope project, and restart the session."; exit 1; }
+    @sweap-merge watch {{ PR }}
+
+# Report what the merge driver is doing — every watched PR, or just one.
+merge-status PR="":
+    @command -v sweap-merge >/dev/null 2>&1 || { echo "sweap-merge is not on PATH — the sweap plugin is not installed/enabled in this repo. Run: claude plugin update sweap@sweap --scope project, and restart the session."; exit 1; }
+    @sweap-merge status {{ PR }}
+
 # Internal — invoked by ci.yml. Emits the agent-parseable JSON status block
 # documented in CLAUDE.md's CI section. `.github/scripts/ci-status.sh` and
 # `ci-summary.sh` are not shipped by the scaffold (they're stack-specific) —
