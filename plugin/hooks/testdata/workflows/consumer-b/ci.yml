@@ -1,0 +1,177 @@
+name: CI
+
+# Scaffolded by sweap's /agentic-loop-init (copy-generalized from the
+# agentic-ci convention). Job names (lint, typecheck, test, e2e) and the
+# ci-status JSON convention (see CLAUDE.md's CI section) are the contract the
+# rest of the pipeline reads — keep them stable.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  NO_COLOR: "1"
+  FORCE_COLOR: "0"
+  CI: "true"
+
+jobs:
+  # Which lane is this change in? `roadmap-only` (backlog files, docs, markdown —
+  # nothing e2e tests) lets the e2e job skip; anything else, and any uncertainty,
+  # is `code` and runs everything. Classified by the VENDORED
+  # .github/scripts/ci-lane.sh — the same script sweap's pre-merge-gate.sh runs
+  # on the PR's own file list before it accepts a skipped e2e as green, so the
+  # lane CI took and the lane the merge gate accepts cannot drift apart.
+  # Allowlist and fail-closed by construction (see the script's header).
+  #
+  # WHY: a captured backlog item that costs two e2e runs (PR + post-merge push)
+  # is what drives agents to bundle backlog files onto unrelated feature
+  # branches. The playbook's rule against that holds only while the sanctioned
+  # path is the cheap one. (sweap#24; research memo 2026-08-22.)
+  #
+  # NEVER gate lint, typecheck, test or audit-gate on this output — a job
+  # skipped by an `if:` reports SUCCESS, and the merge gate denies a PR where
+  # any of those is SKIPPED. Only e2e is allowed to skip, and only on this lane.
+  changes:
+    runs-on: ${{ vars.RUNNER_LABEL || 'ubuntu-24.04' }}
+    timeout-minutes: 5
+    outputs:
+      lane: ${{ steps.lane.outputs.lane }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0 # the lane is a diff against the base; a shallow clone can't compute it
+      - id: lane
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          LANE=.github/scripts/ci-lane.sh
+          if [ ! -f "$LANE" ]; then
+            echo "::warning::$LANE is missing (sweap's scaffold vendors it) — running the full lane"
+            echo "lane=code" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if [ -n "${BASE_REF:-}" ]; then
+            git fetch -q --no-tags origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+            lane="$(bash "$LANE" --base "origin/${BASE_REF}")"
+          else
+            # push to main: the landed commit's own change (a squash merge is one commit)
+            lane="$(bash "$LANE" --base HEAD^)"
+          fi
+          echo "lane: $lane"
+          echo "lane=$lane" >> "$GITHUB_OUTPUT"
+
+  lint:
+    runs-on: ${{ vars.RUNNER_LABEL || 'ubuntu-24.04' }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: Set up toolchain
+        run: |
+          command -v just >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y -qq just)
+          corepack enable
+          pnpm install --frozen-lockfile
+      - run: just lint
+      - if: always()
+        run: bash .github/scripts/ci-status.sh lint ${{ job.status }} >> "$GITHUB_STEP_SUMMARY"
+
+  typecheck:
+    runs-on: ${{ vars.RUNNER_LABEL || 'ubuntu-24.04' }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: Set up toolchain
+        run: |
+          command -v just >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y -qq just)
+          corepack enable
+          pnpm install --frozen-lockfile
+      - run: just typecheck
+      - if: always()
+        run: bash .github/scripts/ci-status.sh typecheck ${{ job.status }} >> "$GITHUB_STEP_SUMMARY"
+
+  test:
+    runs-on: ${{ vars.RUNNER_LABEL || 'ubuntu-24.04' }}
+    timeout-minutes: 15
+    # No service containers: apps/api tests run against workerd via
+    # @cloudflare/vitest-pool-workers with an in-process D1, and apps/mobile
+    # tests run under jest-expo (node env) — no external services, no device.
+    # `just test` fans out to every workspace via turbo, so this job covers
+    # core + api + mobile in one pass.
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: Set up toolchain
+        run: |
+          command -v just >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y -qq just)
+          corepack enable
+          pnpm install --frozen-lockfile
+      - run: just test
+      - if: always()
+        run: bash .github/scripts/ci-status.sh test ${{ job.status }} >> "$GITHUB_STEP_SUMMARY"
+
+  e2e:
+    needs: [changes]
+    # Skips ONLY on the roadmap-only lane (see `changes`). `!cancelled()` rather
+    # than the implicit success() so a failed `changes` job (empty output) still
+    # runs e2e — uncertainty runs the suite, never skips it.
+    if: ${{ !cancelled() && needs.changes.outputs.lane != 'roadmap-only' }}
+    runs-on: ${{ vars.RUNNER_LABEL || 'ubuntu-24.04' }}
+    timeout-minutes: 30
+    # The e2e recipe is a deliberate stub: no device e2e by decision — the
+    # merge gate is the full unit/integration suite (see justfile). The job
+    # stays wired so the pipeline contract holds if that decision changes.
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: Set up toolchain
+        run: |
+          command -v just >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y -qq just)
+          corepack enable
+          pnpm install --frozen-lockfile
+      - run: just e2e
+      - if: always()
+        run: bash .github/scripts/ci-status.sh e2e ${{ job.status }} >> "$GITHUB_STEP_SUMMARY"
+      - if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: e2e-report
+          path: "e2e-report/**"
+          if-no-files-found: ignore
+
+  ci-status:
+    needs: [changes, lint, typecheck, test, e2e]
+    # `skipped` is not a failure here: e2e skips on the roadmap-only lane by design.
+    if: always()
+    runs-on: ${{ vars.RUNNER_LABEL || 'ubuntu-24.04' }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - run: bash .github/scripts/ci-summary.sh >> "$GITHUB_STEP_SUMMARY"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Fail unless every gate succeeded (e2e may skip only on the roadmap-only lane)
+        if: >-
+          contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+          || needs.lint.result != 'success'
+          || needs.typecheck.result != 'success'
+          || needs.test.result != 'success'
+          || (needs.e2e.result != 'success' && !(needs.e2e.result == 'skipped' && needs.changes.outputs.lane == 'roadmap-only'))
+        run: exit 1

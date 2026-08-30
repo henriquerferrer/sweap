@@ -1,0 +1,165 @@
+name: Claude Review
+
+# Scaffolded by sweap's /agentic-loop-init. Independent reviewer on every PR
+# (agentic-ci Plan B, hand-rolled). Skips gracefully until the
+# CLAUDE_CODE_OAUTH_TOKEN repo secret exists (generate with
+# `claude setup-token`, store with `gh secret set`).
+#
+# Reviewer identity: with no `github_token` passed (this workflow passes none;
+# `id-token: write` is the app-auth path) the action posts as `claude[bot]`,
+# which is what the verdict gate below requires. A repo that connects a custom
+# GitHub App (custom `github_token` / `bot_name`) must set the repo variable
+# CLAUDE_REVIEWER_LOGIN to its own `<slug>[bot]`, or the verdict gate fails
+# closed on every PR.
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: read
+  id-token: write
+  actions: read
+
+concurrency:
+  group: claude-review-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    if: ${{ !github.event.pull_request.draft }}
+    runs-on: ${{ vars.RUNNER_LABEL || 'ubuntu-24.04' }}
+    timeout-minutes: 30
+    steps:
+      - name: Check for OAuth token
+        id: token
+        env:
+          CLAUDE_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          if [ -n "$CLAUDE_TOKEN" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::CLAUDE_CODE_OAUTH_TOKEN not set - skipping Claude review"
+          fi
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        if: steps.token.outputs.present == 'true'
+        with:
+          fetch-depth: 0
+      - uses: anthropics/claude-code-action@558b1d6cab4085c7753fe402c10bef0fbb92ac7a # v1.0.165
+        if: steps.token.outputs.present == 'true'
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            Review this pull request (#${{ github.event.pull_request.number }})
+            as this repository's reviewer. Read CLAUDE.md first (including the
+            `## sweap config` block and standing preferences) and, if this PR's
+            roadmap item carries `review-dimensions` tags, honor those too.
+            Focus on, in priority order: correctness bugs; authorization /
+            access-control bypasses (permission checks on every server entry
+            point, tenant/ownership boundaries on every query); tests weakened,
+            skipped, or modified to pass; CLAUDE.md / playbook convention
+            violations. Post inline comments only for findings you are
+            confident in. Then — REQUIRED — post ONE summary comment whose
+            LAST line is exactly "Verdict: approve" or "Verdict: needs-work"
+            (a downstream gate reads that line; if you post nothing the merge
+            is blocked). Inline comments do NOT satisfy the gate, no matter
+            how many you posted — the summary comment is a separate, always
+            required step. Post it even when you found nothing at all
+            (that is the "Verdict: approve" case). To post reliably: use the
+            Write tool to write the full summary to /tmp/verdict.md, then run
+            `gh pr comment ${{ github.event.pull_request.number }} --body-file /tmp/verdict.md`.
+            Do NOT build the comment with shell command substitution, heredocs,
+            or pipes (e.g. `--body "$(...)"`) — the sandbox denies those, which
+            is why past reviews silently failed to post. Write the file, then
+            post it with the --body-file form above.
+          # Write (to stage the verdict file) + Read/Grep/Glob (inspect code) +
+          # gh pr comment --body-file (post without shell substitution, the form
+          # the sandbox allows). The restrictive list avoids a `--body "$(...)"`
+          # post being denied — --body-file sidesteps that. The verdict gate
+          # below still fails closed if nothing lands.
+          claude_args: '--allowedTools "Read,Grep,Glob,Write,mcp__github_inline_comment__create_inline_comment,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh api:*)"'
+
+      - name: Enforce reviewer verdict
+        if: steps.token.outputs.present == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          REVIEWER_LOGIN: ${{ vars.CLAUDE_REVIEWER_LOGIN || 'claude[bot]' }}
+        run: |
+          # A PR that edits the reviewer workflow makes the action self-skip (it
+          # refuses to run a workflow diff not yet on the default branch), so it
+          # posts no verdict. Don't self-block those — the other gates plus a
+          # human still cover them; every other PR is hard-gated below.
+          if gh pr diff "$PR" --name-only | grep -qx ".github/workflows/claude-review.yml"; then
+            echo "::notice::PR modifies the review workflow; reviewer self-skips — verdict gate not enforced on this PR."
+            exit 0
+          fi
+          # The verdict is read from THREE surfaces, because the reviewer does
+          # not always use the one the prompt asks for: issue comments (the
+          # `gh pr comment` form the prompt prescribes), PR review bodies (what
+          # the inline-comment tool submits), and inline review comments. A
+          # verdict posted on any of them counts; a run that posts none still
+          # fails closed. Observed 2026-08-11: a review submitted with an EMPTY
+          # body plus one inline comment and no issue comment — the old
+          # issue-comments-only read reported "no verdict" and blocked a PR the
+          # reviewer had in fact reviewed.
+          #
+          # Three hardening rules ride along, because widening the search widens
+          # what a stale or quoted string could do:
+          #   1. Only the LAST non-empty line of a comment can carry the verdict
+          #      (exactly what the prompt demands). A substring match anywhere in
+          #      the body let a quoted "Verdict: approve" — e.g. a PR that edits
+          #      this very file — outrank the real "Verdict: needs-work" below it,
+          #      since approve was tested first.
+          #   2. Only comments newer than the head commit count. Otherwise an
+          #      approve from a previous push satisfies the gate for a run whose
+          #      reviewer errored out and posted nothing.
+          #   3. Identity is exact: login must equal the reviewer app's bot login
+          #      (default claude[bot], overridable via repo variable
+          #      CLAUDE_REVIEWER_LOGIN) AND user.type must be Bot. The old
+          #      case-insensitive substring match accepted any human handle
+          #      containing "claude" and any third-party "*claude*[bot]" app.
+          #      GitHub usernames cannot contain "[" or "]", so an exact
+          #      "<slug>[bot]" login cannot be produced by a user account.
+          #      performed_via_github_app is deliberately NOT checked — GitHub
+          #      returns it only on issue comments, not on reviews or inline
+          #      review comments (observed 2026-08-25), so a gate on it would
+          #      reject two of the three surfaces.
+          head_ts=$(gh api "repos/$REPO/commits/$HEAD_SHA" --jq '.commit.committer.date')
+          if [ -z "$head_ts" ]; then
+            echo "::error::Could not read the head commit timestamp — failing closed."
+            exit 1
+          fi
+          verdict=$(
+            {
+              gh api "repos/$REPO/issues/$PR/comments" --paginate \
+                --jq '.[] | {t: .created_at, u: .user.login, ty: .user.type, b: .body}'
+              gh api "repos/$REPO/pulls/$PR/reviews" --paginate \
+                --jq '.[] | {t: .submitted_at, u: .user.login, ty: .user.type, b: .body}'
+              gh api "repos/$REPO/pulls/$PR/comments" --paginate \
+                --jq '.[] | {t: .created_at, u: .user.login, ty: .user.type, b: .body}'
+            } | jq -rs --arg who "$REVIEWER_LOGIN" --arg since "$head_ts" '
+                  [ .[]
+                    | select(.u == $who and .ty == "Bot")
+                    | select(.t != null and .t > $since)
+                    | select(.b != null and .b != "")
+                    | .last = ( .b | split("\n") | map(sub("\r$"; ""))
+                                | map(select(test("[^[:space:]]"))) | last // "" )
+                    | select(.last | test("^[[:space:]]*\\**[[:space:]]*verdict[[:space:]]*:[[:space:]]*(approve|needs-work)[[:space:]]*\\**[[:space:]]*\\.?[[:space:]]*$"; "i"))
+                  ]
+                  | sort_by(.t) | last | if . == null then "" else .last end'
+          )
+          if [ -z "$verdict" ]; then
+            echo "::error::No verdict from reviewer '$REVIEWER_LOGIN' (user.type Bot) newer than head $HEAD_SHA — failing closed. Re-run the review or investigate why it did not post. If the reviewer posts under a different login (custom github_token app), set repo variable CLAUDE_REVIEWER_LOGIN."
+            exit 1
+          elif printf '%s' "$verdict" | grep -qiE "needs-work"; then
+            echo "::error::Reviewer verdict is needs-work — address the blocking findings and push before merge."
+            exit 1
+          else
+            echo "✅ Reviewer approved."
+          fi

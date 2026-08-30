@@ -5,7 +5,11 @@
 # A stub `gh` on PATH answers from fixture files under a per-case directory
 # (GH_FIX): pr view, compare, actions/workflows, contents listings, raw workflow
 # files, actions/runs (paged or sequenced), pr merge. The consumers' real
-# workflow files (consumer A, consumer B) are copied in at runtime as parser fixtures. A
+# workflow files (consumer A, consumer B) are VENDORED SNAPSHOTS under testdata/workflows
+# (see its README: until 2026-08-30 they were cp'd out of ~/Documents at run time,
+# which made this suite — sweap's merge bar — depend on another repo's current
+# contents on one Mac; raising consumer A's e2e timeout reddened four cases with no
+# sweap commit, and elsewhere the cp silently yielded an empty fixture dir). A
 # fake plugin dir carries a COPY of the driver next to an env-driven gate and
 # post-merge scripts that count invocations (the driver resolves its hooks from
 # its own directory, never from CLAUDE_PLUGIN_ROOT — that is the seam); cases
@@ -91,8 +95,13 @@ STATE_DIR="$REPO/.claude/sweap-merge"
 # --- consumer workflow fixtures --------------------------------------------------------
 WFX="$WORK/wf"
 mkdir -p "$WFX/consumer-a" "$WFX/consumer-b" "$WFX/synthetic"
-cp ~/Documents/consumer-a/.github/workflows/*.yml "$WFX/consumer-a/" 2>/dev/null
-cp ~/Documents/consumer-b/.github/workflows/*.yml "$WFX/consumer-b/" 2>/dev/null
+# Vendored snapshots, NOT the live consumer checkouts — every number asserted below
+# is a property of THESE files and changes only when someone refreshes them on
+# purpose (testdata/workflows/README.md says why). The cp is checked: an empty
+# fixture dir would make the parser cases vacuously pass instead of failing.
+TESTDATA="$(dirname "$0")/testdata/workflows"
+cp "$TESTDATA/consumer-a/"*.yml "$WFX/consumer-a/" || { echo "missing fixtures: $TESTDATA/consumer-a" >&2; exit 2; }
+cp "$TESTDATA/consumer-b/"*.yml  "$WFX/consumer-b/"  || { echo "missing fixtures: $TESTDATA/consumer-b"  >&2; exit 2; }
 cat >"$WFX/synthetic/paths.yml" <<'Y'
 name: paths
 on:
@@ -398,7 +407,7 @@ for repo in consumer A consumer B; do
     check "E $repo/$f classifies as member" [ "${r%%|*}" = "member" ]
   done
 done
-r="$(classify "$WFX/consumer-a/ci.yml" main)"; check "E consumer-a/ci.yml timeout-minutes max = 30" [ "${r##*|}" = "30" ]
+r="$(classify "$WFX/consumer-a/ci.yml" main)"; check "E consumer-a/ci.yml timeout-minutes max = 60 (of 5/15/60/5 — the MAX, not the first or the last)" [ "${r##*|}" = "60" ]
 r="$(classify "$WFX/consumer-a/ci.yml" develop)"; check "E branches: [main] excludes base develop" [ "${r%%|*}" = "excluded" ]
 r="$(classify "$WFX/synthetic/paths.yml" main)"; check "E paths: => undecidable" [ "${r%%|*}" = "undecidable" ] && contains "$r" paths
 r="$(classify "$WFX/synthetic/target.yml" main)"; check "E pull_request_target => undecidable" [ "${r%%|*}" = "undecidable" ]
@@ -414,6 +423,32 @@ r="$(classify "$WFX/synthetic/block-branches.yml" main)"; check "E block-list br
 r="$(classify "$WFX/synthetic/types-labeled.yml" main)"; check "E types: [labeled] (never runs on synchronize) => undecidable" [ "${r%%|*}" = "undecidable" ] && contains "$r" "types:"
 r="$(classify "$WFX/synthetic/types-block.yml" main)"; check "E block-list types: without synchronize => undecidable" [ "${r%%|*}" = "undecidable" ]
 r="$(classify "$WFX/consumer-a/claude-review.yml" main)"; check "E consumer-a/claude-review.yml types: [opened, synchronize, ready_for_review] stays member" [ "${r%%|*}" = "member" ]
+
+# --- DRIFT: the LIVE consumer checkouts, if this machine has them -------------------
+# The snapshots above keep the suite reproducible; this section keeps it honest. It
+# asserts only INVARIANTS — still a `member`, still a positive timeout — never a
+# specific number, because a consumer retuning its own CI is not a sweap regression
+# and must never red sweap's merge bar. What it does catch is a consumer editing its
+# workflows into a shape the driver cannot classify (adding `paths:`, narrowing
+# `types:`, switching to `pull_request_target`): that makes the expected set
+# undecidable and stalls every merge in that repo, and it should be loud HERE rather
+# than discovered by a session whose merge hangs. Skips silently when a checkout is
+# absent — most machines running this suite are not Henrique's.
+for live in ~/Documents/consumer-a ~/Documents/consumer-b; do
+  [ -d "$live/.github/workflows" ] || continue
+  repo="$(basename "$live")"
+  for f in "$live"/.github/workflows/*.yml; do
+    [ -f "$f" ] || continue
+    r="$(classify "$f" main)"
+    case "${r%%|*}" in
+      member)
+        check "DRIFT live $repo/$(basename "$f") member, timeout > 0" [ "${r##*|}" -gt 0 ] ;;
+      undecidable)
+        check "DRIFT live $repo/$(basename "$f") is UNDECIDABLE (${r#*|}) — merges in $repo will stall" false ;;
+      *) : ;;  # `excluded` is legitimate: not every workflow runs on a PR to main
+    esac
+  done
+done
 
 newcase e-disabled
 write_workflows "$AG:active" "$CI:disabled_manually" "$CR:active"
@@ -480,10 +515,10 @@ check "§6 future commit: appear_deadline = committedDate + 300" [ "$(state .app
 newcase s-pending
 write_runs "$(run 101 "$CI" in_progress null)" "$(run 102 "$AG" queued null)" "$(run 103 "$CR" completed success)"
 drive tick "$PR"; expect "§6 queued/in_progress before complete_deadline => pending" pending queued
-check "§6 complete_deadline = run_started_at + 2×30min (consumer A ci timeout)" [ "$(state .complete_deadline)" = "$((RUN_STARTED_EPOCH + 3600))" ]
-check "§6 expected_timeout_min persisted" [ "$(state .expected_timeout_min)" = 30 ]
+check "§6 complete_deadline = run_started_at + 2×60min (consumer A ci timeout, snapshot)" [ "$(state .complete_deadline)" = "$((RUN_STARTED_EPOCH + 7200))" ]
+check "§6 expected_timeout_min persisted" [ "$(state .expected_timeout_min)" = 60 ]
 check "§6 observed records run_id/attempt/status" [ "$(state ".observed[\"$CI\"].run_id")" = 101 ]
-TNOW=$((RUN_STARTED_EPOCH + 3601)) drive tick "$PR"; expect "§6 in_progress after complete_deadline => timed_out" timed_out complete_deadline
+TNOW=$((RUN_STARTED_EPOCH + 7201)) drive tick "$PR"; expect "§6 in_progress after complete_deadline => timed_out" timed_out complete_deadline
 
 newcase s-waiting
 write_runs "$(run 101 "$CI" waiting null)" "$(run 102 "$AG" completed success)" "$(run 103 "$CR" completed success)"
