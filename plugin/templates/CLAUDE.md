@@ -18,6 +18,7 @@ backlog.prefix:   F                        # one or more comma-separated prefixe
 audit.lenses:     default
 audit.baseline:   []
 review.dimensions: security, ui, migration
+# ui.contract:    docs/ui/surface-contract.md  # uncomment for UI-heavy projects — see ui-design skill §2
 notify:           push
 turns.default:    160
 parallel:         1                        # concurrent roadmap items: default 1 = serial; 2+ opts into coordinator mode (cap 4) — see playbook "Parallel runs"

@@ -23,7 +23,10 @@ if you notice something:
   AI-slop center (generic sans body copy, purple-on-white, default framework
   chrome)? Judge against the *project's own committed aesthetic* — not
   similarity to any reference, not your own taste for what looks good in the
-  abstract.
+  abstract. That aesthetic is stated in words in the project's surface contract
+  (see the exemplar lookup below for where the contract lives); read it before
+  judging. If it says `no committed aesthetic yet`, say so in your verdict and
+  judge only against the named anti-patterns above — never substitute your own.
 - **Hierarchy & density** — is information hierarchy and information density
   appropriate for this product's actual use context (e.g. a professional
   daily-use tool reads differently than a marketing landing page)?
@@ -58,9 +61,12 @@ standard, in this priority order:
 
 1. **The project's committed internal exemplar first** — whatever screen(s)
    the project has designated as its own aesthetic reference point. This
-   comparison always happens; find and read the exemplar (it will be pointed
-   to, or discoverable via `Glob`/`Read` in the project's design docs) before
-   judging.
+   comparison always happens; find and read the exemplar before judging. It is
+   named in the project's surface contract (`ui.contract` in the `## sweap
+   config` block, default `docs/ui/surface-contract.md`); fall back to
+   `Glob`/`Read` over the project's design docs only if that file does not name
+   one. If the contract says `no exemplar yet`, say so in your verdict and judge
+   on the remaining lenses — do not silently substitute generic taste.
 2. **Mobbin references second, when available** — for net-new or
    redesign/composition screens, look up the matching UI archetype (not the
    product's business domain — the *archetype*: a data table, a booking

@@ -132,7 +132,19 @@ review is asked for:
    cross-screen invariants every screen must share (page shell, container/card
    width system, control-height scale, sticky regions, the overlay-vs-route
    navigation model, breakpoints, required state coverage), plus its named
-   exceptions. See the `ui-design` skill §2. This is direction-loop work by
+   exceptions. Three clauses are cheap and routinely skipped: the **archetype
+   label** per feature area, taken from the `ui-design` §3 table (a structure —
+   never a reference app, never a screenshot comparison), the **designated
+   internal exemplar**, and the **committed aesthetic in words**. All three are
+   lines of text in the contract the human is already reviewing; do not turn any
+   of them into a separate question or a visual pick. Answer the last two
+   honestly, because each empty answer obliges an item: `no committed aesthetic
+   yet` means the project has no design system, so author the aesthetic direction
+   as an attended taste call whose *Done when* is committed tokens plus that line
+   filled in (`ui-design` §1); `no exemplar yet` means authoring one
+   exemplar-establishing item — a single real route, sequenced ahead of the
+   invariant items, that every later screen is judged against (`ui-design` §2).
+   This is direction-loop work by
    construction: it is a taste call with app-wide reach, and settling it
    item-by-item means whichever item merges first becomes the de facto standard.
    Two consequences for the drafting that follows, both load-bearing:

@@ -46,6 +46,21 @@ in flight is not blocked: build with the loop + a11y below, keep values
 consistent and easy to migrate, and adopt tokens/primitives once the design
 system ships. Do not treat a not-yet-existing design system as a reason to stop.
 
+**In that state, the aesthetic direction is a human taste call.** There are no
+tokens yet, so "personality comes from the project's tokens" (§3) has nothing to
+point at — choosing it *is* the work, and it is the paradigm case of a decision
+that is not an agent's to make. Author it during `/roadmap`'s decide phase as its
+own `status: attended` item with a `handoff:`, like any other taste call; the
+existing lint already fails an attended item with no hand-off. Its *Done when* is
+token-shaped, never "a session happened": the theme and primitives are committed
+(which mechanically activates the no-arbitrary-values gate above) **plus** the
+contract's committed-aesthetic line is filled in (§2). No method is prescribed —
+gather references or not, as you like. Two constraints: this fires on the state
+(no token theme, no primitives), not on a "once per project" count, so a rebrand
+is a contract revision under §2's versioning rules rather than a re-run; and
+"the human picked this" is never citable as evidence in a UI PR or readable by
+`ui-critic`. The citable artifacts are the token file and the contract line.
+
 ## 2. The surface contract — what every screen shares
 
 Tokens and primitives make a screen *correct*. They do not make two screens
@@ -66,7 +81,45 @@ that hold across *all* product-visible screens. Typical clauses:
 - the **navigation model**: which interactions open an overlay/sheet and which
   navigate to a route;
 - responsive breakpoints and the expected behaviour at each;
-- required state coverage across screens (empty / loading / error).
+- required state coverage across screens (empty / loading / error);
+- the **UI archetype label** for each feature area the milestone touches, taken
+  from §3's table — a word, not a reference app and not an image, so that every
+  build-time brief queries the archetype the contract assumed instead of
+  re-deciding it per screen. The label must name a **structure**
+  (`split-view master-detail`, `modal detail`, `tree table`), never a feature
+  (`record registry`): the label is literally what gets typed into the Mobbin
+  query, and a feature-shaped label re-derives the same near-duplicate cluster
+  every time, while a structural one is a claim that can be argued with;
+- the project's **designated internal exemplar** — the existing route(s) the
+  project commits to as its own aesthetic reference point, named explicitly;
+- the project's **committed aesthetic, stated in words** — one line, e.g. "dense
+  professional tool, warm neutrals, grotesque display face". §5's distinctiveness
+  lens and the `ui-critic` agent both judge "against the project's own committed
+  aesthetic"; this clause is what they read. Unwritten, that check compares an
+  agent-invented palette against an agent-invented baseline and passes forever.
+  `no committed aesthetic yet` is the honest default, exactly as for the exemplar.
+
+The exemplar clause is load-bearing and currently the most commonly missing one.
+§3's retrofit exemption, §8's ratchet and the `ui-critic` agent all compare
+"against the project's committed internal exemplar" *first*; if nothing names it,
+that comparison degrades to the generic taste this whole skill exists to avoid.
+Name it even when the answer is unflattering — `no exemplar yet` is a legitimate
+value, and it tells the critic to say so rather than invent a baseline.
+
+**`no exemplar yet` is a value that must be closed, not carried.** When the
+contract says it, the UI-heavy milestone authors one **exemplar-establishing
+item**, sequenced ahead of the invariant items: a single real route, built
+through §4's loop against §6's gates, whose *Done when* is that the contract's
+exemplar clause names that route by path. This is the same admitted exception as
+the "one item builds the mechanism" item — it is the screen every later screen
+gets judged against, so it is worth the human looking at it on real data at real
+breakpoints. A mock is not a substitute: the defects this subsystem exists to
+catch are relationships between two screens and things only real content and real
+scroll produce, and an authored artifact cannot surprise you.
+
+The contract lives at a declared path so "point at the record" resolves to a
+file: `ui.contract` in the project's `## sweap config` block, defaulting to
+`docs/ui/surface-contract.md`.
 
 Three rules govern it:
 
@@ -87,6 +140,34 @@ Three rules govern it:
   no-arbitrary-values lint at no extra cost. Reach for a new structural test
   only for what tokens genuinely cannot express (shell mounting, nav model,
   sticky behaviour, viewport behaviour).
+
+**Sourcing clauses from design-system documentation (optional, big milestones).**
+Published design systems (Material, Fluent, HIG, Polaris, Carbon) state
+*conditional rules* — "use a primary-detail layout when viewing details from an
+item in a large list on the same page"; "below the mobile breakpoint show one
+component at a time with clear back navigation". A rule is invariant-shaped,
+which is the unit this section needs and the unit a screenshot can never supply:
+from references you infer a rule by counting pixels across n=3, and inference is
+where drift enters. So for a large UI milestone, a documentation pass at
+contract-authoring time — here, with the human, once — is worth its cost. Three
+constraints keep it from becoming another prose artifact:
+
+- **Its only output is numbered contract clauses.** A pass that yields no clause
+  yielded nothing; do not write up a summary. A clause reaching the contract
+  without its enumerating check is already a failure of the rule above.
+- **Every clause traces to a quoted string from a named system's own docs**, with
+  the URL. Search-result summaries cite nothing and are the hallucination
+  surface — fetch the page.
+- **Check the archetype before trusting the material.** Design systems document
+  *components*, not product archetypes, and this failure is silent: a "calendar"
+  query returns date-picker anatomy, confidently, and you write clauses about
+  selectable-date ranges for a screen that is a week grid. If the source
+  documents a component that merely shares a noun with your archetype, it is the
+  wrong source.
+
+This belongs here and never in §3. §3 is the per-screen build-time brief; a
+research pass there means every worker burns one per screen, in its own context,
+producing one more presence-checked artifact instead of a checked clause.
 
 **Exceptions are named, never judged.** A screen that legitimately departs from
 the contract (a full-bleed calendar grid, a sign-in page) is listed as an
@@ -134,11 +215,37 @@ personality come from the project's tokens).
 | Billing / invoices | invoice/receipt + line-item detail | Stripe, QuickBooks, Wave, Ramp |
 | Record / entity registry | filterable data-table + detail panel | Linear, Attio, Notion databases |
 | Ops dashboard | metric tiles + utilization viz | Vercel/Stripe dashboards, analytics tools |
-| Empty/loading/error | state sections | Mobbin `search_sections` for those states |
+| Empty/loading/error | in-app states along a journey | Mobbin `search_flows`, query phrased as a journey |
 
-Mobbin's `search_flows` / `search_screens` / `search_sections` map onto this.
+`search_screens` (always `mode: "deep"`) retrieves one screen; `search_flows`
+retrieves a 7–9 screen SEQUENCE, which is why state coverage comes from flows —
+the empty, filtered and terminal frames only exist inside a journey. Phrase it as
+one ("finding a record in a large list by filtering and then opening its
+details"), not as a screen. **`search_sections` is a marketing-website index**
+(About / Pricing / Footer — its results carry `site_name`, and it takes no
+`platform`); it is for landing surfaces only, never for in-app states.
 The only permitted skip remains the unavailable/unauthed case above — record the
 `Mobbin unavailable: <reason>` note and continue.
+
+**Query once per structural hypothesis; diversity is author-supplied.** Mobbin
+scores candidates by similarity to the structure you described, so ONE query
+returns one structure wearing several brand skins — that is the retriever working
+correctly, not a defect. To see genuinely different structures you must already
+hold the competing hypotheses and spend one query on each ("clicking a record
+opens a centered modal over a dimmed background" / "a row expands inline to
+reveal nested child rows" / "records as a kanban board of draggable cards"), then
+record in the brief which structures you queried and rejected. Three levers that
+look like diversity controls and are not: **negations are ignored** (describe
+what you want positively — "no split pane" returns split panes), and
+`exclude_screen_ids` de-dupes IDs rather than structures, so it walks sideways
+within the same apps; `mode: "standard"` is noisier, not broader.
+
+**Where the surface contract records an archetype label for the feature area
+(§2), the query uses that label.** A brief that departs from it says why in the
+UI PR. This keeps the archetype a decision made once with the human rather than
+re-derived per screen — but the per-screen brief and its `mobbin.com` links
+remain the evidence, and the retrofit exemption's per-screen predicate above is
+unchanged: a contract label is not a recorded brief for any screen.
 
 ## 4. Tier-1 build loop (every UI item, bounded ~2–3 cycles)
 
