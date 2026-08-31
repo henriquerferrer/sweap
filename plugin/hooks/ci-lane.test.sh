@@ -58,9 +58,34 @@ printf 'x' > "$R/roadmap/F1.1.md"; git -C "$R" add -A; git -C "$R" -c user.email
 want "--base: roadmap-only branch"      roadmap-only "$( (cd "$R" && bash "$LANE" --base main) )"
 printf 'y' > "$R/src/a.ts"; git -C "$R" add -A; git -C "$R" -c user.email=t@t -c user.name=t commit -qm code
 want "--base: code on the branch"       code "$( (cd "$R" && bash "$LANE" --base main) )"
-want "--base: HEAD^ (push-to-main shape) sees only the last commit" code "$( (cd "$R" && bash "$LANE" --base HEAD^) )"
+want "--base: is literal — HEAD^ diffs the tip commit only" code "$( (cd "$R" && bash "$LANE" --base HEAD^) )"
 want "--base: unknown ref fails closed"  code "$( (cd "$R" && bash "$LANE" --base nope) )"
 want "--base: no diff (same ref) is code" code "$( (cd "$R" && bash "$LANE" --base HEAD) )"
+
+# --- push-to-main shape: the base must be the ref's tip BEFORE the push --------
+# ci.yml's `changes` job used to pass --base HEAD^ here, on the premise that a
+# squash merge is one commit. True of the agent path (sweap-merge.sh always
+# merges --squash), false of the human path — and CI changes ARE the human path,
+# because the merge gate denies those PRs to sessions. Consumer A, 2026-08-30: a
+# ci.yml edit (892147d, rewriting the e2e job) and its roadmap update (5964666)
+# went up in ONE push; HEAD^ saw only the roadmap file and e2e skipped the job
+# the first commit had just changed. The base is github.event.before instead.
+P="$WORK/push"; mkdir -p "$P/roadmap" "$P/.github/workflows"
+gc() { git -C "$P" -c user.email=t@t -c user.name=t "$@"; }
+git -C "$P" init -q && gc commit -q --allow-empty -m init
+BEFORE="$(git -C "$P" rev-parse HEAD)"
+printf 'x' > "$P/.github/workflows/ci.yml"; gc add -A; gc commit -qm ci
+printf 'y' > "$P/roadmap/DP.3.md"; gc add -A; gc commit -qm item
+want "push: HEAD^ misses a code commit earlier in the push (the 2026-08-30 bug)" \
+  roadmap-only "$( (cd "$P" && bash "$LANE" --base HEAD^) )"
+want "push: event.before classifies the whole push"          code "$( (cd "$P" && bash "$LANE" --base "$BEFORE") )"
+want "push: all-zeros before (branch created) fails closed"  code "$( (cd "$P" && bash "$LANE" --base 0000000000000000000000000000000000000000) )"
+want "push: unreachable before (force push) fails closed"    code "$( (cd "$P" && bash "$LANE" --base deadbeefdeadbeefdeadbeefdeadbeefdeadbeef) )"
+# ...and the saving the lane exists for survives: an all-backlog push still skips.
+gc checkout -q -b allroadmap "$BEFORE"; mkdir -p "$P/roadmap"   # git tracks no empty dirs
+printf 'a' > "$P/roadmap/a.md"; gc add -A; gc commit -qm a
+printf 'b' > "$P/roadmap/b.md"; gc add -A; gc commit -qm b
+want "push: multi-commit backlog-only push still skips e2e" roadmap-only "$( (cd "$P" && bash "$LANE" --base "$BEFORE") )"
 
 printf 'RESULT: %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

@@ -54,6 +54,7 @@ jobs:
       - id: lane
         env:
           BASE_REF: ${{ github.base_ref }}
+          PUSH_BEFORE: ${{ github.event.before }}
         run: |
           set -euo pipefail
           LANE=.github/scripts/ci-lane.sh
@@ -64,9 +65,32 @@ jobs:
           if [ -n "${BASE_REF:-}" ]; then
             git fetch -q --no-tags origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
             lane="$(bash "$LANE" --base "origin/${BASE_REF}")"
+          elif [ -n "${PUSH_BEFORE:-}" ] && [ "$PUSH_BEFORE" != "0000000000000000000000000000000000000000" ]; then
+            # push to main: classify the WHOLE push — every commit it carried.
+            #
+            # NOT HEAD^. A push can land several commits at once, and HEAD^ sees
+            # only the tip, so a code commit earlier in the same push is
+            # invisible to the classifier. Consumer A, 2026-08-30: a human pushed a
+            # ci.yml edit (892147d, which rewrote the e2e job's runner labels and
+            # timeout) together with its roadmap update (5964666). HEAD^ saw only
+            # the roadmap file, the lane came out `roadmap-only`, and e2e skipped
+            # the very job the first commit had just changed.
+            #
+            # A squash merge is one commit, so this is identical to HEAD^ on the
+            # agent path (sweap-merge.sh always merges --squash). It differs only
+            # on the multi-commit pushes a HUMAN makes — which is exactly the
+            # sanctioned path for CI changes, since the merge gate denies those
+            # PRs to sessions and hands them to a human.
+            #
+            # github.event.before is "the SHA of the most recent commit on ref
+            # before the push". After a force push it can name a commit this
+            # clone does not have; ci-lane.sh's `git merge-base` guard turns any
+            # unresolvable base into `code`, so that fails closed too.
+            lane="$(bash "$LANE" --base "$PUSH_BEFORE")"
           else
-            # push to main: the landed commit's own change (a squash merge is one commit)
-            lane="$(bash "$LANE" --base HEAD^)"
+            # No usable before-sha (a push that CREATES the branch sends
+            # all-zeros). Uncertainty runs the suite, never skips it.
+            lane=code
           fi
           echo "lane: $lane"
           echo "lane=$lane" >> "$GITHUB_OUTPUT"
