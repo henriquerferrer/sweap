@@ -5,7 +5,11 @@
 #   ./test.sh            run every suite, print each suite's output
 #   ./test.sh --quiet    print only the header, PASS/FAIL lines and the summary
 #
-# Suites: every plugin/hooks/*.test.sh (serial, timed — pre-merge-gate.test.sh
+# Suites: the version-bump gate first (it fails fast and costs nothing — a
+# plugin/ change that does not bump plugin/.claude-plugin/plugin.json never
+# reaches consumer A/B, because the consumer's plugin cache is keyed by version;
+# SWEAP_SKIP_VERSION_CHECK=1 is the escape hatch), every plugin/hooks/*.test.sh
+# plus scripts/version-bump-check.test.sh (serial, timed — pre-merge-gate.test.sh
 # legitimately takes ~3-5 min because it sleeps through real gh-timeout paths;
 # the per-suite seconds are how you tell a hang from that suite), one `node`
 # suite over plugin/tools/*.test.mjs + plugin/workflows/*.test.mjs (file globs:
@@ -58,7 +62,12 @@ run_suite() {
   fi
 }
 
-for f in plugin/hooks/*.test.sh; do
+# First: the cheapest gate, and the one whose failure invalidates the release
+# rather than the code. Skips itself (and passes) when there is no baseline to
+# compare against — it never reds the bar for an environmental reason.
+run_suite version-bump-check bash scripts/version-bump-check.sh
+
+for f in plugin/hooks/*.test.sh scripts/*.test.sh; do
   [ -f "$f" ] || continue
   run_suite "$(basename "$f")" bash "$f"
 done
@@ -66,7 +75,7 @@ done
 run_suite node node --test plugin/tools/*.test.mjs plugin/workflows/*.test.mjs
 
 if command -v shellcheck >/dev/null 2>&1; then
-  run_suite shellcheck shellcheck -S warning plugin/hooks/*.sh plugin/hooks/*.test.sh plugin/bin/* test.sh
+  run_suite shellcheck shellcheck -S warning plugin/hooks/*.sh plugin/hooks/*.test.sh plugin/bin/* scripts/*.sh test.sh
 else
   echo "skip: shellcheck not installed (brew install shellcheck)"
 fi
