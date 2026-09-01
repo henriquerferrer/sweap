@@ -9,6 +9,15 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/session-main-redcheck.sh",
+            "timeout": 15
+          }
+        ]
       }
     ],
     "PreToolUse": [
