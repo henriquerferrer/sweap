@@ -424,3 +424,18 @@ test("tally: `scored` counts usable scores, so every shape of dead panel reaches
   // One real score is not a dead panel, however thin the evidence around it.
   assert.equal(tally([STANDS, null, null]).scored, 1, "a single usable score means the panel ran, badly — not that it never ran");
 });
+
+test("a range end that is not an immutable commit id is refused before the panel is paid for", () => {
+  // The record is assembled from this string verbatim, so a ref here reaches
+  // audit-gate.sh, where it makes every done-flip an ancestor of the range and
+  // the coverage claim unfalsifiable.
+  assert.match(SRC, /rangeEnds/, "expected the range to be split and checked")
+  assert.match(SRC, /\^\[0-9a-f\]\{40\}\$/, "expected a full-SHA test on each end")
+  const guard = SRC.indexOf("rangeEnds")
+  const record = SRC.indexOf("const record = [")
+  const finders = SRC.indexOf("const found = await pipeline(")
+  assert.ok(guard > 0 && guard < finders, "the guard must run BEFORE the finders, not at record time")
+  assert.ok(guard < record, "and certainly before the record is assembled")
+  assert.match(SRC, /never a ref such as HEAD, a branch name or a tag/,
+    "the SCOPE schema must ask for SHAs, so the guard is a backstop and not the only signal")
+})

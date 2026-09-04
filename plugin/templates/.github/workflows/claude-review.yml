@@ -80,7 +80,19 @@ jobs:
           # the sandbox allows). The restrictive list avoids a `--body "$(...)"`
           # post being denied — --body-file sidesteps that. The verdict gate
           # below still fails closed if nothing lands.
-          claude_args: '--allowedTools "Read,Grep,Glob,Write,mcp__github_inline_comment__create_inline_comment,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh api:*)"'
+          # MODEL: the `opus` ALIAS, not a pinned id. The action has no `model`
+          # input (v1 dropped it), so the model is a CLI flag passed through
+          # claude_args. Left unset the action picks its own default, which was
+          # Sonnet — a reviewer that is the last gate before merge is worth the
+          # stronger model, and Opus runs adaptive thinking by default. The
+          # alias is deliberate: this file is COPY-IF-ABSENT, not part of the
+          # managed sync in hooks/scaffold.sh, so every change to it costs a
+          # hand-edited, human-merged PR in each consumer. A pinned
+          # `claude-opus-5` would buy that cycle again the day Opus 5 is
+          # superseded; the alias tracks the latest Opus on its own. Cost, for
+          # the record: Opus is ~2.5x Sonnet per token, and a review measured
+          # ~$0.25-0.35 of subscription usage on Sonnet.
+          claude_args: '--model opus --allowedTools "Read,Grep,Glob,Write,mcp__github_inline_comment__create_inline_comment,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh api:*)"'
 
       - name: Enforce reviewer verdict
         if: steps.token.outputs.present == 'true'

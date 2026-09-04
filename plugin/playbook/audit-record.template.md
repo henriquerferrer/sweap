@@ -87,9 +87,15 @@ produced which finding; do not invent per-finding attribution for a UI axis.
 - **All eleven unconditional keys required.** A record missing provenance/scope
   fields is not a record. (`finders_reporting` is the twelfth, always emitted
   and conditionally enforced — see below.)
-- **`range_base` / `range_head` are separate keys**, both resolvable commits
-  here. The Workflow returns ONE string `<base>..<head>` — split it on `..`.
-  `rev-parse` first if it returned a ref rather than a SHA.
+- **`range_base` / `range_head` are separate keys**, and each must be a **full
+  40-character commit SHA** — never `HEAD`, a branch name or a tag. The Workflow
+  returns ONE string `<base>..<head>`; split it on `..`. This is ENFORCED, in two
+  places: the workflow refuses to run past its Scope stage on anything else, and
+  the gate fails the record. Reason: a ref satisfies every other check on this
+  list while making them all vacuous — every done-flip is an ancestor of `HEAD`,
+  so the range check below becomes a no-op and the record's coverage claim cannot
+  be falsified. A ref is also not durable; `--check` runs again later, against a
+  moved `HEAD`, so the same record would mean two different things on two days.
 - **The range must bind.** `range_base` must be an ancestor of `range_head`,
   `range_head` an ancestor of `HEAD`, and every non-follow-up done item of the
   milestone must have flipped to `status: done` within the audited range. An

@@ -209,7 +209,13 @@ const SCOPE = {
   required: ['milestone', 'range', 'summary'],
   properties: {
     milestone: { type: 'string', description: 'the milestone id actually resolved, e.g. "F6"' },
-    range: { type: 'string', description: 'the resolved commit range, "<base>..<head>"' },
+    // FULL SHAs, not refs: the record is built from this string verbatim, and a ref
+    // in a record makes its range binding vacuous (see the guard after this stage).
+    range: {
+      type: 'string',
+      description:
+        'the resolved commit range as "<base>..<head>", where BOTH ends are full 40-character commit SHAs — never a ref such as HEAD, a branch name or a tag. Resolve each end with `git rev-parse` before answering.',
+    },
     summary: {
       type: 'string',
       description: 'the prose surface map: changed files grouped by area (db schema/migrations, server fns, routes, tests), new tables, new permission actions, and the acceptance criteria copied from its item files',
@@ -221,6 +227,7 @@ phase('Scope')
 const scope = await agent(
   `In this repo, determine the merged commit range and surface for ${milestone}.` +
     (range ? ` Use the range ${range}.` : ` Infer the range from the milestone's item files at status: done (their merge PR links) and git log --oneline --merges.`) +
+    ` Return BOTH ends of the range as full 40-character commit SHAs — run 'git rev-parse' on whatever you resolved, including a range handed to you, and never answer with HEAD, a branch name or a tag.` +
     ` Return: the milestone id you actually resolved, the range, and a summary covering the list of changed files grouped by area (db schema/migrations, server fns, routes, tests), new tables, new permission actions, and the milestone's acceptance criteria copied from its item files.`,
   { label: 'scope', phase: 'Scope', schema: SCOPE }
 )
@@ -228,6 +235,30 @@ const scope = await agent(
 if (requestedMilestone && normalizeMilestoneId(scope?.milestone) !== normalizeMilestoneId(requestedMilestone)) {
   throw new Error(
     `milestone-audit: requested milestone "${requestedMilestone}" but the Scope stage resolved "${scope?.milestone}" — refusing to audit the wrong milestone.`
+  )
+}
+
+// A RANGE END MUST BE AN IMMUTABLE COMMIT ID, and this is checked HERE — before
+// the finders, the panel and the sandbox are paid for — rather than at the record,
+// because the record is the end of an expensive run.
+//
+// The record is assembled mechanically from this string (`.split('..')` below), so
+// a Scope agent that answers `main..HEAD`, or a caller passing that as {range},
+// used to ship a record carrying a ref. audit-gate.sh then resolved it, found every
+// done-flip to be an ancestor of it, and validated a record whose coverage claim
+// nothing could falsify — demonstrated with a source file no audit had read. A ref
+// is not durable either: --check re-runs later against a moved HEAD, so the same
+// record can mean two different things on two days.
+//
+// The gate enforces this independently, which is what makes it a rule rather than
+// a request; this guard exists so the failure costs thirty seconds instead of a
+// full audit.
+const rangeEnds = String(scope?.range ?? '').split('..')
+if (rangeEnds.length !== 2 || !rangeEnds.every((e) => /^[0-9a-f]{40}$/.test(e.trim()))) {
+  throw new Error(
+    `milestone-audit: the Scope stage resolved the range as "${scope?.range}", which is not two full 40-character commit SHAs. ` +
+      `A ref (HEAD, a branch, a tag) cannot bind an audit record: every done-flip is an ancestor of it, so the record's coverage claim becomes unfalsifiable, and it resolves differently every time the gate re-checks it. ` +
+      `Re-run with an explicit {range: "<base-sha>..<head-sha>"}, resolving each end with 'git rev-parse'.`
   )
 }
 

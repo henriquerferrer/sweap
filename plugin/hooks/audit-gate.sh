@@ -380,7 +380,42 @@ validate_record() { # validate_record <milestone> <file> ; 0 = valid
   base="$(fm_get "$rec" range_base)"; head="$(fm_get "$rec" range_head)"
   # Binding (the mistarget rule): recompute, never trust. Any git uncertainty
   # is a validation failure — fail closed, the milestone stays in debt.
+  #
+  # A RANGE END MUST BE AN IMMUTABLE OBJECT NAME, NOT A REF. `range_head: HEAD`
+  # and `range_head: main` both satisfy every check below — `cat-file -e` resolves
+  # them, `is-ancestor base head` holds, and `is-ancestor head HEAD` is trivially
+  # true — and then EVERY done-flip is an ancestor of the range, so the done-flip
+  # loop further down is a no-op and the whole "this audit covered the milestone's
+  # real merges" invariant is vacuous. Demonstrated: a repo with a source file no
+  # audit ever read validated with `range_head: HEAD` and failed, correctly, with
+  # the same record naming the actual commit.
+  #
+  # This is not a hand-editing scenario. milestone-audit.js assembles the record
+  # mechanically — `String(scope?.range).split('..')` — and the Scope stage's
+  # schema asks only for "the resolved commit range, <base>..<head>", so a scope
+  # agent that answers `main..HEAD`, or a caller passing that as `{range}`, ships a
+  # record with a ref in it and no human in the loop. (The workflow now demands
+  # full SHAs; this is the enforcement, because a prompt is not one.)
+  #
+  # A ref is also not DURABLE, which is the deeper reason: the record is a claim
+  # about a fixed range, and post-merge-auditcheck re-runs --check later against a
+  # moved HEAD. A record whose meaning changes between two runs of the same check
+  # is not a record.
+  #
+  # The rule: 40 lowercase hex digits that resolve to THEMSELVES as a commit. That
+  # rejects every ref and every abbreviation, and rejects a tag's own object id
+  # (which peels to a different sha) while accepting the commit it points at. All
+  # four records in the consumer repos already satisfy it — checked before shipping
+  # — so this tightens the contract without wedging anyone.
   if [ -n "$base" ] && [ -n "$head" ]; then
+    for k in base head; do
+      eval "v=\$$k"
+      if ! printf '%s' "$v" | grep -qE '^[0-9a-f]{40}$'; then
+        fail "record $rec: range_$k must be a full 40-character commit SHA, not '$v' — a ref (HEAD, a branch, a tag) makes the range binding vacuous and means something different every time this check runs"; ok=0
+      elif [ "$v" != "$(git rev-parse --verify "$v^{commit}" 2>/dev/null)" ]; then
+        fail "record $rec: range_$k ($v) does not name a commit in this repo"; ok=0
+      fi
+    done
     git cat-file -e "$base^{commit}" 2>/dev/null || { fail "record $rec: range_base is not a commit here"; ok=0; }
     git cat-file -e "$head^{commit}" 2>/dev/null || { fail "record $rec: range_head is not a commit here"; ok=0; }
     if [ "$ok" = 1 ]; then

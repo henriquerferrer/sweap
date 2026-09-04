@@ -136,6 +136,54 @@ run_gate "$R" --check
 check "done-flip outside range => invalid record" 1
 check_out "names the unreached item" "FAIL: record .*F1\.2"
 
+# T7b: a range end that is a REF, not a commit id. Both of these used to pass,
+# and with them every done-flip is an ancestor of the range, so the flip check
+# below is a no-op and the record's whole coverage claim is unfalsifiable.
+for bad_head in HEAD main; do
+  R="$(new_repo "t7b-$bad_head")"
+  base="$(head_sha "$R")"
+  mk_item "$R" F1.1 'done'
+  commit_all "$R"
+  mkdir -p "$R/src"; printf 'export const x = 1\n' > "$R/src/never-audited.ts"
+  mk_item "$R" F1.2 'done'
+  commit_all "$R" "F1.2 and code no audit read"
+  mk_record "$R" F1 "$base" "$bad_head" 0 0 0 "" "finders_reporting: 6"
+  commit_all "$R" record
+  run_gate "$R" --check
+  check "range_head: $bad_head is a ref, not a commit id => invalid" 1
+  check_out "and it says why a ref cannot bind" "must be a full 40-character commit SHA"
+done
+
+R="$(new_repo t7c)"
+base="$(head_sha "$R")"
+mk_item "$R" F1.1 'done'
+commit_all "$R"
+mk_record "$R" F1 "$base" "$(head_sha "$R" | cut -c1-12)" 0 0 0 "" "finders_reporting: 6"
+commit_all "$R" record
+run_gate "$R" --check
+check "an abbreviated SHA is not accepted either" 1
+
+R="$(new_repo t7d)"
+base="$(head_sha "$R")"
+mk_item "$R" F1.1 'done'
+commit_all "$R"
+git -C "$R" tag -a v1 -m v1
+mk_record "$R" F1 "$base" "$(git -C "$R" rev-parse v1)" 0 0 0 "" "finders_reporting: 6"
+commit_all "$R" record
+run_gate "$R" --check
+check "an annotated tag's own object id is not a commit id" 1
+
+# The positive control: full SHAs still validate, so the tightening is a
+# tightening and not a wall.
+R="$(new_repo t7e)"
+base="$(head_sha "$R")"
+mk_item "$R" F1.1 'done'
+commit_all "$R"
+mk_record "$R" F1 "$base" "$(head_sha "$R")" 0 0 0 "" "finders_reporting: 6"
+commit_all "$R" record
+run_gate "$R" --check
+check "two full SHAs still validate" 0
+
 # T8b: the OPEN HAND-OFF carve-out (consumer A DS.5.13). A record written EARLY, while
 # a planned hand-off was still open, cannot be satisfied by any later PR: the flip
 # is by construction after range_head. Exempt only on all THREE conjuncts.
