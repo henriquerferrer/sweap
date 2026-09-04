@@ -1285,6 +1285,45 @@ drive status "$PR"; check "status: flags a dead poller" contains "$OUT" "dead po
 mk_lock "other:99" 9 "$$" "$((NOW - 5000))"
 drive status "$PR"; check "status: flags a stale heartbeat" contains "$OUT" "stale"
 drive status 123; check "status: unknown PR prints nothing" [ -z "$OUT" ]
+# NO LOCK is the case that cost consumer A 26 minutes: `status` said nothing, and
+# silence read as health. It must now say which of the two it is.
+rm -rf "$STATE_DIR/$PR.lock"
+# The owner recorded in the state file is `<session>:<pid>`; the tick that wrote
+# it is long gone here, so status must say so outright rather than hedge.
+TNOW=$((NOW + 5)) drive status "$PR"
+check "status: no lock and a dead owner pid => NO WATCHER, not silence" contains "$OUT" "NO WATCHER"
+check "status: it names the dead pid" contains "$OUT" "is gone"
+check "status: and names the command that arms one" contains "$OUT" "sweap-merge watch $PR"
+# A LIVE owner pid must read as live, or the command cries wolf on every poll.
+sleep 30 & LIVE4=$!
+jq --arg o "test:$LIVE4" '.lease.owner = $o' "$STATE_DIR/$PR.json" > "$STATE_DIR/$PR.tmp" && mv "$STATE_DIR/$PR.tmp" "$STATE_DIR/$PR.json"
+TNOW=$((NOW + 5)) drive status "$PR"
+check "status: a live owner pid reads as a live watcher" contains "$OUT" "watcher pid $LIVE4 alive"
+check "status: a live watcher is not nagged about" ! contains "$OUT" "NO WATCHER"
+# Alive but not ticking: a stalled watcher or a recycled pid. Neither is evidence.
+TNOW=$((NOW + 9000)) drive status "$PR"
+check "status: alive pid with a stale heartbeat is not called healthy" contains "$OUT" "not evidence of one waiting"
+kill "$LIVE4" 2>/dev/null; wait "$LIVE4" 2>/dev/null
+# A non-numeric heartbeat used to abort the loop mid-run under set -u, so every
+# PR after it went unprinted — silence, in the command that exists to break it.
+jq '.lease.heartbeat_at = "2026-09-02T10:00:00Z"' "$STATE_DIR/$PR.json" > "$STATE_DIR/$PR.tmp" && mv "$STATE_DIR/$PR.tmp" "$STATE_DIR/$PR.json"
+cp "$STATE_DIR/$PR.json" "$STATE_DIR/999.json"
+jq '.state = "pending"' "$STATE_DIR/999.json" > "$STATE_DIR/999.tmp" && mv "$STATE_DIR/999.tmp" "$STATE_DIR/999.json"
+drive status
+check "status: a non-numeric heartbeat does not abort the listing" [ "$RC" = 0 ]
+check "status: every PR is still listed after a corrupt one" contains "$OUT" "#999"
+rm -f "$STATE_DIR/999.json"
+# The exemption list was untested: deleting it left the suite green.
+for terminal in merged failed attended undecidable timed_out behind; do
+  jq --arg s "$terminal" '.state = $s' "$STATE_DIR/$PR.json" > "$STATE_DIR/$PR.tmp" && mv "$STATE_DIR/$PR.tmp" "$STATE_DIR/$PR.json"
+  drive status "$PR"
+  check "status: $terminal is terminal and gets no watcher nag" ! contains "$OUT" "NO WATCHER" -- ! contains "$OUT" "sweap-merge watch"
+done
+for live in pending green merging superseded missing; do
+  jq --arg s "$live" '.state = $s' "$STATE_DIR/$PR.json" > "$STATE_DIR/$PR.tmp" && mv "$STATE_DIR/$PR.tmp" "$STATE_DIR/$PR.json"
+  drive status "$PR"
+  check "status: $live is in flight and IS nagged about" contains "$OUT" "NO WATCHER"
+done
 
 # ======================================================================================
 printf '\n%s passed, %s failed\n' "$pass" "$fail"

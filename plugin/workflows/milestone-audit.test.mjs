@@ -171,6 +171,63 @@ test("a high unverified ratio is called out, not left as a number to divide", ()
   assert.match(SRC, /PROVISIONAL/, "the warning must say what to do with the list, not just report a number");
 });
 
+test("the record separates 'the panel did not run' from 'reading could not settle it'", () => {
+  // The 2026-09-02 run: `confirmed: 31`, `unverified: 26`, while the account
+  // was out of capacity. One key cannot say which kind of 26 that was —
+  // `unverified` merges a finding no refuter scored (the panel died) with a
+  // finding reading could not settle and the sandbox did not either (a real,
+  // expected audit outcome). Only the first is an alarm about the RUN.
+  assert.match(SRC, /const unscored = confirmed\.filter\(\(f\) => f\.scored === 0\)/,
+    "unscored must be derived from the panel's own vote count, never from `unverified` — deriving it from the merged key reproduces the merge");
+  assert.match(SRC, /const isUnverified = \(f\) => f\.scored === 0 \|\| \(f\.needsProof/,
+    "`unverified` must keep BOTH causes: splitting the alarm out does not narrow the older key, which records already carry");
+  // Additive, exactly like `unverified:` and `axes:` before it: a subset of
+  // `confirmed`, emitted ONLY when non-zero, so `raw = refuted + confirmed`
+  // still holds in audit-gate.sh and old records keep validating.
+  assert.match(SRC, /\.\.\.\(unscored\.length \? \[`unscored: \$\{unscored\.length\}`\] : \[\]\)/,
+    "unscored: must be emitted only when non-zero");
+  assert.match(SRC, /\.\.\.\(unverified\.length \? \[`unverified: \$\{unverified\.length\}`\] : \[\]\)/,
+    "unverified: must be left exactly as it was");
+  assert.match(SRC, /const SWEAP_FORMAT = 1\b/,
+    "a purely additive key must not bump sweap_format — bumping it without hooks/audit-gate.sh is the skew that contract exists to prevent");
+  const fm = SRC.slice(SRC.indexOf("const record = ["), SRC.indexOf("workflow_run:"));
+  assert.ok(fm.indexOf("unverified: ") < fm.indexOf("unscored: "),
+    "the two counts must sit adjacent in the frontmatter — a reader compares them or the split bought nothing");
+  // `unscored` is a SUBSET of `confirmed`, never a fourth bucket: the gate's
+  // arithmetic is `raw == refuted + confirmed`, and a key that participated in
+  // it would break every record written before it existed.
+  assert.match(SRC, /`raw: \$\{all\.length\}`/);
+  assert.match(SRC, /`refuted: \$\{killed\}`/);
+  assert.match(SRC, /`confirmed: \$\{confirmed\.length\}`/);
+  assert.match(SRC, /const unscored = confirmed\.filter/,
+    "unscored must be filtered out of `confirmed`, so it can never disturb raw = refuted + confirmed");
+});
+
+test("the run does not try to detect a dead panel from inside itself", () => {
+  // An in-run circuit breaker was built for this incident and removed after a
+  // hostile review executed it. Do not rebuild it without reading the paragraph
+  // above `const unscored`. Three reasons, all reproduced: there is no point in
+  // the script that is after the LAST dispatch, so a panel dying in Validate
+  // skipped the throw and assembled a record anyway; "consecutive nulls" is
+  // meaningless over a concurrent fan-out where a dead subagent returns in
+  // milliseconds and a live refuter takes minutes, so it fired on healthy runs
+  // and coin-flipped on the outage; and an outage delivered as a THROW never
+  // reached the counters at all, because `agentAs` re-throws and `parallel`
+  // swallows it to null.
+  //
+  // The property that replaced it: detection at the gate, on the finished
+  // record. This test is the guard on that decision — a re-introduced breaker
+  // fails here and has to argue with the comment before it can ship.
+  assert.doesNotMatch(SRC, /panelIsDead|deadPanelAfter|consecutiveEmptyDispatches/,
+    "an in-run dead-panel breaker is back; it was removed as unplaceable, unsound under concurrency, and blind to thrown outages");
+  assert.doesNotMatch(SRC, /let\s+\w*[Ee]mptyDispatches/, "module-level dispatch counters do not survive a resume and do not mean anything under a fan-out");
+  assert.match(SRC, /from inside the script a dead panel and a slow one are\n\/\/ not distinguishable in time/,
+    "the file must record WHY in-run detection was abandoned, or it gets rebuilt");
+  // The one guard that does abort a run stays exactly as it was.
+  assert.match(SRC, /if \(!reporting\.length\) \{\n\s*throw new Error\(/,
+    "the no-lens guard is the workflow's only abort and must be untouched");
+});
+
 test("audit-prover may write and run, but only ever inside its own worktree", () => {
   const tools = PROVER.match(/^tools:\s*(.+)$/m);
   assert.ok(tools, "audit-prover.md must declare a tools: line");
@@ -262,6 +319,9 @@ test("the shipped tuning is the documented one", () => {
   // relative cost of a wrong kill versus a wrong pass.
   assert.equal(TUNING.refutedAt, 0.5);
   assert.equal(TUNING.proofTickets, 1);
+  // Enumerated, so a tunable added without the comment that justifies it fails
+  // here rather than shipping as an unexplained number.
+  assert.deepEqual(Object.keys(TUNING).sort(), ["killVotes", "proofTickets", "refutedAt"]);
 });
 
 // A refuter's answer: evidence fields plus a score, and optionally a ticket.
@@ -328,4 +388,39 @@ test("tally: the thresholds are parameters, not constants baked into the arithme
   assert.equal(tally([REF, REF, REF], strict).confirmed, true, "refutedAt must be honoured");
   const patient = { ...TUNING, proofTickets: 2 };
   assert.equal(tally([TICKET, STANDS, STANDS], patient).needsProof, false, "proofTickets must be honoured");
+});
+
+test("tally: `scored: 0` is the panel not running, and it is a different fact from `needsProof`", () => {
+  // Why `unscored` had to become its own key. These two findings are both
+  // `unverified`, and nothing else about them is alike: one is an audit result
+  // (reading ran out, a ticket was filed, the sandbox is the next step), the
+  // other is an outage wearing the first one's clothes.
+  const deadPanel = tally([null, null, null]);
+  assert.equal(deadPanel.confirmed, true, "a finding no refuter scored SURVIVES the arithmetic — that is exactly the hazard, and why it needs its own count");
+  assert.equal(deadPanel.scored, 0);
+  assert.equal(deadPanel.needsProof, false, "a dead panel files no tickets, so the needsProof half of `unverified` never sees it");
+  const unsettled = tally([TICKET, STANDS, STANDS]);
+  assert.equal(unsettled.scored, 3, "reading-could-not-settle is a FULLY scored finding");
+  assert.equal(unsettled.needsProof, true);
+});
+
+test("tally: `scored` counts usable scores, so every shape of dead panel reaches `unscored`", () => {
+  // The incident arrived in more than one costume, and `unscored` has to see
+  // all of them: a subagent that returned null (an API error the harness gave
+  // up on), a refuter whose dispatch THREW (`parallel` swallows it to the same
+  // null), and an answer that came back without a usable number. The breaker
+  // that was removed only ever saw the first. This is the count that does not
+  // care which one it was.
+  for (const deadPanel of [
+    [null, null, null],
+    [undefined, null, undefined],
+    [{ read: "x", evidence: "y", falsifier: "z" }, {}, null],
+    [vote("high"), vote(NaN), null],
+  ]) {
+    const t = tally(deadPanel);
+    assert.equal(t.scored, 0, `no usable score in ${JSON.stringify(deadPanel)}, so scored must be 0`);
+    assert.equal(t.confirmed, true, "and it still survives — which is precisely why the record has to say so");
+  }
+  // One real score is not a dead panel, however thin the evidence around it.
+  assert.equal(tally([STANDS, null, null]).scored, 1, "a single usable score means the panel ran, badly — not that it never ran");
 });

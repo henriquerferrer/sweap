@@ -1286,7 +1286,7 @@ sm_watch() {   # loop ticks (each in a subshell, output streamed) until a termin
 
 # --- status --------------------------------------------------------------------------------
 sm_status() {
-  local f pr st head owner hb age dead lk now
+  local f pr st head owner hb age dead lk now wpid
   now="$(sm_now)"
   for f in "$SM_DIR"/*.json; do
     [ -f "$f" ] || continue
@@ -1296,6 +1296,13 @@ sm_status() {
     head="$("$SM_JQ" -r '.head // "" | .[0:12]' "$f" 2>/dev/null)"
     owner="$("$SM_JQ" -r '.lease.owner // "-"' "$f" 2>/dev/null)"
     hb="$("$SM_JQ" -r '.lease.heartbeat_at // 0' "$f" 2>/dev/null)"
+    # A hand-edited or half-written state file must not take the whole command
+    # down: `age=$(( now - "2026-09-02T10:00:00Z" ))` is a fatal shell error, and
+    # it kills sm_status MID-LOOP, so every PR after this one is never printed —
+    # silence again, in the command whose whole job is not to be silent. The lock
+    # parser has validated its own numeric fields since it was written; this one
+    # had not.
+    case "$hb" in ''|*[!0-9]*) hb=0 ;; esac
     age=$(( now - hb ))
     dead=""
     lk="$SM_DIR/$pr.lock"
@@ -1308,6 +1315,42 @@ sm_status() {
       else
         dead="lock without info"
       fi
+    else
+      # NO LOCK IS THE QUESTION THIS COMMAND EXISTS TO ANSWER, and until now it
+      # said nothing at all. A watcher holds the lease only DURING a tick —
+      # sm_tick runs in a subshell whose EXIT trap releases it — and bash runs an
+      # EXIT trap on SIGTERM too, so a KILLED watcher also leaves no lock. Claude
+      # Code kills a session's background shells under memory pressure (see the
+      # playbook), which is how consumer A #237 sat green and unmerged for 26 minutes:
+      # `status` showed a 29s-old heartbeat and no annotation, and that was read as
+      # "someone is on it". Say which of the two it is, or say that it cannot be
+      # told — never let silence read as health.
+      case "$st" in
+        merged|failed|attended|undecidable|timed_out|behind) : ;;
+        *)
+          # DECIDE, do not hedge. An earlier draft answered "a watcher between
+          # ticks and one just killed look identical here" — that is wrong, and
+          # the wrongness mattered: a tick holds the lock for its ENTIRE budget
+          # including every sleep inside it, so "no lock" is the millisecond gap
+          # between one tick's subshell and the next, not a 130 s window of doubt.
+          # The deciding fact is already on disk: the lease records its holder as
+          # <session>:<pid>, and that pid is the watcher's, so ask it with the same
+          # sm_pid_alive the lock branch uses four lines up. The heartbeat stays as
+          # the second opinion, for the one thing a pid cannot answer — a recycled
+          # pid that now belongs to something unrelated.
+          wpid="${owner##*:}"
+          if [ -z "$owner" ] || [ "$owner" = "-" ]; then
+            dead="NO WATCHER — no lease was ever recorded for this PR; nothing is waiting on it. Arm one: sweap-merge watch $pr"
+          elif ! sm_pid_alive "$wpid"; then
+            dead="NO WATCHER — the watcher that held this PR (pid $wpid) is gone. Arm one: sweap-merge watch $pr"
+          elif [ "$age" -lt 0 ]; then
+            dead="pid $wpid is alive but its heartbeat ($hb) is ahead of now ($now) — the clock moved backwards, so age says nothing; re-run 'sweap-merge watch $pr' to settle it"
+          elif [ "$age" -gt "$SM_STALE" ]; then
+            dead="pid $wpid is alive but has not ticked for ${age}s, past the ${SM_STALE}s bound — a stalled watcher or a reused pid, not evidence of one waiting; re-run 'sweap-merge watch $pr'"
+          else
+            dead="watcher pid $wpid alive, last tick ${age}s ago"
+          fi ;;
+      esac
     fi
     printf '#%s %s head=%s owner=%s heartbeat=%ss-ago%s\n' "$pr" "$st" "$head" "$owner" "$age" "${dead:+ [$dead]}"
   done

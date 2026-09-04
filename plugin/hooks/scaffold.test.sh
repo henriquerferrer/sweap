@@ -214,6 +214,271 @@ ok "m: heal path restores .claude/sweap-merge/" grep -qF '.claude/sweap-merge/' 
 ok "m: heal message names the rule" grep -q 'appended sweap runtime ignore rules.*sweap-merge/' <<<"$out"
 want "m: rule appears exactly once" "1" "$(grep -cF '.claude/sweap-merge/' "$M/proj/.gitignore")"
 
+# --- s. .claude/settings.json self-heal: the bg-shell pressure reaper ---------
+# The heal WRITES only when the target is an ordinary, writable, readable, LF,
+# parseable JSON object that has not moved under it; every other case must
+# announce its true cause and change nothing. mk_fixture's CLAUDE.md already has
+# '## sweap config', so these run on the fast-guard path too — i.e. they also
+# prove the heal reaches a repo scaffolded long before this rule existed.
+KEY='CLAUDE_CODE_DISABLE_BG_SHELL_PRESSURE_REAP'
+REAL_JQ="$(command -v jq)"
+settings_of() { printf '%s/proj/.claude/settings.json' "$1"; }
+is_json() { jq -e . "$1" >/dev/null 2>&1; }
+# `command -v` consults bash's hash table, which by now holds jq's real path, so
+# ask a fresh shell whether the jq-less PATH really is jq-less.
+no_jq_path_works() { ! PATH="$WORK/bin" bash -c 'command -v jq' >/dev/null 2>&1; }
+# Leading whitespace of the first indented line, rendered visibly: "4sp", "tab", "none".
+first_indent() { awk '/^\t/ { print "tab"; exit } /^ / { match($0, / +/); print RLENGTH "sp"; exit } END { print "none" }' "$1" | head -1; }
+diff_lines() { diff "$1" "$2" | grep -c '^[<>]'; }
+seed_settings() { mkdir -p "$(dirname "$(settings_of "$1")")"; cat > "$(settings_of "$1")"; }
+AM_ROOT=0; [ "$(id -u)" = "0" ] && AM_ROOT=1
+
+# s1. absent -> created, containing just the env block
+S1="$WORK/s1"; mk_fixture "$S1"
+ok "s1: fixture starts with no settings.json" test ! -e "$(settings_of "$S1")"
+out="$(run_scaffold "$S1" '{"source":"startup"}')"
+ok   "s1: settings.json created" test -f "$(settings_of "$S1")"
+ok   "s1: it is valid JSON" is_json "$(settings_of "$S1")"
+want "s1: the key is set to 1" '1' "$(jq -r --arg k "$KEY" '.env[$k]' "$(settings_of "$S1")")"
+want "s1: nothing else was invented" 'env' "$(jq -r 'keys | join(",")' "$(settings_of "$S1")")"
+want "s1: a file we CREATE gets mode 644" 644 "$(mode_of "$(settings_of "$S1")")"
+ok   "s1: announced by key name" grep -q "env\.$KEY" <<<"$out"
+# Discriminating: the gitignore heal's message also contains "commit it", so
+# assert on a phrase only the settings message can produce.
+ok   "s1: announcement asks for review + commit (settings wording, not gitignore's)" \
+  grep -q 'This is a working-tree edit in the main checkout: review it and COMMIT it' <<<"$out"
+ok   "s1: it does not claim to protect the current session" \
+  grep -q 'applies only to sessions started after it lands — it does nothing for this session' <<<"$out"
+ok   "s1: it does not leak sweap-internal repo knowledge" \
+  test "$(grep -c 'both consumer repos track' <<<"$out")" -eq 0
+
+# s2. present without the key, with other top-level keys and an unrelated env entry
+S2="$WORK/s2"; mk_fixture "$S2"
+seed_settings "$S2" <<'JSON'
+{
+  "enabledPlugins": { "sweap@sweap": true },
+  "permissions": { "allow": ["Bash(just test:*)"] },
+  "env": { "SOME_OTHER_VAR": "keep-me" }
+}
+JSON
+out="$(run_scaffold "$S2" '{"source":"startup"}')"
+ok   "s2: still valid JSON" is_json "$(settings_of "$S2")"
+want "s2: key added" '1' "$(jq -r --arg k "$KEY" '.env[$k]' "$(settings_of "$S2")")"
+want "s2: enabledPlugins survived" 'true' "$(jq -r '.enabledPlugins["sweap@sweap"]' "$(settings_of "$S2")")"
+want "s2: permissions survived" 'Bash(just test:*)' "$(jq -r '.permissions.allow[0]' "$(settings_of "$S2")")"
+want "s2: the unrelated env entry survived" 'keep-me' "$(jq -r '.env.SOME_OTHER_VAR' "$(settings_of "$S2")")"
+want "s2: no top-level key was dropped" 'enabledPlugins,env,permissions' "$(jq -r 'keys | join(",")' "$(settings_of "$S2")")"
+ok   "s2: announced as adding a KEY, not a file" grep -q "added the key env\.$KEY" <<<"$out"
+
+# s3. the key already has a value -> never overwritten, even when it is "0"
+S3="$WORK/s3"; mk_fixture "$S3"
+seed_settings "$S3" <<JSON
+{"env":{"$KEY":"0"},"model":"opus"}
+JSON
+cp "$(settings_of "$S3")" "$WORK/s3.before"
+out="$(run_scaffold "$S3" '{"source":"startup"}')"
+ok   "s3: an explicit 0 is left byte-identical" cmp -s "$(settings_of "$S3")" "$WORK/s3.before"
+ok   "s3: and nothing is announced about settings" test "$(grep -c "$KEY" <<<"$out")" -eq 0
+
+# s4. the four "cannot parse / wrong shape" causes must be told apart -----------
+# The first cut said "could not be parsed as JSON" for all of them; three are
+# valid JSON, so that message sent people to fix the wrong thing.
+check_bail() { # check_bail <tag> <fixture> <content> <phrase that must appear>
+  local tag="$1" d="$WORK/$2" content="$3" phrase="$4" o
+  mk_fixture "$d"; printf '%s' "$content" | seed_settings "$d"
+  cp "$(settings_of "$d")" "$WORK/$2.before"
+  o="$(run_scaffold "$d" '{"source":"startup"}')"
+  ok "$tag: file left byte-identical" cmp -s "$(settings_of "$d")" "$WORK/$2.before"
+  ok "$tag: the announcement names the true cause" grep -q "$phrase" <<<"$o"
+  ok "$tag: it does not claim to have added anything" test "$(grep -c 'added the key' <<<"$o")" -eq 0
+}
+check_bail "s4a(malformed)"  s4a '{"env": {"A": "b",,,'      'is not valid JSON'
+check_bail "s4b(env=string)" s4b '{"env":"not-an-object"}'   'is string rather than an object'
+check_bail "s4c(env=null)"   s4c '{"env":null}'              'is null rather than an object'
+check_bail "s4d(top=array)"  s4d '[1,2,3]'                   'its top level is array, not an object'
+ok "s4b: a valid-JSON shape problem is NOT reported as unparseable" \
+  test "$(run_scaffold "$WORK/s4b" '{"source":"startup"}' | grep -c 'is not valid JSON')" -eq 0
+
+# s5. idempotent: the second run changes nothing and says nothing
+S5="$WORK/s5"; mk_fixture "$S5"
+run_scaffold "$S5" '{"source":"startup"}' >/dev/null
+cp "$(settings_of "$S5")" "$WORK/s5.before"
+out="$(run_scaffold "$S5" '{"source":"startup"}')"
+ok   "s5: second run leaves settings.json byte-identical" cmp -s "$(settings_of "$S5")" "$WORK/s5.before"
+want "s5: second run is silent" "" "$out"
+
+# s6. no jq -> verify nothing, write nothing, and SAY that presence is unverified
+if ! no_jq_path_works; then
+  echo "  SKIP  s6: could not build a PATH without jq"
+else
+  S6="$WORK/s6"; mk_fixture "$S6"
+  printf '{"env":{"SOME_OTHER_VAR":"keep-me"}}\n' | seed_settings "$S6"
+  cp "$(settings_of "$S6")" "$WORK/s6.before"
+  out="$(PATH="$WORK/bin" run_scaffold "$S6" '{"source":"startup"}')"
+  ok "s6(no-jq): the file is left byte-identical" cmp -s "$(settings_of "$S6")" "$WORK/s6.before"
+  ok "s6(no-jq): it says it could neither verify nor edit" grep -q 'could neither verify nor safely edit' <<<"$out"
+  ok "s6(no-jq): it names the key to add" grep -q "$KEY" <<<"$out"
+
+  S6B="$WORK/s6b"; mk_fixture "$S6B"
+  out="$(PATH="$WORK/bin" run_scaffold "$S6B" '{"source":"startup"}')"
+  ok "s6b(no-jq): no settings.json is fabricated" test ! -e "$(settings_of "$S6B")"
+  ok "s6b(no-jq): it still announces what to add" grep -q 'could neither verify nor safely edit' <<<"$out"
+
+  # The substring trap: a file that merely MENTIONS the key inside an unrelated
+  # string is not healed, and a grep-based presence check would have said it was.
+  S6C="$WORK/s6c"; mk_fixture "$S6C"
+  printf '{"env":{"NOTE":"see %s in the docs"}}\n' "$KEY" | seed_settings "$S6C"
+  cp "$(settings_of "$S6C")" "$WORK/s6c.before"
+  out="$(PATH="$WORK/bin" run_scaffold "$S6C" '{"source":"startup"}')"
+  ok "s6c(no-jq): a mere mention of the key is not treated as healed" grep -q 'UNVERIFIED' <<<"$out"
+  ok "s6c(no-jq): and the file is untouched" cmp -s "$(settings_of "$S6C")" "$WORK/s6c.before"
+  # ...and WITH jq the same file is corrected structurally, not by substring.
+  out="$(run_scaffold "$S6C" '{"source":"startup"}')"
+  want "s6c(jq): the structural check adds the real key" '1' "$(jq -r --arg k "$KEY" '.env[$k]' "$(settings_of "$S6C")")"
+  want "s6c(jq): the decoy string is untouched" "see $KEY in the docs" "$(jq -r '.env.NOTE' "$(settings_of "$S6C")")"
+fi
+
+# s7. the heal reaches a repo on the FULL-SCAFFOLD path too (no sweap config yet)
+S7="$WORK/s7"; mkdir -p "$S7/proj"; git -C "$S7/proj" init -q
+out="$(CLAUDE_PROJECT_DIR="$S7/proj" CLAUDE_PLUGIN_ROOT="$CLAUDE_PLUGIN_ROOT" bash "$SCAFFOLD" <<< '{"source":"startup"}' 2>/dev/null)"
+want "s7: fresh scaffold also sets the key" '1' "$(jq -r --arg k "$KEY" '.env[$k]' "$S7/proj/.claude/settings.json")"
+ok   "s7: the step-6 summary reports the action" grep -q 'settings.json: created' <<<"$out"
+
+# s8. SYMLINK: mv replaces the link, not its target. Bail. ---------------------
+S8="$WORK/s8"; mk_fixture "$S8"
+mkdir -p "$S8/proj/.claude" "$S8/shared"
+printf '{"env":{"OTHER":"real"}}\n' > "$S8/shared/real.json"
+ln -s "../../shared/real.json" "$(settings_of "$S8")"
+cp "$S8/shared/real.json" "$WORK/s8.before"
+out="$(run_scaffold "$S8" '{"source":"startup"}')"
+ok "s8: settings.json is STILL a symlink" test -L "$(settings_of "$S8")"
+ok "s8: the link target was not orphaned or rewritten" cmp -s "$S8/shared/real.json" "$WORK/s8.before"
+ok "s8: it says the file is a symlink" grep -q 'is a SYMLINK' <<<"$out"
+ok "s8: it does not claim to have added anything" test "$(grep -c 'added the key' <<<"$out")" -eq 0
+
+# s9. READ-ONLY file: rename needs only directory write permission, so going
+# ahead would replace a 444 file and hand it back writable. Bail. -------------
+if [ "$AM_ROOT" = "1" ]; then
+  echo "  SKIP  s9: running as root, permission bits are not enforced"
+else
+  S9="$WORK/s9"; mk_fixture "$S9"
+  printf '{"env":{"OTHER":"x"}}\n' | seed_settings "$S9"
+  cp "$(settings_of "$S9")" "$WORK/s9.before"; chmod 444 "$(settings_of "$S9")"
+  out="$(run_scaffold "$S9" '{"source":"startup"}')"
+  ok   "s9: a read-only file is not replaced" cmp -s "$(settings_of "$S9")" "$WORK/s9.before"
+  want "s9: and it is STILL read-only" 444 "$(mode_of "$(settings_of "$S9")")"
+  ok   "s9: it says the file is not writable" grep -q 'is NOT WRITABLE' <<<"$out"
+  chmod 644 "$(settings_of "$S9")"
+fi
+
+# s10. NOT A REGULAR FILE: a directory named settings.json used to swallow the
+# temp file and then get chmod'd, while the hook announced "created". --------
+S10="$WORK/s10"; mk_fixture "$S10"
+mkdir -p "$(settings_of "$S10")"
+out="$(run_scaffold "$S10" '{"source":"startup"}')"
+ok   "s10: the directory is still a directory" test -d "$(settings_of "$S10")"
+want "s10: nothing was deposited inside it" "" "$(ls -A "$(settings_of "$S10")")"
+want "s10: its mode was not touched" 755 "$(mode_of "$(settings_of "$S10")")"
+ok   "s10: it says the path is not a regular file" grep -q 'is not a regular file' <<<"$out"
+ok   "s10: it does not claim to have created anything" test "$(grep -c 'added the key' <<<"$out")" -eq 0
+rmdir "$(settings_of "$S10")"
+
+# s11. MODE PRESERVED, never widened -------------------------------------------
+S11="$WORK/s11"; mk_fixture "$S11"
+printf '{"env":{"OTHER":"x"}}\n' | seed_settings "$S11"; chmod 600 "$(settings_of "$S11")"
+run_scaffold "$S11" '{"source":"startup"}' >/dev/null
+want "s11: an existing 600 file stays 600" 600 "$(mode_of "$(settings_of "$S11")")"
+want "s11: and the key was still added" '1' "$(jq -r --arg k "$KEY" '.env[$k]' "$(settings_of "$S11")")"
+
+# s12. /compact and /clear: no mid-run working-tree write, same as step 3c -----
+for src in compact clear; do
+  S12="$WORK/s12-$src"; mk_fixture "$S12"
+  out="$(run_scaffold "$S12" "{\"source\":\"$src\"}")"
+  ok   "s12($src): no settings.json is created mid-run" test ! -e "$(settings_of "$S12")"
+  ok   "s12($src): and nothing is announced about it" test "$(grep -c "$KEY" <<<"$out")" -eq 0
+  # ...but the very next ordinary session heals it.
+  run_scaffold "$S12" '{"source":"startup"}' >/dev/null
+  ok   "s12($src): the next startup does create it" test -f "$(settings_of "$S12")"
+done
+
+# s13. CONCURRENT WRITE: three reads happen before the rename. A write landing
+# in that window must be kept, not silently reverted. A jq shim mutates the file
+# exactly when the edit program runs, i.e. after the fingerprint was taken.
+S13="$WORK/s13"; mk_fixture "$S13"
+printf '{"env":{"OTHER":"keep-me"}}\n' | seed_settings "$S13"
+mkdir -p "$WORK/jqshim"
+cat > "$WORK/jqshim/jq" <<EOSH
+#!/bin/sh
+case "\$*" in
+  *".env = ((.env"*) printf '{"env":{"OTHER":"written-by-someone-else"}}\n' > "$(settings_of "$S13")" ;;
+esac
+exec "$REAL_JQ" "\$@"
+EOSH
+chmod 755 "$WORK/jqshim/jq"
+out="$(PATH="$WORK/jqshim:$PATH" run_scaffold "$S13" '{"source":"startup"}')"
+want "s13: the other writer's content survives" 'written-by-someone-else' "$(jq -r '.env.OTHER' "$(settings_of "$S13")")"
+ok   "s13: sweap's edit was discarded, not applied over it" \
+  test "$(jq -r --arg k "$KEY" '.env | has($k)' "$(settings_of "$S13")")" = "false"
+ok   "s13: it says the file changed on disk" grep -q 'changed on disk while sweap was preparing the edit' <<<"$out"
+ok   "s13: no stray temp file was left in .claude/" test "$(find "$S13/proj/.claude" -maxdepth 1 -name '.settings.json.sweap.*' | wc -l | tr -d ' ')" -eq 0
+# and the retry on the next session (no shim) succeeds
+run_scaffold "$S13" '{"source":"startup"}' >/dev/null
+want "s13: the next session heals it" '1' "$(jq -r --arg k "$KEY" '.env[$k]' "$(settings_of "$S13")")"
+
+# s14. CRLF: jq cannot emit CRLF, so the one-key edit would rewrite every line -
+S14="$WORK/s14"; mk_fixture "$S14"
+printf '{\r\n  "env": {\r\n    "OTHER": "x"\r\n  }\r\n}\r\n' | seed_settings "$S14"
+cp "$(settings_of "$S14")" "$WORK/s14.before"
+out="$(run_scaffold "$S14" '{"source":"startup"}')"
+ok "s14: a CRLF file is left byte-identical" cmp -s "$(settings_of "$S14")" "$WORK/s14.before"
+ok "s14: its CRLF line endings survive" test "$(tr -cd '\r' < "$(settings_of "$S14")" | wc -c | tr -d ' ')" -eq 5
+ok "s14: it says the file uses CRLF" grep -q 'uses CRLF line endings' <<<"$out"
+
+# s15. INDENTATION is matched, so the diff is the added key and nothing else ---
+S15A="$WORK/s15a"; mk_fixture "$S15A"
+printf '{\n    "enabledPlugins": {\n        "sweap@sweap": true\n    },\n    "env": {\n        "OTHER": "x"\n    }\n}\n' | seed_settings "$S15A"
+cp "$(settings_of "$S15A")" "$WORK/s15a.before"
+run_scaffold "$S15A" '{"source":"startup"}' >/dev/null
+want "s15a: a 4-space file stays 4-space" '4sp' "$(first_indent "$(settings_of "$S15A")")"
+ok   "s15a: the diff is the added key, not the whole file" test "$(diff_lines "$WORK/s15a.before" "$(settings_of "$S15A")")" -le 3
+want "s15a: and the key landed" '1' "$(jq -r --arg k "$KEY" '.env[$k]' "$(settings_of "$S15A")")"
+
+S15B="$WORK/s15b"; mk_fixture "$S15B"
+printf '{\n\t"env": {\n\t\t"OTHER": "x"\n\t}\n}\n' | seed_settings "$S15B"
+cp "$(settings_of "$S15B")" "$WORK/s15b.before"
+run_scaffold "$S15B" '{"source":"startup"}' >/dev/null
+want "s15b: a tab-indented file stays tab-indented" 'tab' "$(first_indent "$(settings_of "$S15B")")"
+ok   "s15b: the diff is the added key, not the whole file" test "$(diff_lines "$WORK/s15b.before" "$(settings_of "$S15B")")" -le 3
+
+S15C="$WORK/s15c"; mk_fixture "$S15C"
+printf '{"env":{"OTHER":"x"}}\n' | seed_settings "$S15C"
+run_scaffold "$S15C" '{"source":"startup"}' >/dev/null
+want "s15c: a one-line file stays one line" 1 "$(wc -l < "$(settings_of "$S15C")" | tr -d ' ')"
+want "s15c: and the key landed" '1' "$(jq -r --arg k "$KEY" '.env[$k]' "$(settings_of "$S15C")")"
+
+S15D="$WORK/s15d"; mk_fixture "$S15D"
+printf '{\n  "env": {\n    "OTHER": "x"\n  }\n}\n' | seed_settings "$S15D"
+cp "$(settings_of "$S15D")" "$WORK/s15d.before"
+run_scaffold "$S15D" '{"source":"startup"}' >/dev/null
+want "s15d: a 2-space file stays 2-space" '2sp' "$(first_indent "$(settings_of "$S15D")")"
+ok   "s15d: the diff is the added key, not the whole file" test "$(diff_lines "$WORK/s15d.before" "$(settings_of "$S15D")")" -le 3
+
+# s16. .claude/ not writable: the staged rename cannot be same-device-atomic.
+# This is the case that used to produce ZERO output and report "unchanged". ----
+if [ "$AM_ROOT" = "1" ]; then
+  echo "  SKIP  s16: running as root, permission bits are not enforced"
+else
+  S16="$WORK/s16"; mk_fixture "$S16"
+  printf '{"env":{"OTHER":"x"}}\n' | seed_settings "$S16"
+  cp "$(settings_of "$S16")" "$WORK/s16.before"; chmod 555 "$S16/proj/.claude"
+  out="$(run_scaffold "$S16" '{"source":"startup"}')"
+  ok "s16: the file is untouched" cmp -s "$(settings_of "$S16")" "$WORK/s16.before"
+  ok "s16: a failure to write is ANNOUNCED, not silent" test -n "$out"
+  ok "s16: it names .claude/ as not writable" grep -q '\.claude/ is missing or not writable' <<<"$out"
+  ok "s16: it does not report the no-op wording" test "$(grep -c 'added the key' <<<"$out")" -eq 0
+  chmod 755 "$S16/proj/.claude"
+fi
+
 # --- n. the template justfile's merge convenience recipes ---------------------
 # `sweap-merge` is the primary surface (the plugin's bin/ is on the Bash tool's
 # PATH); these recipes are the terminal convenience, so they must forward to the

@@ -241,13 +241,100 @@ BASE_EOF
   return 0
 }
 
+# --- the open hand-off carve-out ------------------------------------------------
+# The done-flip reachability check below rests on an equivalence that holds for an
+# ORDINARY item: the commit that introduces `status: done` IS the commit that
+# implemented it, so "the flip is reachable from range_head" reads as "the code
+# that completed this item was inside the audited range". That is the point of the
+# check and it stays the default.
+#
+# A PLANNED HAND-OFF audited while it was still open breaks the equivalence. The
+# playbook's order is that the audit is not due until the hand-off closes, so this
+# is the documented exception, not the norm — consumer A audited DS.5 early with
+# DS.5.13 ("walk the app and give the verdict") still `attended`. The human does
+# that work OUTSIDE the repo, so the flip carries a status byte and nothing else,
+# and it necessarily lands after the range_head of a record that already exists.
+#
+# WHAT THIS CANNOT CHECK, stated plainly rather than assumed: nothing here proves
+# no code landed BETWEEN range_head and the flip. Conjunct 3 proves only that the
+# flip commit itself carries none. A declared hand-off whose implementation landed
+# in a separate commit after range_head is exempted and that code was never
+# audited. That is the bounded price the declared design buys: it is per-id, it
+# requires a claim in `open_at_audit:` that is visible in the record's own diff,
+# and an ordinary item cannot reach it. No PR closes that: the record cannot name a commit that does not exist
+# yet, and pointing range_head at the pre-squash branch SHA passes the PR's CI and
+# then breaks on main where that SHA never existed. (For the ORDINARY order there
+# is no deadlock: an open hand-off keeps the milestone incomplete, so no record is
+# owed, and the milestone-boundary exemption above already carries flip-then-record
+# across two PRs. Verified. This carve-out is only for a record written early.)
+#
+# THREE CONJUNCTS, and the exemption is the AND of all three. An earlier attempt
+# used only the third and was killed in review: reading nothing but "did this one
+# commit touch code?" cannot tell "there is no implementation commit" from "the
+# implementation commit is elsewhere, possibly outside the range", so it exempted
+# ANY item with a roadmap-only flip — a record whose audited range was a single
+# empty commit was demonstrated validating with three ordinary items whose code sat
+# entirely outside it. Narrowness here is the whole design:
+#
+#   1. DECLARED. The id is named in the record's `open_at_audit:` list. This is the
+#      one half that is a claim rather than a computation, and that is deliberate:
+#      it makes "this member was not covered by this audit" an itemised, reviewable
+#      line in the record's own diff instead of an inference buried in git.
+#   2. IT REALLY WAS AN OPEN HAND-OFF WHEN THE AUDIT RAN. Recomputed from history:
+#      the item's status AT range_head must be `attended`. Not the current file —
+#      current content is whatever anyone last wrote; the blob at range_head is
+#      what the audit could actually have seen. BELT AND BRACES, and named as such:
+#      the declaration-validation loop in validate_record applies the same
+#      predicate to the same ids first and fails the whole record, so by the time
+#      this runs no id that would fail it survives. It is what kills the hole the
+#      first attempt opened only in the sense that the pair does; a mutation test
+#      deleting THIS line alone leaves the suite green, because the loop above is
+#      what the tests catch. Kept anyway, so the exemption does not silently widen
+#      if that loop is ever moved or narrowed.
+#   3. THE FLIP ADDED NO AUDITABLE SURFACE. Every path in the flip commit is under
+#      BACKLOG_DIR. One path outside and the commit carries surface an audit should
+#      have read, so the ordinary check applies unchanged.
+#
+# FAILS CLOSED throughout: an unreadable blob, a missing file at range_head, an
+# empty path list (a merge commit prints no names without -m; a bad object, or a
+# git that failed, print none either) — every one of those is uncertainty, and
+# uncertainty keeps the failure. `--no-renames` so a rename out of the backlog
+# lists BOTH paths and the code-side one is seen rather than collapsing to the
+# destination name.
+hg_status_at() { # hg_status_at <ref> <path> -> the frontmatter `status:` in that blob
+  git show "$1:$2" 2>/dev/null \
+    | awk '{ sub(/\r$/,"") } NR==1{ if ($0!="---") exit; next } /^---$/{ exit } { print }' \
+    | sed -n 's/^status:[[:space:]]*//p' | head -1 | sed 's/[[:space:]]*$//'
+}
+flip_is_backlog_only() { # flip_is_backlog_only <sha> ; 0 = it changed only BACKLOG_DIR paths
+  local sha="$1" paths p n=0
+  paths="$(git show --name-only --format= --no-renames "$sha" 2>/dev/null)" || return 1
+  # Heredoc, not a pipe: a `while read` on the right of a pipeline runs in a
+  # subshell and `n` would come back 0 no matter what the commit touched.
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    n=$((n + 1))
+    case "$p" in "$BACKLOG_DIR"*) : ;; *) return 1 ;; esac
+  done <<FLIP_PATHS_EOF
+$paths
+FLIP_PATHS_EOF
+  [ "$n" -gt 0 ]   # no paths => not exempt (see FAILS CLOSED above)
+}
+handoff_open_at_audit() { # <id> <range_head> <flip-sha> <declared ids> ; 0 = exempt
+  local id="$1" head="$2" flip="$3" declared="$4" d
+  for d in $declared; do [ "$d" = "$id" ] && break; d=""; done
+  [ -n "${d:-}" ] || return 1                                    # (1) declared
+  [ "$(hg_status_at "$head" "${BACKLOG_DIR}${id}.md")" = "attended" ] || return 1   # (2) open hand-off then
+  flip_is_backlog_only "$flip"                                   # (3) no surface
+}
+
 # --- record validation ----------------------------------------------------------
 # Task 2 (binding) and Task 3 (triage closure) extend this function. A record
 # failing here does NOT crash the gate: the milestone stays in debt and the
 # reason is reported.
 validate_record() { # validate_record <milestone> <file> ; 0 = valid
   local m="$1" rec="$2"
-  local ok=1 k v base head f id flip
+  local ok=1 k v base head f id flip open_ids unscored
   # Required keys — a record missing provenance/scope fields is not a record.
   for k in sweap_format milestone range_base range_head lens_mode lenses raw refuted confirmed workflow_run journal_sha256; do
     v="$(fm_get "$rec" "$k")"
@@ -256,6 +343,39 @@ validate_record() { # validate_record <milestone> <file> ; 0 = valid
   v="$(fm_get "$rec" sweap_format)"
   [ -z "$v" ] || [ "$v" = "$RECORD_FORMAT" ] \
     || { fail "record $rec: sweap_format: $v but this gate speaks format $RECORD_FORMAT"; ok=0; }
+  # A PANEL THAT DID NOT RUN IS NOT AN AUDIT. `unscored:` counts confirmed findings
+  # that no refuter ever scored — distinct from `unverified:`, which also covers the
+  # legitimate case of a finding reading could not settle. A run whose refuters died
+  # on capacity (consumer A DS.5, 2026-09-02: 330 agents dispatched, 115 failed, 26 of 31
+  # "confirmed" findings never scored) emitted a well-formed record that passed every
+  # arithmetic check here, because nothing read the number. Writing the gap down was
+  # free and it passed; that is the shortcut this refuses.
+  #
+  # Discharge it either way, and both are honest: resume the run named in
+  # `workflow_run:` (its journal caches the completed prefix, so only the dead
+  # dispatches are paid for again) and regenerate, or state in `unscored_accepted:`
+  # why the milestone is being closed over a panel that did not run.
+  #
+  # PURELY ADDITIVE: a record with no `unscored:` key validates exactly as before, so
+  # records written by a workflow that predates the key are untouched and no
+  # sweap_format bump is owed — the same discipline `axes:` and `unverified:` used.
+  # PRESENCE, not emptiness: fm_get returns "" both for an absent key and for a
+  # key whose value is empty, and `unscored:` with nothing after it is exactly what
+  # a broken emitter writes. Treating that as "no key" would open the check on the
+  # one input it most needs to catch, so ask the frontmatter whether the key is
+  # there at all and let an empty value fall through to the "not a count" arm.
+  if frontmatter "$rec" | grep -qE '^unscored:'; then
+    unscored="$(fm_get "$rec" unscored)"
+    # No arithmetic on a digit string of unbounded length: `[ 99999999999999999999
+    # -gt 0 ]` is a shell ERROR, not a comparison, and the `elif` then falls through
+    # and the record passes with the complaint on stderr where no --check caller
+    # reads it. A pattern test answers "greater than zero" for any width.
+    if ! printf '%s' "$unscored" | grep -qE '^[0-9]+$'; then
+      fail "record $rec: unscored: '$unscored' is not a count — fail closed"; ok=0
+    elif case "$unscored" in *[1-9]*) true ;; *) false ;; esac && [ -z "$(fm_get "$rec" unscored_accepted)" ]; then
+      fail "record $rec: unscored: $unscored finding(s) were never scored by any refuter, so this panel did not run for them — resume the run in workflow_run: ($(fm_get "$rec" workflow_run)) and regenerate, or record why you are closing over it in unscored_accepted:"; ok=0
+    fi
+  fi
   [ "$(fm_get "$rec" milestone)" = "$m" ] || { fail "record $rec: milestone key != $m"; ok=0; }
   base="$(fm_get "$rec" range_base)"; head="$(fm_get "$rec" range_head)"
   # Binding (the mistarget rule): recompute, never trust. Any git uncertainty
@@ -284,6 +404,27 @@ validate_record() { # validate_record <milestone> <file> ; 0 = valid
       # plus --name-only is not the same question as `-S` per path (see the
       # report), so batching them would trade a provable check for a plausible
       # one. Only the spawn overhead around them is gone.
+      # The declared carve-out (see "the open hand-off carve-out" above). Every id
+      # named here is validated on its own terms whether or not it is done yet: a
+      # declaration that names a file that does not exist, or an item that was not
+      # actually an open hand-off at range_head, is a false statement in the record
+      # and fails it — the list cannot be a place to park ids that might come in
+      # useful later.
+      # set -f while splitting: these are word-split unquoted, and an entry like
+      # `*` would otherwise glob against the repo root. Every expansion is then
+      # required to be an item file that was `attended` at range_head, so a glob
+      # fails the record loudly rather than widening anything — but not expanding
+      # is cheaper than relying on that.
+      set -f
+      open_ids="$(fm_get "$rec" open_at_audit | tr -d '[]' | tr ',' ' ')"
+      for id in $open_ids; do
+        if [ ! -f "${BACKLOG_DIR}${id}.md" ]; then
+          fail "record $rec: open_at_audit names $id but ${BACKLOG_DIR}${id}.md does not exist"; ok=0
+        elif [ "$(hg_status_at "$head" "${BACKLOG_DIR}${id}.md")" != "attended" ]; then
+          fail "record $rec: open_at_audit names $id but it was not an open hand-off at range_head (status there: '$(hg_status_at "$head" "${BACKLOG_DIR}${id}.md")')"; ok=0
+        fi
+      done
+      set +f
       local done_ids
       done_ids="$(printf '%s' "$ITEMS" | awk -F'\t' -v m="$m" '$1 == "0" && $2 == m && $4 == "done" { print $3 }')"
       while IFS= read -r id; do
@@ -293,6 +434,10 @@ validate_record() { # validate_record <milestone> <file> ; 0 = valid
         if [ -z "$flip" ]; then
           fail "record $rec: cannot locate the commit that completed $id (uncommitted flip?) — fail closed"; ok=0
         elif ! git merge-base --is-ancestor "$flip" "$head" 2>/dev/null; then
+          # Unreachable — unless this is a hand-off the record DECLARED was still
+          # open when the audit ran, which really was `attended` at range_head, and
+          # whose flip added no surface. All three, or the failure stands.
+          handoff_open_at_audit "$id" "$head" "$flip" "$open_ids" && continue
           fail "record $rec: $id completed outside the audited range (flip $flip not reachable from range_head)"; ok=0
         fi
       done <<DONE_ITEMS_EOF

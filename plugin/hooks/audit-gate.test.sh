@@ -136,6 +136,125 @@ run_gate "$R" --check
 check "done-flip outside range => invalid record" 1
 check_out "names the unreached item" "FAIL: record .*F1\.2"
 
+# T8b: the OPEN HAND-OFF carve-out (consumer A DS.5.13). A record written EARLY, while
+# a planned hand-off was still open, cannot be satisfied by any later PR: the flip
+# is by construction after range_head. Exempt only on all THREE conjuncts.
+# Fixture shape: F1.2 authored `attended`, the record written while it is open,
+# then flipped in a commit touching nothing but its own item file.
+mk_handoff_repo() {   # mk_handoff_repo <name> <status-at-record-time> <flip-carries-code?> [extra-frontmatter]
+  local r; r="$(new_repo "$1")"
+  local base; base="$(head_sha "$r")"
+  mk_item "$r" F1.1 'done'
+  mk_item "$r" F1.2 "$2" 'handoff: "walk the app and give the verdict"'
+  commit_all "$r" "F1.1 done; F1.2 authored as $2"
+  local rh; rh="$(head_sha "$r")"
+  mk_record "$r" F1 "$base" "$rh" 0 0 0 "" "${4:-}"
+  commit_all "$r" "the audit record, written while F1.2 is still open"
+  mk_item "$r" F1.2 'done' 'handoff: "walk the app and give the verdict"'
+  [ "$3" = "code" ] && { mkdir -p "$r/src"; printf 'export const x = 1\n' > "$r/src/a.ts"; }
+  commit_all "$r" "flip F1.2"
+  printf '%s\n' "$r"
+}
+
+R="$(mk_handoff_repo t8b attended nocode 'finders_reporting: 6
+open_at_audit: [F1.2]')"
+run_gate "$R" --check
+check "declared open hand-off, attended at range_head, status-byte flip => valid" 0
+
+R="$(mk_handoff_repo t8b2 attended nocode 'finders_reporting: 6')"
+run_gate "$R" --check
+check "same shape but NOT declared => still invalid" 1
+check_out "the undeclared hand-off is named" "FAIL: record .*F1\.2 completed outside"
+
+# The hole the first attempt opened, pinned shut: an ordinary item with a
+# roadmap-only flip is NOT a hand-off, and declaring it does not make it one.
+R="$(mk_handoff_repo t8c todo nocode 'finders_reporting: 6
+open_at_audit: [F1.2]')"
+run_gate "$R" --check
+check "declared but merely todo at range_head => still invalid" 1
+check_out "the false declaration is named" "was not an open hand-off at range_head"
+
+R="$(mk_handoff_repo t8d attended code 'finders_reporting: 6
+open_at_audit: [F1.2]')"
+run_gate "$R" --check
+check "declared hand-off whose flip carries code => still invalid" 1
+check_out "the code-carrying flip is named" "FAIL: record .*F1\.2 completed outside"
+
+R="$(mk_handoff_repo t8e attended nocode 'finders_reporting: 6
+open_at_audit: [F1.2, F9.9]')"
+run_gate "$R" --check
+check "open_at_audit naming an item that does not exist => invalid" 1
+check_out "the phantom id is named" "open_at_audit names F9\.9"
+
+# T8f: `unscored:` — a panel that never ran is not an audit (consumer A DS.5).
+R="$(new_repo t8f)"
+base="$(head_sha "$R")"
+mk_item "$R" F1.1 'done'
+commit_all "$R"
+mk_record "$R" F1 "$base" "$(head_sha "$R")" 0 0 0 "" "finders_reporting: 6
+unscored: 3"
+commit_all "$R" record
+run_gate "$R" --check
+check "unscored > 0 with no acknowledgement => invalid" 1
+check_out "the failure points at the resumable run" "resume the run in workflow_run"
+
+R="$(new_repo t8g)"
+base="$(head_sha "$R")"
+mk_item "$R" F1.1 'done'
+commit_all "$R"
+mk_record "$R" F1 "$base" "$(head_sha "$R")" 0 0 0 "" "finders_reporting: 6
+unscored: 3
+unscored_accepted: capacity died mid-run; closing over it deliberately"
+commit_all "$R" record
+run_gate "$R" --check
+check "unscored > 0 WITH an explicit acknowledgement => valid" 0
+
+R="$(new_repo t8h)"
+base="$(head_sha "$R")"
+mk_item "$R" F1.1 'done'
+commit_all "$R"
+mk_record "$R" F1 "$base" "$(head_sha "$R")" 0 0 0 "" "finders_reporting: 6
+unscored: lots"
+commit_all "$R" record
+run_gate "$R" --check
+check "non-numeric unscored => invalid (fail closed)" 1
+
+# The two fail-opens a hostile review demonstrated: an EMPTY value (what a broken
+# emitter writes) was treated as an absent key, and a digit string too large for
+# `test -gt` made the shell error out and the record pass with the complaint on
+# stderr, where no --check caller reads it.
+R="$(new_repo t8j)"
+base="$(head_sha "$R")"
+mk_item "$R" F1.1 'done'
+commit_all "$R"
+mk_record "$R" F1 "$base" "$(head_sha "$R")" 0 0 0 "" "finders_reporting: 6
+unscored:"
+commit_all "$R" record
+run_gate "$R" --check
+check "an EMPTY unscored value is not an absent key" 1
+check_out "and it is named as not a count" "is not a count"
+
+R="$(new_repo t8k)"
+base="$(head_sha "$R")"
+mk_item "$R" F1.1 'done'
+commit_all "$R"
+mk_record "$R" F1 "$base" "$(head_sha "$R")" 0 0 0 "" "finders_reporting: 6
+unscored: 99999999999999999999"
+commit_all "$R" record
+run_gate "$R" --check
+check "an unscored count too large for arithmetic still fails" 1
+check_out "the failure is on stdout, where --check callers read it" "unscored: 99999999999999999999"
+
+R="$(new_repo t8i)"
+base="$(head_sha "$R")"
+mk_item "$R" F1.1 'done'
+commit_all "$R"
+mk_record "$R" F1 "$base" "$(head_sha "$R")" 0 0 0 "" "finders_reporting: 6
+unscored: 0"
+commit_all "$R" record
+run_gate "$R" --check
+check "unscored: 0 is not a debt" 0
+
 # T9: record for the WRONG milestone id in the filename slot -> invalid
 R="$(new_repo t9)"
 base="$(head_sha "$R")"

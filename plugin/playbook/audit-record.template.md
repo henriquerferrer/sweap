@@ -94,6 +94,27 @@ produced which finding; do not invent per-finding attribution for a UI axis.
   `range_head` an ancestor of `HEAD`, and every non-follow-up done item of the
   milestone must have flipped to `status: done` within the audited range. An
   audit of a stale range fails structurally — that is the point.
+- **`open_at_audit: [<id>, ...]`** — the ONE exception to the line above, and
+  only for a record written EARLY, while a planned hand-off was still open (the
+  playbook's order is that the audit is not due until the hand-off closes; DS.5
+  audited early with DS.5.13 open, as a documented exception). Name each member
+  that was still an open hand-off when the audit ran. The gate then lets that
+  id's flip land after `range_head`, but only if all three hold, and the last
+  two are recomputed from git, not taken from the record: the id is named here,
+  its status **at `range_head`** was `attended`, and its flip commit touches
+  nothing outside the backlog directory. An ordinary `todo` item does not
+  qualify, and declaring one fails the record rather than exempting it. Omit the
+  key entirely when no hand-off was open — which is the normal case.
+- **`unscored: <n>`** — findings that NO refuter ever scored, i.e. the panel did
+  not run for them. Distinct from `unverified:`, which also counts the honest
+  case of a finding reading could not settle. The Workflow emits it only when
+  non-zero, and the gate REFUSES a record carrying `unscored > 0` unless you
+  either resume the run named in `workflow_run:` and regenerate, or state in
+  **`unscored_accepted: <why>`** that you are closing the milestone over a panel
+  that did not run. Reason: consumer A's DS.5 run lost 115 of 330 agents to usage
+  limits and emitted `confirmed: 31, unverified: 26` — 26 findings nothing had
+  checked — and it passed every arithmetic check here, because nothing read the
+  number. Writing the gap down was free and it passed.
 - **`raw == refuted + confirmed`**, all numeric.
 - **`finders_reporting: <n>`** — how many finder lenses actually returned a
   result. The Workflow emits it on every record; the gate DEMANDS it, `>= 1`,

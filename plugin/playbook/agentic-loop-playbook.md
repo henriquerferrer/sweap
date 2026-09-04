@@ -610,6 +610,32 @@ may ADD dimensions it judges necessary; it may not remove tagged ones.
   discarded stderr inside a sleep-loop is a livelock — #189 went to attempt 41);
   re-run ONCE as diagnosis, never retry-until-green; stop if the same check is
   red on the base branch. One watcher per PR, owned by the session that merges.
+  **(5) The waiter is a background shell, and the harness may kill it.** Claude
+  Code kills a session's background Bash tasks on a macOS memory-pressure event
+  once the user has been away ~30 min with the model idle and no subagent
+  running — by process GROUP, so everything the task started dies with it. It
+  arrives as `Background command "…" was stopped`. Consumer A #237 went green at
+  19:31 and merged at 19:57, by hand, because of exactly that (2026-09-02).
+  sweap's scaffold now writes `CLAUDE_CODE_DISABLE_BG_SHELL_PRESSURE_REAP=1`
+  into the project's `.claude/settings.json` `env` block, which turns the reaper
+  off — but it is read when a task is BACKGROUNDED, not when it is killed, so it
+  protects sessions started after it lands, never the one that added it. Commit
+  it. Treat the rest of this rule as live regardless: it is an internal flag
+  reached through a documented mechanism, and if it is ever renamed, prevention
+  lapses silently.
+- **After a "was stopped" notice, re-run `sweap-merge watch <n>`. Do not reason
+  about whether the watcher survived.** Re-running is cheap and idempotent: it
+  takes over a dead watcher and reports `held-by` against a live one. Do not
+  reason from a heartbeat: a killed watcher's EXIT trap releases its lease, so a
+  recent heartbeat with no lock is what a DEAD watcher looks like, and reading it
+  as "someone is on it" is what turned a lost notification into a 26-minute
+  stall. `sweap-merge status <n>` now decides it for you instead of leaving it to
+  be inferred — the lease records its holder as `<session>:<pid>`, so status asks
+  that pid and answers `NO WATCHER — … (pid N) is gone` or `watcher pid N alive`,
+  naming the command to arm one either way. And never substitute a hand-rolled `until …; do sleep 60; done` for the
+  driver: the same incident lost 26 more minutes to one waiting on the wrong
+  event (the PR leaving `OPEN`, which nothing was going to produce once its
+  merger was dead).
 - **The merge path is `sweap-merge watch <n>`** — a bare command, and it is how
   a PR lands. **Not `${CLAUDE_PLUGIN_ROOT}`:** that variable is exported for
   HOOK execution only and is UNSET in a model-issued Bash call (verified —
@@ -754,6 +780,18 @@ not due until it is closed. No merges are blocked and no audit debt accrues —
 the audit is simply not owed yet. That is the leverage that makes a hand-off
 impossible to ignore, and the accepted cost is that audit timing depends on a
 person.
+
+**If you audit early anyway, declare it.** Auditing a milestone while one of its
+hand-offs is still open is a documented exception, not the order above — and it
+has a price the exception used to hide: the record's `range_head` predates the
+hand-off's flip, so flipping it later fails the gate's range binding and NO PR
+can satisfy it (consumer A DS.5.13, 2026-09-03). Pay the price at audit time instead
+of discovering it at flip time: put every still-open member in the record's
+**`open_at_audit: [<id>, ...]`** list. It is a coverage claim in the record's own
+diff — these members were not covered by this audit — and the gate verifies it
+from git rather than believing it: the id must have been `attended` at
+`range_head`, and its flip must touch nothing outside the backlog directory. The
+flip then lands in one ordinary PR alongside the declaration.
 
 **Never an escape hatch (mechanically, not just by rule).** An agent must never
 relabel its own stuck work as human work — escalate-don't-guess is unchanged:
@@ -983,6 +1021,26 @@ replaced entirely by an explicit list when the project deliberately wants a
 custom set — and adversarially refutes every finding — only majority-surviving
 findings are reported. It exists to catch what per-PR review structurally
 cannot: cross-feature interactions, systemic patterns, and plan-level mistakes.
+
+**A panel that stopped answering is resumed, not written up.** The audit is a
+Workflow, and a Workflow run is resumable by its run id: `Workflow({scriptPath,
+resumeFromRunId})` replays the completed prefix from cache and re-runs only what
+failed, so a resume costs the dead dispatches and nothing else. The run itself
+will NOT stop when the panel dies, and that is deliberate: an in-run circuit
+breaker was built and removed, because from inside the script a dead panel and a
+slow one are not distinguishable in time — the failure reason never reaches it,
+and "consecutive empty dispatches" over a concurrent fan-out aborted a healthy
+run at 9% loss while catching the real outage under a third of the time. The
+detection is at the GATE instead, on the finished record, where `unscored` is a
+fact rather than an inference. Resume when capacity is back, BEFORE triaging
+anything: a finding no
+refuter scored is not an adversarially-confirmed finding, and the record's
+`unscored:` count is what the gate refuses. Consumer A's DS.5 run lost 115 of 330
+agents this way, recovered 65 on a resume and never recovered 50, and the record
+still read as a finished audit — a resume does not self-complete either, which is
+why the count is checked rather than assumed. If you genuinely mean to close a
+milestone over a panel that did not run, say so in `unscored_accepted:` and own
+it; do not let "documented the gap" be the cheap way past the gate.
 
 The operational recipe (run the workflow, triage, write the record from the
 workflow's `record` field, `--check`, land it in one PR) is `/milestone-audit`;

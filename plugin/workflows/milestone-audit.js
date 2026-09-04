@@ -561,6 +561,36 @@ const killed = all.length - confirmed.length
 // the failure mode that produced this line — no refuter scored it at all.
 const isUnverified = (f) => f.scored === 0 || (f.needsProof && f.proven !== 'confirmed')
 const unverified = confirmed.filter(isUnverified)
+// UNSCORED is the FIRST of those two causes, on its own, because only the first
+// one means the panel did not run. Derived from `scored === 0` and never from
+// `unverified` — that is the whole point of splitting them.
+//
+// This exists because of a run on 2026-09-02 against an account that was
+// hitting usage limits: 330 agents started and 115 failed, and the workflow
+// ground through all of it and emitted a well-formed record claiming
+// `confirmed: 31`, of which `unverified: 26`. Twenty-six of thirty-one
+// "adversarially confirmed" findings had been scored by no refuter at all, and
+// the record passed the audit gate, because nothing reads `unverified`.
+//
+// AN IN-RUN CIRCUIT BREAKER WAS TRIED FOR THAT SAME INCIDENT AND REMOVED —
+// counters over consecutive null returns from `agent()`, a "panel is dead" flag
+// and a top-level throw. A hostile review executed it and killed it on three
+// counts. It could not be placed: no single point is after the LAST dispatch,
+// so a panel that died during Validate set the flag, skipped the throw and
+// still assembled a record (with `unscored: 0`, so even the new key stayed
+// quiet). "Consecutive" does not mean anything over a concurrent fan-out: a
+// dead subagent returns in milliseconds while a live `effort: 'high'` refuter
+// takes minutes, so every loss in a wave lands before every success, and a
+// healthy run with 7 scattered deaths in 75 dispatches aborted claiming 6 in a
+// row while the real outage tripped it in under a third of simulated trials.
+// And an outage delivered as a THROW never reached the counters at all —
+// `agentAs` re-throws it, `parallel` swallows it to null, and the run completed
+// with `unscored: 31`, a numerical replay of the incident that this key caught
+// and the breaker did not. The conclusion, and the reason the fix is a number
+// rather than a control: from inside the script a dead panel and a slow one are
+// not distinguishable in time. The detection belongs at the gate, on the
+// finished record, where `unscored > 0` is a fact rather than an inference.
+const unscored = confirmed.filter((f) => f.scored === 0)
 log(
   `${all.length} raw findings, ${killed} refuted, ${confirmed.length} confirmed` +
     (unverified.length ? ` (${unverified.length} of them UNVERIFIED — reading could not settle them and the sandboxed run did not either)` : '')
@@ -576,6 +606,16 @@ if (confirmed.length && unverified.length * 2 >= confirmed.length) {
       `disproved them and nothing demonstrated them. Treat this list as PROVISIONAL: the panel ` +
       `could not check most of what it passed through. Triage the unverified ones as coverage ` +
       `gaps (bucket 2 — write the named experiment), not as established defects.`
+  )
+}
+// Separately, and louder, because it is a different fact about a different
+// thing: these are not findings the panel could not settle, they are findings
+// the panel never looked at. This is the only place the run gets told — nothing
+// upstream stops for it, by design (see the removed breaker, above).
+if (unscored.length) {
+  log(
+    `⚠ ${unscored.length} of ${confirmed.length} confirmed findings were scored by NO refuter — the panel did not ` +
+      `run on them at all, which is a fact about this RUN (dead dispatches), not about the code.`
   )
 }
 
@@ -622,6 +662,17 @@ const record = [
   // never-checked findings as adversarially-confirmed is a record that
   // overclaims its own evidence.
   ...(unverified.length ? [`unverified: ${unverified.length}`] : []),
+  // TWO NUMBERS, NOT ONE, AND THIS IS THE ONE THAT MEANS THE PANEL DID NOT RUN.
+  // `unverified` merges two causes: a finding reading could not settle and the
+  // sandbox did not either (legitimate and expected — the audit found something
+  // it cannot decide), and a finding NO refuter scored (not a finding about the
+  // code at all: the panel died). Collapsed into one key they are unreadable —
+  // the 2026-09-02 run reported `unverified: 26` of `confirmed: 31` while the
+  // account was out of capacity, and nothing in the record said which kind of 26
+  // that was. Same additive discipline as `unverified:` and `axes:`: a subset of
+  // `confirmed`, emitted only when non-zero, so `raw = refuted + confirmed`
+  // still holds in audit-gate.sh and sweap_format does not move.
+  ...(unscored.length ? [`unscored: ${unscored.length}`] : []),
   `workflow_run: <FILL:this run's workflow id>`,
   `journal_sha256: <FILL:shasum -a 256 <transcriptDir>/journal.jsonl>`,
   '---',
@@ -674,6 +725,10 @@ return {
     refuted: killed,
     confirmed: confirmed.length,
     unverified: unverified.length,
+    // Carried alongside, never instead: the playbook quotes `stats` verbatim
+    // into the run summary, and "the panel did not run on N of these" is the
+    // one number a human reading that summary must not have to derive.
+    unscored: unscored.length,
     finders_reporting: reporting.length,
   },
   record,

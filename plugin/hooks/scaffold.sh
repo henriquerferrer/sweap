@@ -47,6 +47,20 @@
 #      mid-session, and a mid-run working-tree write is unwanted); it runs for
 #      every other source, including unknown ones. The gitignore self-heal (3)
 #      still runs on every source.
+#   3d. Settings self-heal — also runs BEFORE the fast-guard, same reason:
+#      ensure `.claude/settings.json` sets
+#      `env.CLAUDE_CODE_DISABLE_BG_SHELL_PRESSURE_REAP` so Claude Code's
+#      memory-pressure reaper stops killing a session's background Bash tasks
+#      (see the block for the incident). Additive and check-before-write:
+#      creates the file if absent, adds only the missing key if present, and
+#      NEVER overwrites a value a consumer already set — including "0".
+#      CONSERVATIVE: it writes only when the target is an ordinary, writable,
+#      readable, LF, parseable JSON object whose `env` is an object and which
+#      has not moved under it, staging the edit inside .claude/ so the rename
+#      is same-device; in every other case it ANNOUNCES the true cause and
+#      changes nothing. Skipped on compact/clear like the managed sync in 3c.
+#      Always announced when it wrote or was blocked, never when there was
+#      nothing to do — a write here is a tracked file the human must commit.
 #   4. Fast-guard: if CLAUDE.md exists and already has a `## sweap config`
 #      block, this project is already scaffolded — exit 0 immediately, no
 #      output, nothing else touched (the gitignore self-heal in step 3 has
@@ -242,17 +256,246 @@ sync_managed_all() {
 }
 sync_managed_all
 
+# --- 3d. Settings self-heal (also BEFORE the fast-guard) ---------------------
+# Same shape and same reasoning as the gitignore self-heal in step 3: it runs
+# ahead of the fast-guard, so a repo that adopted sweap before this rule existed
+# still gains it on its next session; it is check-before-write and purely
+# additive, so a value a consumer set on purpose is never touched.
+#
+# The incident. Claude Code kills a session's BACKGROUND Bash tasks on a macOS
+# memory-pressure event once the user has been away 30 minutes with the model
+# idle and no subagent running, and the kill goes to the process group. That is
+# what silently killed sweap's own merge watcher three times in one consumer A
+# session on 2026-09-02 and left a green PR unmerged for 26 minutes. The
+# reaper's idle heuristic selects for exactly the tasks sweap depends on: a
+# merge watcher's entire job is to keep working while the human is away, so
+# "user idle, nothing running in the foreground" describes a healthy watcher
+# perfectly and describes abandoned garbage not at all.
+#
+# Verified in the harness binary, not inferred: the guard is
+# `!Oe() && !a.CLAUDE_CODE_DISABLE_BG_SHELL_PRESSURE_REAP`, where the env
+# accessor is a live getter over `process.env`, and a project
+# `.claude/settings.json` `"env"` block is assigned into that same
+# `process.env` — confirmed by experiment (the value reaches a Bash tool call).
+# Only `1`, `true`, `yes`, `on` parse as true; `0` leaves the reaper armed,
+# which is precisely why an existing `"0"` is left alone rather than "fixed":
+# a consumer who wrote it owns that choice.
+#
+# TIMING — and this changes what the announcement may claim. The flag is read
+# when a task is BACKGROUNDED, not when it is killed, and the harness snapshots
+# the settings `env` block into `process.env` at session start. So this edit
+# does nothing for the session that writes it: it applies to sessions started
+# after it lands, full stop. The message must not leave room for the reader to
+# think a task backgrounded later today is covered.
+#
+# WRITE ONLY WHEN THE TARGET IS UNAMBIGUOUS. A hostile review of the first cut
+# found every one of these by demonstration, so each bail below is a scar:
+#   - a SYMLINK: `mv` replaces the link, not its target, so a settings.json
+#     pointing at a shared file became a regular file and orphaned the real one;
+#   - a file we cannot WRITE: `rename()` only needs write permission on the
+#     DIRECTORY, so a 444 file was replaced anyway and came back writable;
+#   - a file we cannot READ, or that is not a REGULAR file: a directory named
+#     settings.json swallowed the temp file and was then chmod'd;
+#   - the file's MODE: preserved, never widened. 644 is set only on a file this
+#     heal CREATES;
+#   - a temp file in $TMPDIR: `mv` across filesystems degrades to
+#     copy-then-unlink, which TRUNCATES the destination first — a hook killed
+#     mid-copy leaves the user's settings destroyed. The temp is created inside
+#     .claude/ so the rename is same-device by construction, and if .claude/ is
+#     not writable we announce instead;
+#   - a CONCURRENT write: three reads happen before the rename, so an edit
+#     landing in that window used to be silently reverted. The file's
+#     size+mtime+hash is re-checked immediately before the `mv` and the edit is
+#     dropped if anything moved;
+#   - CRLF and INDENTATION: jq reformats. A tab-indented or 4-space file came
+#     back as a 109-line diff. The dominant indent is detected and handed back
+#     to jq; CRLF cannot be preserved that way at all, so a CRLF file is a bail;
+#   - /compact and /clear: skipped, exactly like the managed-file sync in 3c.
+#     Creating a brand-new tracked file mid-run is a bigger surprise than the
+#     rewrite that rule already prevents.
+# A failure to write is never reported as "unchanged" — see the `failed` action.
+# "I tried and could not" must not read like "there was nothing to do".
+#
+# KNOWN, UNFIXED: jq silently deduplicates duplicate top-level keys, so a
+# settings.json containing two `"env"` blocks loses one on the round trip. That
+# is inherent to any jq edit and the pre-`mv` re-check does NOT catch it (the
+# file did not change under us; jq's own output is simply lossy). Fixing it
+# needs a parser that preserves duplicates, which is out of scope here.
+settings_key='CLAUDE_CODE_DISABLE_BG_SHELL_PRESSURE_REAP'
+settings_action="unchanged"      # unchanged|created|added|skipped-source|failed|blocked-*
+settings_detail=""
+sf="$proj/.claude/settings.json"
+sd="$proj/.claude"
+settings_cr=$'\r'
+
+settings_stat_mode() { # octal mode of $1, or non-zero if neither stat dialect answers
+  local m
+  m="$(stat -c '%a' "$1" 2>/dev/null)"
+  case "$m" in [0-7][0-7][0-7]|[0-7][0-7][0-7][0-7]) printf '%s' "$m"; return 0 ;; esac
+  m="$(stat -f '%Lp' "$1" 2>/dev/null)"
+  case "$m" in [0-7][0-7][0-7]|[0-7][0-7][0-7][0-7]) printf '%s' "$m"; return 0 ;; esac
+  return 1
+}
+settings_sig() { # "<size> <mtime> <hash>" — the did-it-move-under-us fingerprint.
+  # mtime alone has 1-second granularity, so the content hash is what actually
+  # catches a same-second, same-size edit.
+  local s
+  s="$(stat -c '%s %Y' "$1" 2>/dev/null)"
+  case "$s" in [0-9]*\ [0-9]*) : ;; *) s="$(stat -f '%z %m' "$1" 2>/dev/null)" ;; esac
+  printf '%s %s' "${s:-nostat}" "$(hash_of "$1")"
+}
+
+if [ "$sync_allowed" != "1" ]; then
+  # /compact or /clear: a mid-run working-tree write is unwanted (see 3c).
+  settings_action="skipped-source"
+elif [ -L "$sf" ]; then
+  settings_action="blocked-symlink"
+elif [ -e "$sf" ] && [ ! -f "$sf" ]; then
+  settings_action="blocked-not-regular"
+elif [ -f "$sf" ] && { [ ! -r "$sf" ] || ! head -c 1 "$sf" >/dev/null 2>&1; }; then
+  settings_action="blocked-unreadable"
+elif [ -f "$sf" ] && [ ! -w "$sf" ]; then
+  settings_action="blocked-readonly"
+elif [ "$have_jq" != "1" ]; then
+  # No jq: refuse to guess in BOTH directions. A regex "edit" corrupts configs,
+  # and a substring grep for the key would call a file healed because the name
+  # appears inside some unrelated string. So: verified nothing, changed nothing.
+  settings_action="blocked-no-jq"
+elif [ -f "$sf" ] && grep -q "$settings_cr" "$sf" 2>/dev/null; then
+  settings_action="blocked-crlf"
+else
+  mkdir -p "$sd" 2>/dev/null
+  if [ ! -d "$sd" ] || [ ! -w "$sd" ]; then
+    settings_action="blocked-dir-unwritable"
+  elif [ ! -e "$sf" ]; then
+    # --- create -------------------------------------------------------------
+    settings_tmp="$(mktemp "$sd/.settings.json.sweap.XXXXXX" 2>/dev/null)" || settings_tmp=""
+    if [ -z "$settings_tmp" ]; then
+      settings_action="failed"
+    elif jq -n --arg k "$settings_key" '{env: {($k): "1"}}' > "$settings_tmp" 2>/dev/null &&
+         [ -s "$settings_tmp" ] &&
+         jq -e --arg k "$settings_key" '.env[$k] == "1"' "$settings_tmp" >/dev/null 2>&1; then
+      if [ -e "$sf" ] || [ -L "$sf" ]; then
+        settings_action="blocked-changed"          # someone created it while we worked
+      elif mv "$settings_tmp" "$sf" 2>/dev/null; then
+        chmod 644 "$sf" 2>/dev/null                # OUR file: mktemp is 0600, and a
+        settings_action="created"                  # settings file nobody can read is a new bug
+      else
+        settings_action="failed"
+      fi
+    else
+      settings_action="failed"
+    fi
+    [ -n "$settings_tmp" ] && rm -f "$settings_tmp"
+  else
+    # --- classify first, mutate second --------------------------------------
+    # jq failing to parse leaves $settings_state empty -> blocked-not-json. The
+    # explicit has("env") test comes BEFORE any `.env // {}`, because `//` would
+    # quietly turn a null env into an object and hide the shape problem.
+    settings_state="$(jq -r --arg k "$settings_key" '
+        if type != "object" then "not-object:" + (type)
+        elif (has("env") and ((.env | type) != "object")) then "env-not-object:" + (.env | type)
+        elif ((.env // {}) | has($k)) then "present"
+        else "absent" end' "$sf" 2>/dev/null)"
+    case "$settings_state" in
+      present) settings_action="unchanged" ;;   # any value at all, "0" included: not ours to change
+      not-object:*)     settings_action="blocked-shape";     settings_detail="${settings_state#*:}" ;;
+      env-not-object:*) settings_action="blocked-env-shape"; settings_detail="${settings_state#*:}" ;;
+      absent)
+        # Match the file's own formatting, or the "one added key" diff is a
+        # whole-file rewrite nobody can review.
+        settings_indent="$(awk '/^\t/ { print "tab"; exit } /^ / { match($0, / +/); print RLENGTH; exit }' "$sf" 2>/dev/null)"
+        case "$settings_indent" in
+          tab)   settings_fmt=(--tab) ;;
+          [1-7]) settings_fmt=(--indent "$settings_indent") ;;
+          "")    # no indented line at all: a one-line file stays one line
+            if [ "$(awk 'END{print NR}' "$sf" 2>/dev/null)" -le 1 ]; then settings_fmt=(-c)
+            else settings_fmt=(--indent 2); fi ;;
+          *)     settings_fmt=(--indent 2) ;;    # deeper than jq can express
+        esac
+        settings_mode="$(settings_stat_mode "$sf")" || settings_mode=""
+        settings_before="$(settings_sig "$sf")"
+        settings_tmp="$(mktemp "$sd/.settings.json.sweap.XXXXXX" 2>/dev/null)" || settings_tmp=""
+        if [ -z "$settings_tmp" ] || [ -z "$settings_mode" ]; then
+          settings_action="failed"
+        # The whole edit: merge the one key into whatever `env` already is.
+        elif jq "${settings_fmt[@]}" --arg k "$settings_key" '.env = ((.env // {}) + {($k): "1"})' "$sf" > "$settings_tmp" 2>/dev/null &&
+             [ -s "$settings_tmp" ] &&
+             jq -e --arg k "$settings_key" --slurpfile orig "$sf" '
+               (($orig[0] | keys) - (. | keys) | length) == 0
+               and ((($orig[0].env // {}) | keys) - (.env | keys) | length) == 0
+               and (.env[$k] == "1")' "$settings_tmp" >/dev/null 2>&1; then
+          # Last look before the rename. Everything above read the file three
+          # times; a write that landed in that window must not be reverted.
+          if [ -L "$sf" ] || [ ! -f "$sf" ] || [ "$(settings_sig "$sf")" != "$settings_before" ]; then
+            settings_action="blocked-changed"
+          elif mv "$settings_tmp" "$sf" 2>/dev/null; then
+            chmod "$settings_mode" "$sf" 2>/dev/null   # PRESERVE, never widen
+            settings_action="added"
+          else
+            settings_action="failed"
+          fi
+        else
+          settings_action="failed"
+        fi
+        [ -n "$settings_tmp" ] && rm -f "$settings_tmp"
+        ;;
+      *) settings_action="blocked-not-json" ;;
+    esac
+  fi
+fi
+
+# One message, built once, reused by the fast-guard heal path (step 4) and the
+# first-scaffold summary (step 6) so the two can never drift apart. Every
+# non-write path says WHICH condition stopped it — "blocked" without a true
+# cause is how a user spends an afternoon fixing the wrong thing.
+settings_why="It stops Claude Code's macOS memory-pressure reaper from killing a session's background Bash tasks (that reaper killed sweap's merge watcher three times in one session on 2026-09-02 and left a green PR unmerged for 26 minutes). It applies only to sessions started after it lands — it does nothing for this session."
+settings_manual="Add {\"env\":{\"$settings_key\":\"1\"}} by hand, merged into any existing \"env\" block."
+settings_msg=""
+case "$settings_action" in
+  created)
+    settings_msg="sweap: added the key env.$settings_key=\"1\" to .claude/settings.json (the file did not exist, so it now holds just that key). $settings_why This is a working-tree edit in the main checkout: review it and COMMIT it. " ;;
+  added)
+    settings_msg="sweap: added the key env.$settings_key=\"1\" to .claude/settings.json, leaving every other key and its formatting as they were. $settings_why This is a working-tree edit in the main checkout: review it and COMMIT it. " ;;
+  blocked-no-jq)
+    settings_msg="sweap: jq is not installed, so sweap could neither verify nor safely edit .claude/settings.json — treat env.$settings_key as UNVERIFIED and assume nothing was changed, because nothing was. $settings_manual $settings_why " ;;
+  blocked-symlink)
+    settings_msg="sweap: .claude/settings.json is a SYMLINK, so sweap changed nothing — replacing it would have written a regular file over the link and orphaned its target. $settings_manual (Edit the file the link points at.) $settings_why " ;;
+  blocked-not-regular)
+    settings_msg="sweap: .claude/settings.json is not a regular file (a directory or a special file), so sweap changed nothing. Replace it with an ordinary JSON file. $settings_manual $settings_why " ;;
+  blocked-unreadable)
+    settings_msg="sweap: .claude/settings.json could not be READ (permissions), so sweap changed nothing — it never edits a file it cannot first parse. $settings_manual $settings_why " ;;
+  blocked-readonly)
+    settings_msg="sweap: .claude/settings.json is NOT WRITABLE, so sweap changed nothing — a rename needs only write permission on .claude/, so going ahead would have replaced a read-only file and handed it back writable. Make it writable if you want this managed, or $settings_manual $settings_why " ;;
+  blocked-dir-unwritable)
+    settings_msg="sweap: .claude/ is missing or not writable, so sweap could not stage the edit on the same filesystem as the target and changed nothing (a cross-filesystem rename truncates the destination first, which is not a risk worth taking with your settings). $settings_manual $settings_why " ;;
+  blocked-crlf)
+    settings_msg="sweap: .claude/settings.json uses CRLF line endings, so sweap changed nothing — the edit would have rewritten every line of the file to LF and buried the one-key change in a whole-file diff. Convert it to LF, or $settings_manual $settings_why " ;;
+  blocked-not-json)
+    settings_msg="sweap: .claude/settings.json is not valid JSON, so it was left EXACTLY as found — sweap never rewrites a file it could not parse. Fix the JSON first, then $settings_manual $settings_why " ;;
+  blocked-shape)
+    settings_msg="sweap: .claude/settings.json is valid JSON but its top level is ${settings_detail:-a non-object}, not an object, so sweap changed nothing. $settings_manual $settings_why " ;;
+  blocked-env-shape)
+    settings_msg="sweap: .claude/settings.json is valid JSON but its \"env\" is ${settings_detail:-not an object} rather than an object, so sweap changed nothing — merging a key into it would have destroyed that value. $settings_manual $settings_why " ;;
+  blocked-changed)
+    settings_msg="sweap: .claude/settings.json changed on disk while sweap was preparing the edit, so the edit was DISCARDED rather than written over someone else's write; the file is exactly as that writer left it. It will be retried on your next session. $settings_why " ;;
+  failed)
+    settings_msg="sweap: sweap could NOT add env.$settings_key to .claude/settings.json — staging the temp file, reading the file's permissions, or the rename failed. Nothing was changed and the file is exactly as it was; this is a failure, not a no-op. Check the permissions on .claude/ and .claude/settings.json. $settings_manual $settings_why " ;;
+  skipped-source|unchanged) : ;;   # silent, like the managed-file sync
+esac
+
 # --- 4. Idempotency fast-guard ----------------------------------------------
 
 if [ -f "$proj/CLAUDE.md" ] && grep -qF '## sweap config' "$proj/CLAUDE.md" 2>/dev/null; then
   # Already scaffolded. Stay silent UNLESS a self-heal above added something —
   # a new required check appearing unannounced is worse than no check at all,
   # because nobody knows to make it required in the ruleset.
-  if [ "${#healed_workflows[@]}" -gt 0 ] || [ "$gitignore_action" != "unchanged" ]; then
+  if [ "${#healed_workflows[@]}" -gt 0 ] || [ "$gitignore_action" != "unchanged" ] || [ -n "$settings_msg" ]; then
     heal_msg=""
     if [ "$gitignore_action" != "unchanged" ]; then
       heal_msg="sweap: $gitignore_action sweap runtime ignore rules in .gitignore (.claude/main-red-*.flag, .claude/sweap-board.md, .claude/sweap-run.md, .claude/audit-debt-*.flag, .claude/sweap-merge/) — this is a working-tree edit in the main checkout; commit it with your next ordinary PR (it fires once per newly-added rule, never in steady state). "
     fi
+    heal_msg="${heal_msg}${settings_msg}"
     [ "${#healed_workflows[@]}" -gt 0 ] && heal_msg="${heal_msg}sweap: installed/updated sweap-managed CI controls in this repo — $(printf '%s, ' "${healed_workflows[@]}" | sed 's/, $//'). These are sweap-managed (vendored so CI needs no cross-repo access) and are kept in lockstep with the plugin's copies, so this fires on first install and whenever the plugin's copy of a file changes (each file's \`# Code generated by sweap <version> (source sha256:…)\` line says which plugin version and content you now have). It is skipped on /compact and /clear and runs on startup/resume/fork. ACTION NEEDED: review the diff and commit it. If .github/scripts/ci-lane.sh is among them and your ci.yml predates the roadmap-only lane, add the template's 'changes' job and gate ONLY e2e on it (templates/.github/workflows/ci.yml) — never lint/typecheck/test/audit-gate. Enforcement then depends on your GitHub plan: on a PRIVATE FREE repo, rulesets/branch protection are unavailable (the API 403s), and the enforcement is pre-merge-gate.sh, which already refuses any 'gh pr merge' whose check rollup is not fully green — audit-gate included — so no further setup is possible or needed; note a merge from the GitHub web UI bypasses that hook and is caught only after the fact by post-merge-auditcheck.sh. On a public/org/Pro repo, additionally make 'audit-gate' a REQUIRED check pinned to the GitHub Actions app (id 15368), never 'any source'. Optional: add \`.github/scripts/*.sh linguist-generated\` and \`.github/workflows/audit-gate.yml linguist-generated\` to .gitattributes so GitHub collapses these diffs in PRs (leave it off if you want to review gate changes in PR diffs). See the playbook's 'Enforcing the audit gate in CI' section."
     if [ "$have_jq" = "1" ]; then
       jq -n --arg ctx "$heal_msg" '{hookSpecificOutput:{hookEventName:"SessionStart",additionalContext:$ctx}}' 2>/dev/null || printf '%s\n' "$heal_msg"
@@ -309,6 +552,9 @@ if [ "$merged_claude_md" = "1" ]; then
 fi
 if [ "$gitignore_action" != "unchanged" ]; then
   msg="$msg .gitignore: $gitignore_action sweap runtime ignore rules (.claude/main-red-*.flag, .claude/sweap-board.md, .claude/sweap-run.md, .claude/audit-debt-*.flag, .claude/sweap-merge/)."
+fi
+if [ -n "$settings_msg" ]; then
+  msg="$msg .claude/settings.json: $settings_action. $settings_msg"
 fi
 
 if [ "${#healed_workflows[@]}" -gt 0 ]; then
