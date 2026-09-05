@@ -51,10 +51,18 @@
 # merge to defeat its own safety control.
 #
 # ACCEPTED FALSE-POSITIVES: because the greedy scan ignores structure, a command
-# that merely MENTIONS the words in order (a commit message, an `echo`, or an
-# unrelated `gh pr view … && … merge …`) is flagged merge-related and, being not a
-# pristine simple merge, is DENIED-recoverable. This is deliberate: over-blocking
-# only forces a plain re-issue; under-detecting would be a silent hole.
+# that merely MENTIONS the words in order (an `echo`, or an unrelated `gh pr view
+# … && … merge …`) is flagged merge-related and, being not a pristine simple
+# merge, is DENIED-recoverable. This is deliberate: over-blocking only forces a
+# plain re-issue; under-detecting would be a silent hole.
+#
+# The ONE mention that is NOT a false positive worth paying for is PROSE THE
+# SHELL NEVER EXECUTES — a PR body, a PR title, a commit message, a heredoc body.
+# Those are redacted before the greedy scan runs (see `_redact_prose` below), so
+# `gh pr create --body "…this merges…"` and `git commit -m "…git push…"` are
+# ordinary no-ops rather than something the operator has to reword or move into a
+# file. Prose carrying a command substitution or backticks is still visible, and
+# still denies.
 
 # shellcheck shell=bash
 # shellcheck disable=SC2034  # MC_* / _mc_* are the output contract + walker state, read across functions
@@ -83,6 +91,136 @@ _mc_related_scan() {
     MC_MERGE_RELATED=1
     MC_RELATED_COUNT=999999
   fi
+}
+
+# --- prose redaction (false-positive relief for the greedy scans) ----------------
+# The greedy scans above are deliberately structure-agnostic, so a command that
+# merely MENTIONS the trigger words is flagged and (not being a pristine merge/
+# push) denied. That is the right trade for shell structure — but a PR body, a PR
+# title or a commit message legitimately talks about merging and pushing, and
+# `gh pr create --body "…merge…"` is a hot-path command, not an edge case. Being
+# denied it forces the operator to reword prose to appease a parser.
+#
+# So before the greedy scans run, two REDACTIONS remove text that the shell will
+# never execute:
+#
+#   1. HEREDOC BODIES (`gh pr create --body-file - <<'EOF' … EOF`, and the
+#      `--body "$(cat <<'EOF' … EOF)"` idiom). A heredoc body is stdin data, not
+#      commands. Guards, all fail-closed: the introducing line must not name a
+#      shell/interpreter (`bash`, `sh`, `eval`, `xargs`, `python`… — we never
+#      redact a heredoc that is fed to something that would EXECUTE it), a `<<<`
+#      here-string is skipped, and an UNTERMINATED heredoc abandons redaction
+#      entirely (so a stray `<<WORD` inside prose can never swallow the lines
+#      that follow it).
+#
+#   2. VALUES OF PROSE-CARRYING FLAGS — `-m/--message`, `-b/--body`,
+#      `-F/--body-file`, `-t/--title/--subject`, `--notes` and their attached
+#      `--flag=value` forms — tokenised exactly as the precise parsers tokenise,
+#      so a quoted body is one token and vanishes whole.
+#
+# THE FAIL-CLOSED PROPERTY IS PRESERVED. A value token is redacted ONLY when it
+# cannot become a command: it is dropped only if it contains no `$` and no
+# backtick (so `--body "$(gh pr merge 5)"` stays fully visible to the scan), it is
+# never dropped when it sits in command position or is a control operator, and it
+# is never dropped when it is exactly one of the trigger words (`gh`/`git`/`pr`/
+# `merge`/`push`) — which is what keeps the redactor from ever hiding a triple the
+# PRECISE parser would still have recognised. If the string cannot be tokenised,
+# redaction is abandoned and the raw greedy result stands.
+#
+# RESIDUAL (documented, accepted): a body containing a command substitution or
+# backticks still trips the trip-wire and is denied recoverably. Pass that prose
+# with `--body-file <path>` — the deny message says so.
+
+# Remove heredoc bodies. Prints the input unchanged when anything is off.
+_redact_heredocs() {
+  case "$1" in *'<<'*) ;; *) printf '%s' "$1"; return 0 ;; esac
+  printf '%s' "$1" | awk '
+    { line[NR] = $0 }
+    hd == 1 {
+      t = $0; sub(/^[ \t]+/, "", t); sub(/[ \t]+$/, "", t)
+      if (t == delim) { hd = 0 } else { drop[NR] = 1 }
+      next
+    }
+    {
+      if (index($0, "<<") == 0) next
+      if ($0 ~ /<<</) next
+      if ($0 ~ /(^|[^A-Za-z0-9_.\/-])(bash|sh|zsh|ksh|dash|csh|tcsh|fish|eval|source|exec|xargs|ssh|env|python|python3|perl|ruby|node|awk|sed)([^A-Za-z0-9_-]|$)/) next
+      t = $0
+      sub(/^.*<<-?[ \t]*/, "", t)
+      if (match(t, /^[^A-Za-z0-9_]?[A-Za-z_][A-Za-z0-9_]*/) == 0) next
+      delim = substr(t, 1, RLENGTH)
+      sub(/^[^A-Za-z_]/, "", delim)
+      hd = 1
+    }
+    END {
+      # An unterminated heredoc means we mis-read the string: redact nothing.
+      for (i = 1; i <= NR; i++) {
+        if (hd == 0 && (i in drop)) continue
+        print line[i]
+      }
+    }' 2>/dev/null || printf '%s' "$1"
+}
+
+# Drop the values of prose-carrying flags. Prints the redacted string; returns 1
+# (printing nothing) when the string could not be tokenised, so callers keep the
+# raw greedy result and stay fail-closed.
+_redact_prose_values() {
+  local raw="$1" out="" tok tokens
+  raw="${raw//\\$'\n'/ }"
+  raw="${raw//$'\n'/ ; }"
+  raw="$(printf '%s' "$raw" | sed -E 's/(\|\||&&|;|\||&)/ \1 /g')"
+  tokens="$(printf '%s' "$raw" | xargs -n1 printf '%s\n' 2>/dev/null)" || return 1
+
+  local expect_cmd=1 drop=0
+  while IFS= read -r tok; do
+    [ -n "$tok" ] || continue
+    case "$tok" in
+      ";" | "&&" | "||" | "|" | "&" | "|&")
+        drop=0; expect_cmd=1
+        out="${out}${tok}"$'\n'; continue ;;
+    esac
+    if [ "$expect_cmd" = "1" ]; then
+      # A command-position token is NEVER a flag value (this is what keeps a real
+      # `gh`/`git` visible however the previous command ended).
+      case "$tok" in
+        [A-Za-z_]*=*) out="${out}${tok}"$'\n'; continue ;;                  # VAR=val prefix
+        command | builtin | exec | env | sudo | nice | nohup | time | timeout)
+          out="${out}${tok}"$'\n'; continue ;;                              # wrappers
+      esac
+      expect_cmd=0; drop=0
+      out="${out}${tok}"$'\n'; continue
+    fi
+    if [ "$drop" = "1" ]; then
+      drop=0
+      case "$tok" in
+        *'$'* | *'`'*) ;;                       # could still run a command — keep it
+        gh | git | pr | merge | push) ;;        # a bare trigger word — keep it
+        *) continue ;;                          # prose: redact
+      esac
+      out="${out}${tok}"$'\n'; continue
+    fi
+    case "$tok" in
+      -m | --message | -b | --body | -F | --body-file | -t | --title | --subject | --notes | --note)
+        drop=1 ;;
+      --message=* | --body=* | --body-file=* | --title=* | --subject=* | --notes=* | --note=*)
+        case "$tok" in
+          *'$'* | *'`'*) ;;
+          *) continue ;;
+        esac ;;
+    esac
+    out="${out}${tok}"$'\n'
+  done <<EOF
+$tokens
+EOF
+  printf '%s' "$out"
+}
+
+# The string the greedy scans actually read: heredoc bodies and prose flag values
+# removed. Returns 1 (printing nothing) when redaction could not be done safely.
+_redact_prose() {
+  local hd
+  hd="$(_redact_heredocs "$1")"
+  _redact_prose_values "$hd"
 }
 
 # Record the gh invocation whose positionals were collected into _mc_p0/1/2
@@ -121,6 +259,18 @@ parse_merge_command() {
   # GREEDY first, on the untouched raw string (structure-agnostic). If the
   # gh->pr->merge word sequence isn't even present, it cannot be a merge → no-op.
   _mc_related_scan "$raw"
+  # It IS present — but it may be present only in prose the shell never executes
+  # (a PR body, a commit message, a heredoc). Re-scan with those redacted; the
+  # redaction is skipped when it cannot be done safely, and never when the greedy
+  # counter itself was unavailable (the 999999 sentinel must keep failing closed).
+  if [ "$MC_MERGE_RELATED" = "1" ] && [ "$MC_RELATED_COUNT" != "999999" ]; then
+    local _mc_red
+    if _mc_red="$(_redact_prose "$raw")" && [ -n "$_mc_red" ]; then
+      MC_MERGE_RELATED=0
+      MC_RELATED_COUNT=0
+      _mc_related_scan "$_mc_red"
+    fi
+  fi
   [ "$MC_MERGE_RELATED" = "1" ] || return 0
 
   # --- PRECISE parse (only to recognise the pristine simple form) ---------------
@@ -286,6 +436,15 @@ parse_push_command() {
   [ -n "$raw" ] || return 0
 
   _pc_related_scan "$raw"
+  # Same prose re-scan as parse_merge_command (see _redact_prose): a commit
+  # message or PR body that talks about pushing is not a push.
+  if [ "${PC_RELATED_COUNT:-0}" != "0" ] && [ "${PC_RELATED_COUNT:-0}" != "999999" ]; then
+    local _pc_red
+    if _pc_red="$(_redact_prose "$raw")" && [ -n "$_pc_red" ]; then
+      PC_RELATED_COUNT=0
+      _pc_related_scan "$_pc_red"
+    fi
+  fi
 
   # Cheap pre-filter: if the literal word `push` is nowhere in the string the
   # precise walker cannot find one either (it only recognises the token `push`).

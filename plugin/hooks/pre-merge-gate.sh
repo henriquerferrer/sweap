@@ -72,7 +72,10 @@
 # as the merge branch: greedy trip-wire + precise parse (lib-merge-parse.sh,
 # parse_push_command) must agree, or the push is denied recoverably. Accepted
 # over-blocks (re-issue the push plainly): a push wrapped in if/$()/bash -c, an
-# `echo "git push …"` mention, a `-C` path with spaces, a push after `cd`.
+# `echo "git push …"` mention, a `-C` path with spaces, a push after `cd`. Prose
+# the shell never runs — a PR body/title, a commit message, a heredoc body — is
+# redacted before the trip-wire (lib-merge-parse.sh, _redact_prose), so talking
+# about pushing is not pushing.
 # Item-branch pushes — the hot path (`git push -u origin <item>`,
 # `--force-with-lease` after a rebase, `--delete <item>`, tags, `main:<item>`)
 # — pass untouched. Override: SWEAP_PUSH_GATE=off is honoured ONLY from the
@@ -374,7 +377,7 @@ if [ "$IS_PUSH" = "1" ]; then
   if [ "${PC_PARSE_ERR:-0}" = "1" ] \
      || [ "${PC_PUSH_COUNT:-0}" != "${PC_RELATED_COUNT:-0}" ] \
      || [ "${PC_PUSH_COUNT:-0}" = "0" ]; then
-    emit_deny "push-gate: this command is push-related but is not a plain 'git push <remote> <refspec>' the gate can resolve (wrapped in if/while/\$()/backticks, the words appear elsewhere, or it could not be tokenised). Failing CLOSED — re-issue each push plainly on its own line."
+    emit_deny "push-gate: this command is push-related but is not a plain 'git push <remote> <refspec>' the gate can resolve (wrapped in if/while/\$()/backticks, the words appear elsewhere, or it could not be tokenised). Failing CLOSED — re-issue each push plainly on its own line. If the words are only PROSE: values of --body/-b, --body-file/-F, --title/-t, --subject, -m/--message and heredoc bodies are already exempt, so what tripped this is prose carrying \$(…) or backticks — put that text in a file and pass it with --body-file/-F."
     exit 0
   fi
 
@@ -454,7 +457,7 @@ if [ "${MC_PARSE_ERR:-0}" = "1" ] \
    || [ "${MC_UNPARSED:-0}" -gt 0 ] \
    || [ "${MC_MERGE_COUNT:-0}" != "${MC_RELATED_COUNT:-0}" ] \
    || [ -z "$MC_PRS" ]; then
-  emit_deny "merge-gate: this command is merge-related but is NOT a pristine 'gh pr merge <n>' the gate can verify — it is wrapped (if/while/for/subshell/\$()/backticks), has extra/missing/ambiguous arguments, or could not be cleanly tokenised. Failing CLOSED. Re-issue each merge plainly on its own line: 'gh pr merge <n> --squash'."
+  emit_deny "merge-gate: this command is merge-related but is NOT a pristine 'gh pr merge <n>' the gate can verify — it is wrapped (if/while/for/subshell/\$()/backticks), has extra/missing/ambiguous arguments, or could not be cleanly tokenised. Failing CLOSED. Re-issue each merge plainly on its own line: 'gh pr merge <n> --squash'. If the words are only PROSE: values of --body/-b, --body-file/-F, --title/-t, --subject, -m/--message and heredoc bodies are already exempt, so what tripped this is prose carrying \$(…) or backticks — put that text in a file and pass it with --body-file/-F."
   exit 0
 fi
 

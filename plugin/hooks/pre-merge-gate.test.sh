@@ -522,10 +522,67 @@ out="$(run_gate failure 'echo "remember to gh pr merge 7 after review"')"
 if is_deny "$out" && printf '%s' "$(reason "$out")" | grep -qi 'pristine'; then
   ok "M2a) echo mentioning phrase -> deny (accepted over-block)"
 else bad "M2a) echo mention -> deny" "out: $out"; fi
+
+# (M2b-M2j) PROSE THE SHELL NEVER RUNS is redacted before the greedy scan
+# (lib-merge-parse.sh, _redact_prose), so a PR body/title/commit message that
+# talks about merging is an ordinary no-op — the operator never has to reword
+# prose or move it into a file to appease the parser. The cases below pin BOTH
+# halves: the relief, and that redaction can never hide a merge that would run.
 out="$(run_gate failure 'git commit -m "document gh pr merge workflow"')"
+if [ -z "$out" ]; then ok "M2b) commit message mentioning phrase -> no-op"
+else bad "M2b) commit message -> no-op" "unexpected: $out"; fi
+
+out="$(run_gate failure 'gh pr create --title "gh pr merge gate" --body "this merges the lease before we gh pr merge anything"')"
+if [ -z "$out" ]; then ok "M2c) PR title+body mentioning phrase -> no-op"
+else bad "M2c) PR body -> no-op" "unexpected: $out"; fi
+
+out="$(run_gate failure "gh pr create --body-file - <<'EOF'
+this merges the lease, so gh pr merge waits
+EOF")"
+if [ -z "$out" ]; then ok "M2d) heredoc body (--body-file -) -> no-op"
+else bad "M2d) heredoc body -> no-op" "unexpected: $out"; fi
+
+out="$(run_gate failure "gh pr create --title x --body \"\$(cat <<'EOF'
+this merges the lease, so gh pr merge waits
+EOF
+)\"")"
+if [ -z "$out" ]; then ok "M2e) --body \"\$(cat <<EOF …)\" idiom -> no-op"
+else bad "M2e) cat-heredoc body -> no-op" "unexpected: $out"; fi
+
+# A body that could still RUN something stays visible: fail closed, and say how.
+out="$(run_gate failure 'gh pr create --body "$(gh pr merge 5)"')"
+if is_deny "$out" && printf '%s' "$(reason "$out")" | grep -q -- '--body-file'; then
+  ok "M2f) body carrying \$(…) -> deny, names --body-file"
+else bad "M2f) \$(…) body -> deny" "out: $out"; fi
+
+# Redaction must never swallow a merge that really runs alongside the prose.
+out="$(run_gate failure 'gh pr comment 42 --body "merging this now" && gh pr merge 42 --squash')"
+if is_deny "$out" && printf '%s' "$(reason "$out")" | grep -q '#42'; then
+  ok "M2g) prose body + real merge -> still verifies #42"
+else bad "M2g) prose + real merge" "out: $out"; fi
+
+out="$(run_gate failure "cat <<'EOF'
+prose about gh pr merge
+EOF
+gh pr merge 42 --squash")"
+if is_deny "$out" && printf '%s' "$(reason "$out")" | grep -q '#42'; then
+  ok "M2h) heredoc prose + real merge -> still verifies #42"
+else bad "M2h) heredoc + real merge" "out: $out"; fi
+
+# A heredoc fed to a SHELL is executable, so it is never redacted.
+out="$(run_gate failure "bash <<'EOF'
+gh pr merge 42 --squash
+EOF")"
+if is_deny "$out"; then ok "M2i) heredoc fed to bash -> still gated"
+else bad "M2i) bash heredoc -> gated" "out: $out"; fi
+
+# An UNTERMINATED heredoc means we mis-read the string: redact nothing (a stray
+# `<<WORD` in prose must not swallow the lines after it).
+out="$(run_gate failure 'echo "see the <<EOF marker"
+echo "remember to gh pr merge 7 after review"')"
 if is_deny "$out" && printf '%s' "$(reason "$out")" | grep -qi 'pristine'; then
-  ok "M2b) git commit mentioning phrase -> deny (accepted over-block)"
-else bad "M2b) commit mention -> deny" "out: $out"; fi
+  ok "M2j) unterminated <<EOF -> redaction abandoned, still deny"
+else bad "M2j) unterminated heredoc" "out: $out"; fi
 
 echo "== chained multi-PR merges in one Bash call (every merge must be verified) =="
 CHAIN='gh pr merge 42 --squash && gh pr merge 43 --squash'
@@ -783,6 +840,11 @@ expect_allow "p16) commit message mentioning push -> no-op"              'git co
 expect_allow "p17) git log --grep push -> no-op"                         'git log --grep push'
 expect_allow "p18) git log main -> no-op"                                'git log main'
 expect_allow "p19) echo push -> no-op"                                   'echo push'
+expect_allow "p19b) PR body mentioning a push -> no-op"                   'gh pr create --body "run git push origin main once CI is green"'
+expect_allow "p19c) commit message naming the push gate -> no-op"         'git commit -m "fix: git push origin main is denied by the gate"'
+expect_allow "p19d) heredoc body mentioning a push -> no-op"              "gh pr create --body-file - <<'EOF'
+then git push origin main
+EOF"
 expect_allow "p20) gh pr merge 42 green -> merge branch unchanged"       'gh pr merge 42 --squash'
 out="$(SWEAP_PUSH_GATE=off run_push 'git push origin main')"
 if [ -z "$out" ]; then ok "p21) SWEAP_PUSH_GATE=off in hook env (no project file) -> allow"
@@ -798,6 +860,8 @@ expect_deny "q5) origin +main -> deny"                   'git push origin +main'
 expect_deny "q6) -f origin main -> deny"                 'git push -f origin main' "$B"
 expect_deny "q7) --force-with-lease origin main -> deny (flag must not eat origin)" 'git push --force-with-lease origin main' "$B"
 expect_deny "q8) origin feat/x:main -> deny"             'git push origin feat/x:main' "$B"
+expect_deny "q8b) prose body + real push to main -> deny" 'gh pr comment 5 --body "pushing this now" && git push origin main' "$B"
+expect_deny "q8c) body carrying \$(git push origin main) -> deny" 'gh pr create --body "$(git push origin main)"' "--body-file"
 expect_deny "q9) origin :main -> deny"                   'git push origin :main' "$B"
 expect_deny "q10) origin --delete main -> deny"          'git push origin --delete main' "$B"
 expect_deny "q11) origin master -> deny"                 'git push origin master' "base branch 'master'"
