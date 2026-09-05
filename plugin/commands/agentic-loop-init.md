@@ -122,13 +122,15 @@ script reported (these are the fill-ins the script cannot do for you):
      section (or generate them via the `agentic-ci` skill).
    - Generate a `CLAUDE_CODE_OAUTH_TOKEN` repo secret (`claude setup-token`,
      then `gh secret set`) so `.github/workflows/claude-review.yml` runs.
-     That workflow is project-owned (never overwritten by this command), so
-     when the plugin's template changes its "Enforce reviewer verdict" step —
-     e.g. the exact `claude[bot]` + `user.type == Bot` identity check — an
-     existing repo picks it up only by copying the updated step into its own
-     `.github/workflows/claude-review.yml` in a one-off PR. If the reviewer
-     posts under a custom GitHub App, set repo variable
-     `CLAUDE_REVIEWER_LOGIN` to that app's `<slug>[bot]`.
+     That workflow is SWEAP-MANAGED as of 0.20.0 — the scaffold keeps it in
+     lockstep with the plugin's copy, so a fix to the verdict gate reaches this
+     repo on the next session as an ordinary working-tree diff to review and
+     commit. Do not hand-edit it; it has three seams instead:
+     `RUNNER_LABELS` (repo variable, a JSON array — use the full label fence,
+     e.g. `["self-hosted","general"]`, not a single label), `CLAUDE_REVIEWER_LOGIN`
+     (repo variable, this repo's `<slug>[bot]` if the reviewer posts under a
+     custom GitHub App), and a `review.focus` line in CLAUDE.md's
+     `## sweap config` block for project-specific review priorities.
    - Write the first milestone with `/roadmap` (one file per item under
      `roadmap/`; the `ROADMAP.md` index lists milestones only).
 

@@ -233,6 +233,18 @@ sync_managed_all() {
   # Only for a repo that already uses GitHub Actions — never create .github itself.
   if [ "$sync_allowed" = "1" ] && [ -d "$proj/.github/workflows" ] && [ -n "$plugin_root" ] && [ -d "$tmpl" ]; then
     sync_managed "$tmpl/.github/workflows/audit-gate.yml" ".github/workflows/audit-gate.yml"
+    # The reviewer, MANAGED SINCE 0.20.0. It was copy-if-absent for six months,
+    # which meant a fix reached only repos that did not yet run a reviewer:
+    # Consumer A and consumer B both carried hand-edited variants, both drifted, and when
+    # both hit the same no-verdict defect (2026-09-02) there was nowhere to fix
+    # it once. Project-specific content that used to be hand-edited into the
+    # prompt now has seams — the RUNNER_LABELS and CLAUDE_REVIEWER_LOGIN repo
+    # variables, and a `review.focus` line in CLAUDE.md's `## sweap config`.
+    # Unconditional, like audit-gate.yml and unlike the playbook below: without
+    # the CLAUDE_CODE_OAUTH_TOKEN secret every step self-skips and the job is a
+    # green no-op, so installing it into a repo that does not want a reviewer
+    # costs that repo nothing.
+    sync_managed "$tmpl/.github/workflows/claude-review.yml" ".github/workflows/claude-review.yml"
     sync_managed "${plugin_root%/}/hooks/audit-gate.sh"   ".github/scripts/audit-gate.sh"
     sync_managed "${plugin_root%/}/hooks/roadmap-lint.sh" ".github/scripts/roadmap-lint.sh"
     # The roadmap-only lane classifier: ci.yml's `changes` job runs this vendored

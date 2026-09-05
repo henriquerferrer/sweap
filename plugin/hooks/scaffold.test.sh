@@ -37,6 +37,7 @@ mk_fixture() { # mk_fixture <dir> ; creates <dir>/proj and <dir>/plugin
   printf '# Project\n\n## sweap config\n```\nverify.e2e: true\n```\n' > "$d/proj/CLAUDE.md"
   mkdir -p "$d/plugin/.claude-plugin"; printf '{"version":"9.9.9"}\n' > "$d/plugin/.claude-plugin/plugin.json"
   printf 'name: audit-gate\non: [pull_request]\njobs: {}\n' > "$d/plugin/templates/.github/workflows/audit-gate.yml"
+  printf 'name: Claude Review\non: [pull_request]\njobs: {}\n' > "$d/plugin/templates/.github/workflows/claude-review.yml"
   for s in audit-gate roadmap-lint ci-lane; do
     printf '#!/usr/bin/env bash\necho %s\n' "$s" > "$d/plugin/hooks/$s.sh"
   done
@@ -506,6 +507,46 @@ if command -v just >/dev/null 2>&1; then
 else
   echo "  SKIP  n: just is not installed"
 fi
+
+# --- o. the reviewer workflow is MANAGED, not project-owned -------------------
+# Regression guard for 0.20.0. claude-review.yml was copy-if-absent for six
+# months, so a fix to the verdict gate reached only repos that did not yet run a
+# reviewer — consumer A and consumer B each drifted into a hand-edited variant and both
+# hit the same no-verdict defect with nowhere to fix it once. If someone ever
+# drops it back out of sync_managed_all, these fail.
+O="$WORK/o"; mk_fixture "$O"; OP="$O/proj"
+out="$(run_scaffold "$O" '{"source":"startup"}')"
+ok   "o: fresh repo gets claude-review.yml" test -f "$OP/.github/workflows/claude-review.yml"
+ok   "o: it is stamped like every managed file" grep -qE "$RE" <(sed -n 1p "$OP/.github/workflows/claude-review.yml")
+ok   "o: stamp carries the SOURCE hash" grep -qF "sha256:$(hash_of "$O/plugin/templates/.github/workflows/claude-review.yml")" <(sed -n 1p "$OP/.github/workflows/claude-review.yml")
+ok   "o: it is NOT executable" test ! -x "$OP/.github/workflows/claude-review.yml"
+want "o: body follows the 3-line banner" 'name: Claude Review' "$(sed -n 4p "$OP/.github/workflows/claude-review.yml")"
+# the whole point: a plugin-side fix reaches a consumer that already has a copy
+printf 'name: Claude Review\non: [pull_request]\njobs: {fixed: {}}\n' > "$O/plugin/templates/.github/workflows/claude-review.yml"
+out="$(run_scaffold "$O" '{"source":"startup"}')"
+ok   "o: a plugin-side fix rewrites an EXISTING consumer copy" grep -q 'fixed' "$OP/.github/workflows/claude-review.yml"
+ok   "o: stdout names claude-review.yml" grep -q 'claude-review\.yml' <<< "$out"
+# and a hand-edit does not survive - that is what "customize via the seams" buys
+printf 'runs-on: [self-hosted, general]\n' >> "$OP/.github/workflows/claude-review.yml"
+out="$(run_scaffold "$O" '{"source":"startup"}')"
+ok   "o: a local hand-edit is overwritten" test "$(grep -c 'self-hosted' "$OP/.github/workflows/claude-review.yml")" -eq 0
+
+# --- o2. the REAL template keeps its customization seams ---------------------
+# Managing the file only works because everything a consumer used to hand-edit
+# has a seam. If a seam regresses, the next sync silently clobbers a consumer's
+# runner fence - which on consumer A put a 5-9 min job on the e2e runner.
+RT="$(cd "$HERE/.." && pwd)/templates/.github/workflows/claude-review.yml"
+ok   "o2: runs-on reads RUNNER_LABELS as JSON" grep -q "fromJSON(vars.RUNNER_LABELS || '\[\"ubuntu-24.04\"\]')" "$RT"
+# Only the seam may set runs-on. A literal label anywhere on that line would be
+# a fence this sync then imposes on every consumer. (The header comment DOES
+# name ["self-hosted","general"] as the example — that is documentation, so this
+# checks the runs-on line itself, not the file.)
+want "o2: exactly one runs-on line" 1 "$(grep -c '^[[:space:]]*runs-on:' "$RT")"
+ok   "o2: no literal label on the runs-on line" test "$(grep '^[[:space:]]*runs-on:' "$RT" | grep -c 'self-hosted\|ubuntu-24.04.\{0,3\}$')" -eq 0
+ok   "o2: reviewer login stays overridable" grep -q 'vars.CLAUDE_REVIEWER_LOGIN' "$RT"
+ok   "o2: the prompt reads review.focus" grep -q 'review.focus' "$RT"
+ok   "o2: the reviewer step is addressable for its transcript" grep -q 'id: reviewer' "$RT"
+ok   "o2: the transcript uploads even on failure" grep -q "if: always() && steps.token.outputs.present == 'true'" "$RT"
 
 printf 'RESULT: %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

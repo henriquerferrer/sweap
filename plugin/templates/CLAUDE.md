@@ -18,6 +18,7 @@ backlog.prefix:   F                        # one or more comma-separated prefixe
 audit.lenses:     default
 audit.baseline:   []
 review.dimensions: security, ui, migration
+review.focus:     # project-specific things the PR reviewer must check, in this project's own vocabulary (helper names, invariants, entry points). Read by .github/workflows/claude-review.yml, which is sweap-managed — this line is where project content goes instead of into the workflow.
 # ui.contract:    docs/ui/surface-contract.md  # uncomment for UI-heavy projects — see ui-design skill §2
 notify:           push
 turns.default:    160
