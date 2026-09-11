@@ -6,7 +6,9 @@
 # reviewer approved").
 #
 # The jq program is EXTRACTED FROM the workflow file rather than copied here, so
-# these cases test the text that actually ships. Fixtures stand in for the three
+# these cases test the text that actually ships (since 0.21.0 it lives inside
+# the read-verdict.sh heredoc the workflow writes; the extraction keys on the
+# `jq -rs ... --arg since "$head_ts" '` opening line and the closing `'`). Fixtures stand in for the three
 # GitHub API reads (issue comments, review bodies, inline review comments), each
 # an object of {t: timestamp, u: author login, ty: user.type, b: body}.
 #
@@ -18,7 +20,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 YML="$HERE/../templates/.github/workflows/claude-review.yml"
 
 PROG=$(awk '
-  /\| jq -rs .*--arg since/ { inprog=1; sub(/.*--arg since "\$head_ts" \x27/, ""); }
+  /jq -rs .*--arg since/ { inprog=1; sub(/.*--arg since "\$head_ts" \x27/, ""); }
   inprog {
     if ($0 ~ /\x27$/ && !/--arg since/) { sub(/\x27$/, ""); print; exit }
     print
