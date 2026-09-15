@@ -151,11 +151,36 @@ trivial (this flatness is a format contract, not a style preference):
     - **Interfaces:** <contracts produced/consumed — exact names/signatures wherever two concurrent items share one>
     - **Out of scope:** <what this item deliberately does not do>
 
-    ## Acceptance (e2e)
-    - <observable behavior a test asserts>
+    ## Acceptance
+    - <observable behavior a test asserts, and the LAYER that asserts it>
 
     ## Notes
     <optional: "> ANSWER:" threads, UNBLOCKED/CARRIED annotations, links>
+
+**Authoring `## Acceptance` — each criterion names its LAYER.** The heading is
+`## Acceptance`; `roadmap-lint.sh` matches it as a prefix, so
+`## Acceptance (e2e)` and `## Acceptance (vitest + e2e)` are equally valid and
+no existing item has to be rewritten. What changed is the default reading: the
+bare `(e2e)` used to be the only spelling, and an acceptance heading is a strong
+nudge — so a pure rule check that a cheap route-level test asserts perfectly well
+got written as a browser spec because the heading said `e2e`.
+
+The line to draw is what the criterion is ABOUT, not where the code lives:
+
+- **A rule** — a permission, a tenancy scope, a 404-vs-403, a state machine's
+  legal transitions, a pure function's contract — is asserted at the layer that
+  owns the rule: a test against the route handler or lib function. It is no less
+  authoritative for being cheap; it is usually *more* precise, because it can put
+  the system in states a browser cannot reach.
+- **A journey, an a11y/axe scan, a focus or geometry assertion, or a
+  request-ordering race** is asserted in the browser. These are claims about what
+  a person encounters, and only a real page can settle them.
+
+`verify.e2e` remains **the authoritative gate** and that is unchanged — it runs
+the project's FULL automated suite (unit + integration + e2e), so a criterion
+written as a route test is gated exactly as hard as one written as a browser
+spec. Naming the layer is about writing the cheapest test that can actually fail
+for its own subject, never about which tests the gate runs.
 
 **Authoring `lane:`** — make a lane as narrow as the real file overlap: two
 items share one only if they literally touch the same files. An over-broad lane
@@ -243,9 +268,13 @@ One feature = one session. Target 10–25 turns per feature; consistently >30 me
 the item is scoped too big — split it.
 
 1. **Brainstorm + plan** (plan mode): pin down the data model, access-control
-   boundaries, permissions per role, and e2e acceptance criteria. Write the spec
+   boundaries, permissions per role, and the acceptance criteria — each naming
+   the layer that asserts it (see **Authoring `## Acceptance`**). Write the spec
    to `docs/superpowers/specs/`, the plan to `docs/superpowers/plans/`.
-2. **Implement with TDD:** write e2e/integration tests first — they are the spec.
+2. **Implement with TDD:** write the acceptance tests first — they are the spec.
+   Each goes at the layer its criterion named: a rule check against the route
+   handler or lib function, a journey / a11y scan / focus or geometry assertion /
+   ordering race in the browser.
    **Never modify tests to make them pass**; fix the root cause. Iterate until the
    verify gates (`verify.typecheck`, `verify.lint`, `verify.e2e`) are all green —
    locally when the project's services are available, else verified by CI on the

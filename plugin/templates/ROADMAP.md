@@ -5,7 +5,7 @@ Direction-level view only. **Backlog items live one file each under
 playbook's **Backlog format** section for the item schema (frontmatter:
 `id`, `title`, `status`, `depends_on`, `review-dimensions`, optional `lane` /
 `followup_of` / `premise` / `blocked` / `handoff`; body: `## Spec` +
-`## Acceptance (e2e)` — or `## Hand-off` for a `status: attended` item, a
+`## Acceptance` — or `## Hand-off` for a `status: attended` item, a
 planned human hand-off that is never dispatched to an agent). Status truth is
 the item files; this index never carries per-item status. Dropped items move to
 `roadmap/archive/`.

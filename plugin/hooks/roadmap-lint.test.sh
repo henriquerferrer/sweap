@@ -65,6 +65,58 @@ lane: auth
 '
 check "valid todo item passes (item dep resolves; bare milestone dep allowed)" 0 "$WORK/F1.2.md"
 
+# THE ACCEPTANCE HEADING TAKES ANY PARENTHETICAL, and that is a CONTRACT rather than an
+# accident of `section()`'s prefix match. The template heading is now the bare
+# `## Acceptance`, with each criterion naming the layer that asserts it — but every item
+# already authored says `## Acceptance (e2e)`, and an item that splits its criteria across
+# layers wants to say so in the heading. All three spellings must lint, or the vocabulary
+# change silently invalidates the whole existing backlog.
+for heading in '## Acceptance' '## Acceptance (e2e)' '## Acceptance (vitest + e2e)'; do
+  mk F1.7.md "---
+id: F1.7
+title: acceptance heading variants
+status: todo
+depends_on: []
+review-dimensions: []
+---
+
+# F1.7 — acceptance heading variants
+
+## Spec
+- **Surface:** src/a.ts
+- **Interfaces:** none
+- **Out of scope:** everything else
+
+$heading
+- a therapist without the grant gets a 404, asserted against the route handler
+"
+  check "todo item passes with heading '$heading'" 0 "$WORK/F1.7.md"
+done
+
+# …and the guard is not vacuous: the section must still be PRESENT and non-empty. A
+# parenthetical does not buy an empty Acceptance.
+mk F1.8.md '---
+id: F1.8
+title: acceptance heading present but empty
+status: todo
+depends_on: []
+review-dimensions: []
+---
+
+# F1.8 — acceptance heading present but empty
+
+## Spec
+- **Surface:** src/a.ts
+- **Interfaces:** none
+- **Out of scope:** everything else
+
+## Acceptance (vitest + e2e)
+
+## Notes
+nothing asserted
+'
+check "an empty Acceptance still fails, parenthetical or not" 1 "$WORK/F1.8.md"
+
 mk nofm.md '# F9.9 — no frontmatter
 
 ## Spec
