@@ -943,6 +943,15 @@ export async function buildState(projectDir, { git, gh, audit = null, stranded: 
   const index = readMilestoneIndex(projectDir, backlogFile);
   const runFile = readRunFile(projectDir);
   if (items.some((i) => i.malformed)) notes.push("one or more item files are malformed (shown flagged)");
+  // A note whose `kind:` is neither gap nor direction is promoted by nothing and
+  // listed by nothing, so it vanishes in an inbox whose one job is not to lose
+  // things. Consumer A #290/#292 (2026-09-09): two notes hand-written on a code PR
+  // against the playbook's "never write the file by hand" (the CLI writer has
+  // always rejected a bad kind) sat invisible until someone happened to look.
+  // Surfaced here, in the channel the page header and /milestone already read,
+  // and never coerced (see loadDiscovered): the file is wrong, not its label.
+  const unknownKind = discovered.filter((d) => d.kind === "unknown").length;
+  if (unknownKind) notes.push(`${unknownKind} discovered note(s) carry a kind neither /milestone nor /roadmap reads — set kind: to gap or direction (the sweap-note writer would have refused it; the file was written by hand)`);
   if (items.length === 0) notes.push(`no backlog items found under ${backlogDir}`);
   const { frontier, attended, blocked, backlog, edges } = deriveBacklog(items);
   const byId = new Map(items.map((i) => [i.id, i]));

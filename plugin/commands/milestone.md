@@ -111,10 +111,14 @@ is an item id):
    `discovered/archive/` with `promoted_to:` appended, create-only, so a re-run
    can never clobber the record.
 
-Notes with no resolvable target, and every `kind: direction` note, are NOT
+Notes with no resolvable target, every `kind: direction` note, and every note
+the board lib reports as `kind: unknown` (a `kind:` that is neither gap nor
+direction — the file was written by hand against the playbook's rule, since the
+`sweap-note` writer refuses it; the board card's notes count them) are NOT
 promoted here — list them alongside the hand-offs and blocked questions so the
 human sees them at kickoff, and leave them for `/roadmap` (direction is that
-command's loop, not this one's). Land the promotions as ONE PR,
+command's loop, not this one's; an unknown kind is a file to fix, not a lead
+to triage). Land the promotions as ONE PR,
 `chore(backlog): promote <n> discovered item(s)`, through the gate, in a
 worktree like any other: it IS backlog-advancing, so during record-debt it is
 correctly denied — skip promotion, say so, and let the record land first. Merge

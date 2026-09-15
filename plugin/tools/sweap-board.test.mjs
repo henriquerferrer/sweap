@@ -1110,6 +1110,7 @@ test("buildState exposes discovered and stranded; neither leaks into the backlog
   assert.deepEqual(s.stranded.map((b) => [b.branch, b.stranded]), [["feat/a", false], ["old/b", true]]);
   assert.deepEqual(s.backlog.flatMap((g) => g.items.map((i) => i.id)), ["F1.1"]);
   assert.ok(s.notes.some((n) => /stranded backlog: old\/b carries 1 roadmap file/.test(n)));
+  assert.ok(!s.notes.some((n) => /discovered note\(s\) carry a kind/.test(n)), "an inbox of valid kinds raises no unknown-kind note");
   assert.ok(!s.notes.some((n) => /feat\/a/.test(n)), "a rider on an open PR is shown, not alarmed about");
   // No runner injected (older callers) -> empty, no note.
   const s2 = await buildState(dir, { git: async () => ({ stdout: "", code: 0 }), gh: async () => ({ stdout: "[]", code: 0 }), now: 3 });
@@ -1420,4 +1421,23 @@ test("writeSession rejects a missing milestone, a bad date, and a bogus verdict"
   assert.equal(s.gaps, 0, "a negative count is clamped, not written");
   assert.ok(out.file);
   rmSync(dir, { recursive: true, force: true });
+});
+
+test("a discovered note with an unreadable kind is announced in the card's notes, never coerced and never dropped", async () => {
+  // consumer A #290/#292: two hand-written notes with a kind the triage paths do not
+  // read sat invisible on main. The page header and /milestone both read
+  // `notes`, so one line there is the whole fix.
+  const dir = fixture({
+    "CLAUDE.md": "## sweap config\n",
+    "roadmap/F1.1.md": "---\nid: F1.1\ntitle: x\nstatus: todo\ndepends_on: []\n---\n",
+    "roadmap/discovered/gap-abc123.md": "---\ntitle: A gap\nkind: gap\ndiscovered_from: F1.1\ncreated: 2026-08-03T10:00:00.000Z\n---\n\nwhy\n",
+    "roadmap/discovered/odd-def456.md": "---\ntitle: Odd\nkind: risk\ndiscovered_from: F1.1\ncreated: 2026-08-02T10:00:00.000Z\n---\n\nwhy\n",
+    "roadmap/discovered/odder-789abc.md": "---\ntitle: Odder\ncreated: 2026-08-01T10:00:00.000Z\n---\n\nwhy\n",
+  });
+  const s = await buildState(dir, { git: async () => ({ stdout: "", code: 0 }), gh: async () => ({ stdout: "[]", code: 0 }), stranded: async () => ({ stdout: "", code: 0 }), now: 3 });
+  assert.deepEqual(s.discovered.map((d) => [d.title, d.kind]), [["A gap", "gap"], ["Odd", "unknown"], ["Odder", "unknown"]], "unknown kinds stay unknown and stay listed");
+  const note = s.notes.find((n) => /discovered note\(s\) carry a kind neither \/milestone nor \/roadmap reads/.test(n));
+  assert.ok(note, "the card must announce unknown-kind notes");
+  assert.match(note, /^2 discovered note/, "the count is the number of unreadable notes");
+  assert.match(note, /set kind: to gap or direction/, "the note says what to fix");
 });
