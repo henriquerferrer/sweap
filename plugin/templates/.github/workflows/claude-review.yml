@@ -58,12 +58,16 @@ on:
   pull_request:
     types: [opened, synchronize, ready_for_review]
 
+# READ, not write. The reviewer posts with the App token the action mints
+# from id-token (every one of consumer A's 193 verdicts is authored by
+# claude[bot], never by github-actions[bot]); our own run: steps only read.
+# `actions: read` was granted for CI tools that are only wired through the
+# action's additional_permissions input, which this file does not pass.
 permissions:
   contents: read
-  pull-requests: write
+  pull-requests: read
   issues: read
   id-token: write
-  actions: read
 
 concurrency:
   group: claude-review-${{ github.ref }}
@@ -71,7 +75,13 @@ concurrency:
 
 jobs:
   review:
-    if: ${{ !github.event.pull_request.draft }}
+    # Drafts skip. So does a PR from another repository: on a public repo the
+    # secret is withheld from fork runs and the job would end GREEN having
+    # reviewed nothing; on a private repo with fork runs enabled it would run
+    # fork code with Bash on a fenced self-hosted runner. A skipped only-job
+    # yields a `skipped` run, which the driver classifies as failed and the
+    # merge gate denies — zero runner time, secret present or not.
+    if: ${{ !github.event.pull_request.draft && github.event.pull_request.head.repo.full_name == github.repository }}
     # A JSON ARRAY, not a bare string: `runs-on` has to be able to carry a LABEL
     # FENCE of two or more labels, and vars.RUNNER_LABEL (singular, what ci.yml
     # uses) cannot express one. fromJSON of a defaulted literal keeps the
@@ -103,6 +113,18 @@ jobs:
         point, tenant/ownership boundaries on every query); tests weakened,
         skipped, or modified to pass; CLAUDE.md / playbook convention
         violations.
+        The bar is the same one the in-session reviewer uses. Every finding
+        cites file:line and says what is wrong and why it matters; report
+        only findings you are actually confident in. Use needs-work if there
+        is even one confirmed finding that should block merge: any
+        correctness bug, any access-control gap, any weakened or skipped
+        test, any rationalisation for skipping review. Remarks below that
+        bar (style, naming, a comment that could be clearer, a nice-to-have)
+        go under a "### Advisory" heading in the summary and never change
+        the verdict — write them down, do not let them decide. The
+        PENULTIMATE line of the summary is exactly
+        "Findings: important=N nit=M" (N = findings that meet the needs-work
+        bar, M = advisory remarks); the LAST line is the verdict.
         Do the ENTIRE review in this one turn. You are running inside a
         GitHub Action, which invokes you exactly once and never again: there
         is no later turn, no wake-up, and no background agent that can report
@@ -163,7 +185,7 @@ jobs:
             echo "present=false" >> "$GITHUB_OUTPUT"
             echo "::notice::CLAUDE_CODE_OAUTH_TOKEN not set - skipping Claude review"
           fi
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (node24)
         if: steps.token.outputs.present == 'true'
         with:
           fetch-depth: 0
@@ -178,6 +200,14 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: ${{ env.REVIEW_PROMPT }}
           claude_args: ${{ env.CLAUDE_ARGS }}
+          # Inline comments post live. The action's default buffers them and
+          # classifies them with Haiku after the session — but only when an
+          # ANTHROPIC_API_KEY is present, which the OAuth path never sets, so
+          # on our consumers the buffer just delays every inline comment to
+          # job end and hides a failed post from the reviewer. Off, so the
+          # reviewer sees a post fail (wrong line, not in diff) while it can
+          # still act on it.
+          classify_inline_comments: 'false'
 
       - name: Look for a verdict from the first pass
         id: first
@@ -323,6 +353,7 @@ jobs:
             the earlier run are already on the PR, do not repeat them.
             ${{ env.REVIEW_PROMPT }}
           claude_args: ${{ env.CLAUDE_ARGS }}
+          classify_inline_comments: 'false'
 
       - name: Upload reviewer transcript
         # DIAGNOSTIC, and the reason this file became managed. Observed
@@ -347,7 +378,13 @@ jobs:
         # Two files: pass1.json is the first pass (moved aside above);
         # claude-execution-output.json exists only when the retry pass ran.
         if: always() && steps.token.outputs.present == 'true'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        # A diagnostic must never be the reason a review is red. Observed on
+        # Consumer A (3 of 14 red review runs, 2026-09-08): "Artifact storage
+        # quota has been hit" failed THIS step after a verdict had been
+        # posted, the gate step was skipped, and each hand rerun re-posted an
+        # identical verdict. continue-on-error keeps the gate step running.
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1 (node24)
         with:
           name: reviewer-transcript-${{ github.event.pull_request.number }}-${{ github.run_id }}-${{ github.run_attempt }}
           # if-no-files-found: warn keeps a missing file a warning rather than a
@@ -369,6 +406,7 @@ jobs:
           SELF_EDIT: ${{ steps.first.outputs.self_edit }}
           FIRST_VERDICT: ${{ steps.first.outputs.verdict }}
           RETRY_OUTCOME: ${{ steps.retry.outcome }}
+          CLAUDE_ARGS: ${{ env.CLAUDE_ARGS }}
         run: |
           if [ "$SELF_EDIT" = "true" ]; then
             echo "::notice::PR modifies the review workflow; reviewer self-skips — verdict gate not enforced on this PR."
@@ -387,7 +425,12 @@ jobs:
           # A diagnostic, not a gate — nothing here changes the outcome.
           size=$(gh pr view "$PR" --repo "$REPO" --json additions,deletions,changedFiles \
             --jq '"+\(.additions) -\(.deletions) across \(.changedFiles) file(s)"' 2>/dev/null || echo "unknown")
-          echo "::notice::review-size: $size; verdict: $verdict"
+          # The regime the verdict was produced under, so a later model or
+          # effort change does not silently pool incomparable rows (the same
+          # rule the audit record follows with find_effort:/refute_effort:).
+          model=$(printf '%s' "$CLAUDE_ARGS" | grep -oE -- '--model [^ ]+' | cut -d' ' -f2); model=${model:-default}
+          effort=$(printf '%s' "$CLAUDE_ARGS" | grep -oE -- '--effort [^ ]+' | cut -d' ' -f2); effort=${effort:-default}
+          echo "::notice::review-size: $size; verdict: $verdict; model=$model effort=$effort"
           if [ -z "$FIRST_VERDICT" ]; then
             echo "::warning::The verdict came from the RETRY pass — the first pass ended without posting. This is the failure the retry exists for, not a healthy run: read claude-execution-output.pass1.json in the 'reviewer-transcript-*' artifact and see what the first pass did instead of posting."
           fi

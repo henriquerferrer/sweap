@@ -49,6 +49,17 @@ ok "both action steps pin the same action sha"         test "$(count 'uses: anth
 # The prompt: one copy, one-turn rule, sent by both passes.
 ok "the prompt is defined once at job level"           test "$(count '^      REVIEW_PROMPT:')" = 1
 ok "the prompt states the one-turn rule"               grep -qF 'Do the ENTIRE review in this one turn' "$YML"
+ok "the prompt carries the in-session reviewer's needs-work bar"  grep -qF 'any access-control gap, any weakened or skipped' "$YML"
+ok "the prompt has an Advisory section that never flips the verdict" grep -qF '"### Advisory" heading' "$YML"
+ok "the prompt asks for the Findings count line, penultimate"      grep -qF '"Findings: important=N nit=M"' "$YML"
+ok "the prompt still makes the verdict the LAST line"              grep -qF 'the LAST line is the verdict' "$YML"
+ok "both passes post inline comments live (no Haiku buffer)"       test "$(count "classify_inline_comments: 'false'")" = 2
+ok "pull-requests is read (the App token posts, not GITHUB_TOKEN)" grep -qE '^  pull-requests: read$' "$YML"
+ok "no actions: read (nothing in this file uses it)"               bash -c '! grep -qE "^  actions: read" "$1"' _ "$YML"
+ok "a PR from another repository skips at job level"               grep -qF 'github.event.pull_request.head.repo.full_name == github.repository' "$YML"
+ok "the transcript upload can never red the job"                   bash -c 'awk "/name: Upload reviewer transcript/{f=1} f&&/continue-on-error: true/{print;exit}" "$1" | grep -q continue' _ "$YML"
+ok "the size notice records model and effort"                      grep -qF 'model=$model effort=$effort' "$YML"
+ok "no node20 action pins remain (GitHub drops node20 2026-09-23)" bash -c '! grep -qE "checkout@34e11487|upload-artifact@ea165f8d" "$1"' _ "$YML"
 ok "the verdict step records the diff size beside the verdict" grep -qF '::notice::review-size:' "$YML"
 ok "the size notice is a diagnostic, not a gate"           bash -c '! grep -E "review-size" "$1" | grep -q "exit"' _ "$YML"
 ok "the prompt says an Action never re-invokes"        grep -qF 'invokes you exactly once and never again' "$YML"

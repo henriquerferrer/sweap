@@ -48,7 +48,7 @@ jobs:
     outputs:
       lane: ${{ steps.lane.outputs.lane }}
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (node24)
         with:
           fetch-depth: 0 # the lane is a diff against the base; a shallow clone can't compute it
       - id: lane
@@ -102,7 +102,7 @@ jobs:
       - uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2
         with:
           egress-policy: audit
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (node24)
       - name: Set up toolchain
         run: |
           # <fill in for your stack>: install your language runtime + deps,
@@ -120,7 +120,7 @@ jobs:
       - uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2
         with:
           egress-policy: audit
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (node24)
       - name: Set up toolchain
         run: |
           # <fill in for your stack>
@@ -139,7 +139,7 @@ jobs:
       - uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2
         with:
           egress-policy: audit
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (node24)
       - name: Set up toolchain
         run: |
           # <fill in for your stack>
@@ -163,7 +163,7 @@ jobs:
       - uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2
         with:
           egress-policy: audit
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (node24)
       - name: Set up toolchain
         run: |
           # <fill in for your stack>
@@ -177,7 +177,7 @@ jobs:
         # <fill in for your stack>: write .github/scripts/ci-status.sh (not shipped)
         run: bash .github/scripts/ci-status.sh e2e ${{ job.status }} >> "$GITHUB_STEP_SUMMARY"
       - if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1 (node24)
         with:
           name: e2e-report
           # <fill in for your stack>: path to your e2e tool's failure report
@@ -200,7 +200,7 @@ jobs:
       - uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2
         with:
           egress-policy: audit
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (node24)
       # <fill in for your stack>: write .github/scripts/ci-summary.sh (not shipped)
       - run: bash .github/scripts/ci-summary.sh >> "$GITHUB_STEP_SUMMARY"
       - name: Fail unless every gate succeeded (e2e may skip only on the roadmap-only lane)
