@@ -202,6 +202,27 @@ case "$ml_named" in
     ;;
 esac
 
+# --- rerun redirect -----------------------------------------------------------------
+# The 2026-08-25 sweap-merge research memo (item 1, "Open risks") names the one
+# risk of a MANUAL rerun verb: "agents route around the verb via bare `gh run
+# rerun` — needs the PreToolUse redirect". This is that redirect. A bare
+# `gh run rerun` leaves nothing in the PR's state file — no record of who
+# rerun what and why, no per-head+workflow cap, no base-red refusal, and no
+# flake note when the rerun turns green — so it is denied and pointed at
+# `sweap-merge rerun <pr> --reason "<why>"`, which issues the very same
+# `gh run rerun --failed <id>` and records it. Pure text scan, greedy on
+# purpose (a --reason that quotes the words is over-denied; rephrase it).
+# Calling context: this hook sees only Bash TOOL calls. The driver's own
+# `gh run rerun` (sweap-merge.sh, sm_rerun) is a direct child process of the
+# driver, never a tool call, so it never reaches this hook — and the driver
+# runs THIS gate only for its synthetic `gh pr merge` payload (sm_run_gate).
+# `sweap-merge rerun …` itself does not contain the denied words. Nothing to
+# allow-list; the belt-B token match above stays untouched.
+if printf '%s' "$cmd" | grep -Eq '(^|[^A-Za-z0-9_./-])gh[[:space:]]+run[[:space:]]+rerun([[:space:]]|$)'; then
+  emit_deny "rerun-redirect: a bare 'gh run rerun' is not the recorded path. Use: sweap-merge rerun <pr> --reason \"<why this red is believed to be a flake>\" — it issues the same 'gh run rerun --failed <id>' but only for a completed failure, refuses when the same workflow is red on the base's tip, allows one rerun per head AND workflow (a second red of the same workflow on the same head is a finding, not a flake), records who/what/why in the PR's state file, and files a flaky: discovered note if the rerun turns green. The driver never reruns on its own; this verb is how a human does it on record."
+  exit 0
+fi
+
 # If the shared parser failed to load (lib missing/deleted, a syntax error, or a
 # missing tool like `dirname` broke the `.` source line), do NOT proceed to an
 # undefined `parse_merge_command` — that would abort under `set -u` before we mark

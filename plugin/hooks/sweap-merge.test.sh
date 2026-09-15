@@ -237,6 +237,10 @@ exit 0
 P
 done
 chmod +x "$FAKE_PLUGIN/hooks/"*.sh
+# the flake note is written through the plugin's own note writer, resolved from
+# the driver's dir as ../tools/sweap-note.mjs: the fake plugin carries a copy
+mkdir -p "$FAKE_PLUGIN/tools"
+cp "$HERE/../tools/sweap-note.mjs" "$HERE/../tools/sweap-board.lib.mjs" "$FAKE_PLUGIN/tools/"
 # a plugin dir with a driver and NO gate (fail closed), and one whose only real
 # hook is post-merge-cleanup.sh (the worktree self-skip case)
 mkdir -p "$WORK/nowhere/hooks"; cp "$DRIVER" "$WORK/nowhere/hooks/sweap-merge.sh"; : >"$WORK/nowhere/hooks/$SENTINEL"
@@ -265,6 +269,15 @@ case "$sub" in
   pr)
     case "${1:-}" in
       view)
+        # GH_MUTATE_STATE=<spec file> (line 1: a state file; the rest: a jq
+        # filter): rewrite that state file during this call — stands in for a
+        # tick that wrote between a reader's snapshot and its claim (the rerun
+        # verb's stale-snapshot case). A spec file, because the filter has
+        # spaces and brackets and the test env list is word-split.
+        if [ -n "${GH_MUTATE_STATE:-}" ] && [ -f "$GH_MUTATE_STATE" ]; then
+          mf="$(head -1 "$GH_MUTATE_STATE")"; mfilter="$(tail -n +2 "$GH_MUTATE_STATE")"
+          if [ -f "$mf" ]; then jq "$mfilter" "$mf" >"$mf.mut" && mv "$mf.mut" "$mf"; fi
+        fi
         if [ -f "$fix/merged.flag" ] && [ -f "$fix/pr.after.json" ]; then cat "$fix/pr.after.json"; else cat "$fix/pr.json"; fi
         exit 0 ;;
       merge)
@@ -277,6 +290,22 @@ case "$sub" in
         if [ "${GH_PRLIST_MERGED:-}" = 1 ]; then echo '[{"number":7}]'; else echo '[]'; fi
         exit 0 ;;
     esac ;;
+  run)   # the rerun verb: `run list --branch <base> --workflow <file> ...` and `run rerun --failed <id>`
+    case "${1:-}" in
+      list)
+        wf=""
+        while [ $# -gt 0 ]; do case "$1" in --workflow) wf="$2"; shift ;; esac; shift; done
+        if [ -f "$fix/baserun.$wf.json" ]; then cat "$fix/baserun.$wf.json"; else echo '[]'; fi
+        exit 0 ;;
+      rerun)
+        shift; printf '%s\n' "$*" >>"$fix/rerun.log"
+        # GH_RERUN=fail refuses every rerun; GH_RERUN_FAIL_ID=<id> refuses that one
+        if [ "${GH_RERUN:-ok}" != ok ] || { [ -n "${GH_RERUN_FAIL_ID:-}" ] && [ "${2:-}" = "$GH_RERUN_FAIL_ID" ]; }; then
+          printf 'HTTP 403: This workflow is already running (rerun)\n' >&2; exit 1
+        fi
+        printf '✓ Requested rerun of failed jobs\n'; exit 0 ;;
+    esac
+    printf 'stub gh: unhandled run %s\n' "${1:-}" >&2; exit 1 ;;
   api)
     path=""; jqf=""
     while [ $# -gt 0 ]; do
@@ -316,7 +345,7 @@ chmod +x "$STUB_BIN/gh"
 # The driver runs the gate and the post-merge hooks under `env -i` (pinned PATH +
 # allowlist); the stub gh's and the fake hooks' knobs reach them only through
 # this test-seam passthrough list (sentinel-gated).
-HOOK_PASS="GH_FIX GH_LOG GH_STUB_SLEEP GH_MERGE GH_PRLIST_MERGED GH_BEHIND GH_BASE_SHA PM_LOG PM_RED PM_CTX GATE_IN GATE_CWD_FILE GATE_ENV_FILE FAKE_GATE FAKE_GATE_REASON"
+HOOK_PASS="GH_FIX GH_LOG GH_STUB_SLEEP GH_MERGE GH_RERUN GH_RERUN_FAIL_ID GH_MUTATE_STATE GH_PRLIST_MERGED GH_BEHIND GH_BASE_SHA PM_LOG PM_RED PM_CTX GATE_IN GATE_CWD_FILE GATE_ENV_FILE FAKE_GATE FAKE_GATE_REASON"
 FIX=""
 write_pr() {   # write_pr [file] [state] [head] [rollup: green|failure]
   local f="${1:-pr.json}" st="${2:-OPEN}" h="${3:-$HEAD1}" roll="${4:-green}" mc="null" rollup
@@ -1156,7 +1185,10 @@ drive tick; check "argv: missing <pr> rejected" [ "$RC" = 2 ]
 drive tick "$PR" --repo o/r; check "argv: --repo rejected" [ "$RC" = 2 ]
 drive tick "$PR" -R o/r; check "argv: -R rejected" [ "$RC" = 2 ]
 drive tick "$PR" --admin; check "argv: --admin rejected" [ "$RC" = 2 ]
-drive rerun "$PR"; check "argv: verb rerun does not exist" [ "$RC" = 2 ]
+drive rerun "$PR"; check "argv: rerun without --reason is a usage error (a hand rerun carries its reason)" [ "$RC" = 2 ]
+drive rerun "$PR" --reason ""; check "argv: rerun with an empty --reason rejected" [ "$RC" = 2 ]
+drive rerun "$PR" --reason "x" --budget 5; check "argv: rerun takes no --budget" [ "$RC" = 2 ]
+drive tick "$PR" --reason "x"; check "argv: --reason belongs to rerun only" [ "$RC" = 2 ]
 drive tick "$PR" --budget 0; check "argv: --budget 0 rejected" [ "$RC" = 2 ]
 check "argv: rejected argv made no gh call" [ ! -s "$FIX/gh.log" ]
 XENV="GH_REPO=evil/repo" drive tick "$PR"; expect "argv: GH_REPO in the environment is unset by the driver" merged
@@ -1324,6 +1356,282 @@ for live in pending green merging superseded missing; do
   drive status "$PR"
   check "status: $live is in flight and IS nagged about" contains "$OUT" "NO WATCHER"
 done
+
+# ======================================================================================
+printf '== rerun (a hand verb, one per head) + the flake note\n'
+INBOX="$REPO/roadmap/discovered"
+reruns_in_log() { if [ -f "$FIX/rerun.log" ]; then wc -l <"$FIX/rerun.log" | tr -d ' '; else echo 0; fi; }
+red_ci() { write_runs "$(run 101 "$CI" completed failure)" "$(run 102 "$AG" completed success)" "$(run 103 "$CR" completed success)"; }
+green_ci_attempt2() { write_runs "$(run 101 "$CI" completed success 2)" "$(run 102 "$AG" completed success)" "$(run 103 "$CR" completed success)"; }
+
+# (a) accepted: a completed failure run, base green, first rerun on this head
+newcase r-accept
+rm -rf "$INBOX"; mkdir -p "$INBOX"
+red_ci
+drive tick "$PR"; expect "rerun: the red tick ends failed" failed "ci.yml failure"
+drive rerun "$PR" --reason "runner contention, e2e timed out under load"
+check "rerun: accepted => exit 0, word pending" [ "$RC" = 0 ] -- word_is pending -- contains "$OUT" "recorded"
+check "rerun: gh run rerun --failed <id> issued once, for the red run" [ "$(reruns_in_log)" = 1 ] -- [ "$(cat "$FIX/rerun.log")" = "--failed 101" ]
+check "rerun: base tip was checked for the same workflow first" grep -q '^run list --branch main --workflow ci.yml --limit 1' "$FIX/gh.log"
+check "rerun: state is pending" [ "$(state .state)" = pending ]
+check "rerun: one reruns[] entry with head, run_ids, reason, at, by" \
+  [ "$(state '.reruns | length')" = 1 ] -- [ "$(state '.reruns[0].head')" = "$HEAD1" ] -- [ "$(state '.reruns[0].run_ids | join(",")')" = 101 ] \
+  -- [ "$(state '.reruns[0].reason')" = "runner contention, e2e timed out under load" ] -- [ "$(state '.reruns[0].at')" = "$NOW" ] -- [ -n "$(state '.reruns[0].by')" ]
+check "rerun: history row failed -> pending, why names the reason" \
+  [ "$(state '.history | last | .from + ">" + .to')" = "failed>pending" ] -- contains "$(state '.history | last | .why')" "manual rerun (runner contention"
+check "rerun: existing keys untouched (head, expected, base_sha)" [ "$(state .head)" = "$HEAD1" ] -- [ "$(state '.expected|length')" = 3 ] -- [ "$(state .base_sha)" = "$BSHA1" ]
+check "rerun: disarmed the way a superseded head is (arm_at/appear/complete cleared, observed emptied)" \
+  [ "$(state '.arm_at')" = null ] -- [ "$(state '.appear_deadline')" = null ] -- [ "$(state '.complete_deadline')" = null ] -- [ "$(state '.observed|length')" = 0 ]
+check "rerun: the lease was released" [ ! -d "$STATE_DIR/$PR.lock" ]
+# the next tick re-arms through the SAME branch a superseded head uses
+green_ci_attempt2
+TNOW=$((NOW + 60)) drive tick "$PR"; expect "rerun: next tick re-arms and, with attempt 2 green, merges" merged
+check "rerun: re-armed with fresh deadlines (arm_at = the re-arm tick's now, appear = +300)" [ "$(state .arm_at)" = "$((NOW + 60))" ] -- [ "$(state .appear_deadline)" = "$((NOW + 60 + 300))" ]
+check "rerun: history reads failed, pending, green, merging, merged" [ "$(state '[.history[].to] | join(",")')" = "failed,pending,green,merging,merged" ]
+# (f) the flake note: exactly one, kind gap, from the PR, by the verb, body names head/run/attempt/base/reason
+check "flake: exactly one discovered note was filed" [ "$(ls "$INBOX"/*.md 2>/dev/null | wc -l | tr -d ' ')" = 1 ]
+NOTE="$(ls "$INBOX"/*.md 2>/dev/null | head -1)"
+check "flake: title is flaky: <path> went red then green on rerun for PR #<n> (<reason>)" \
+  grep -q "^title: flaky: $CI went red then green on rerun for PR #$PR (runner contention, e2e timed out under load)$" "$NOTE"
+check "flake: frontmatter kind gap, discovered_from PR #<n>, discovered_by sweap-merge rerun" \
+  grep -q '^kind: gap$' "$NOTE" -- grep -q "^discovered_from: PR #$PR$" "$NOTE" -- grep -q '^discovered_by: sweap-merge rerun$' "$NOTE"
+check "flake: body names the head SHA, the failed run id, both attempts, the base SHA and the reason" \
+  grep -q "head $HEAD1" "$NOTE" -- grep -q "run 101 attempt 1" "$NOTE" -- grep -q "green on attempt 2" "$NOTE" -- grep -q "base $BSHA1" "$NOTE" -- grep -q "reason: runner contention" "$NOTE"
+check "flake: body ends with the occurrence line" grep -q "^- PR #$PR head $HEAD1 run 101 at 2026-08-25T10:03:00Z$" "$NOTE"
+check "flake: the rerun entry is marked noted (never filed twice)" [ "$(state '.reruns[0].flake_noted')" = true ]
+check "flake: filing is reported on stderr, not stdout (stdout stays one line)" grep -q '^\[sweap-merge\] flake: .*filed roadmap/discovered/' "$FIX/stderr" -- [ "$(printf '%s\n' "$OUT" | wc -l | tr -d ' ')" = 1 ]
+# a second PR with the same workflow flake APPENDS to that note, never a second file
+PR=8
+newcase r-flake-second
+red_ci
+drive tick "$PR"; expect "flake: second PR (#8) goes red on the same workflow" failed
+drive rerun "$PR" --reason "same e2e timeout"
+check "flake: second PR's rerun accepted" [ "$RC" = 0 ] -- word_is pending
+green_ci_attempt2
+drive tick "$PR"; expect "flake: second PR turns green on the rerun and merges" merged
+check "flake: still exactly one note (appended, not a second file)" [ "$(ls "$INBOX"/*.md 2>/dev/null | wc -l | tr -d ' ')" = 1 ]
+check "flake: the second occurrence is one appended line" grep -q "^- PR #8 head $HEAD1 run 101 at " "$NOTE" -- [ "$(grep -c '^- PR #' "$NOTE" | tr -d ' ')" = 2 ]
+check "flake: the append left the title and the first occurrence intact" grep -q "^title: flaky: $CI went red then green on rerun for PR #7 " "$NOTE" -- grep -q "^- PR #7 head" "$NOTE"
+check "flake: append reported on stderr" grep -q '^\[sweap-merge\] flake: .*appended to roadmap/discovered/' "$FIX/stderr"
+PR=7
+# (f') no discovered inbox => skip with a log line, never a merge blocker
+newcase r-no-inbox
+rm -rf "$INBOX"
+red_ci
+drive tick "$PR"
+drive rerun "$PR" --reason "flake"
+green_ci_attempt2
+drive tick "$PR"; expect "flake: without a discovered inbox the merge still lands" merged
+check "flake: the skip is logged and nothing was created" grep -q '^\[sweap-merge\] flake note skipped: no discovered inbox' "$FIX/stderr" -- [ ! -d "$INBOX" ]
+check "flake: the entry is marked skipped (no retry on a later pass)" [ "$(state '.reruns[0].flake_noted')" = skipped ]
+mkdir -p "$INBOX"
+
+# (b) one rerun per head, ever
+newcase r-twice
+red_ci
+drive tick "$PR"
+drive rerun "$PR" --reason "first"
+check "rerun: first accepted" [ "$RC" = 0 ]
+write_runs "$(run 101 "$CI" completed failure 2)" "$(run 102 "$AG" completed success)" "$(run 103 "$CR" completed success)"
+drive tick "$PR"; expect "rerun: attempt 2 is red again => failed" failed "ci.yml failure"
+seq_before="$(state .seq)"
+drive rerun "$PR" --reason "second"
+check "rerun: a second rerun of the same workflow on the same head is refused (exit 1, word refused, says why)" [ "$RC" = 1 ] -- word_is refused -- contains "$OUT" "already rerun once" -- contains "$OUT" "$CI at" -- contains "$OUT" "reason: first"
+check "rerun: refusal changed nothing (state failed, one entry, no new rerun call, no write)" \
+  [ "$(state .state)" = failed ] -- [ "$(state '.reruns|length')" = 1 ] -- [ "$(reruns_in_log)" = 1 ] -- [ "$(state .seq)" = "$seq_before" ]
+check "rerun: refusal released no lease it never took" [ ! -d "$STATE_DIR/$PR.lock" ]
+
+# (c) the same workflow red on the base tip
+newcase r-base-red
+red_ci
+drive tick "$PR"
+printf '[{"status":"completed","conclusion":"failure","headSha":"%s","databaseId":555}]\n' "$BSHA1" >"$FIX/baserun.ci.yml.json"
+seq_before="$(state .seq)"
+drive rerun "$PR" --reason "flake?"
+check "rerun: base tip red on the same workflow => refused, names the base run" [ "$RC" = 1 ] -- word_is refused -- contains "$OUT" "also red on main's tip (run 555: failure)"
+check "rerun: red base => no rerun issued, state untouched" [ "$(reruns_in_log)" = 0 ] -- [ "$(state .state)" = failed ] -- [ "$(state '.reruns // [] | length')" = 0 ] -- [ "$(state .seq)" = "$seq_before" ]
+printf '[{"status":"in_progress","conclusion":null,"headSha":"%s","databaseId":556}]\n' "$BSHA1" >"$FIX/baserun.ci.yml.json"
+drive rerun "$PR" --reason "base still running"
+check "rerun: a base run still in progress is not red (accepted)" [ "$RC" = 0 ] -- word_is pending
+
+# (d) not failed: pending, missing-after-deadline (failed but nothing completed), no state file, head moved
+newcase r-not-failed
+write_runs "$(run 101 "$CI" in_progress null)" "$(run 102 "$AG" completed success)" "$(run 103 "$CR" completed success)"
+drive tick "$PR"; expect "rerun: pending PR" pending
+drive rerun "$PR" --reason "impatient"
+check "rerun: state pending => refused, nothing written" [ "$RC" = 1 ] -- word_is refused -- contains "$OUT" "'pending', not failed" -- [ "$(state '.reruns // [] | length')" = 0 ] -- [ "$(reruns_in_log)" = 0 ]
+newcase r-failed-not-completed
+write_runs
+drive tick "$PR"; expect "rerun: no runs yet => missing (arms the appear deadline)" missing
+TNOW=$((NOW + 301)) drive tick "$PR"; expect "rerun: missing past appear_deadline => failed" failed "missing"
+drive rerun "$PR" --reason "flake"
+check "rerun: failed without a completed failure run => refused (nothing to rerun)" [ "$RC" = 1 ] -- word_is refused -- contains "$OUT" "without a completed 'failure' run" -- [ "$(reruns_in_log)" = 0 ]
+newcase r-cancelled
+write_runs "$(run 101 "$CI" completed cancelled)" "$(run 102 "$AG" completed success)" "$(run 103 "$CR" completed success)"
+drive tick "$PR"; expect "rerun: cancelled => failed" failed cancelled
+drive rerun "$PR" --reason "flake"
+check "rerun: a cancelled run is not a flake => refused" [ "$RC" = 1 ] -- word_is refused -- [ "$(reruns_in_log)" = 0 ]
+newcase r-no-state
+drive rerun "$PR" --reason "flake"
+check "rerun: no state file => refused, no gh call, none created" [ "$RC" = 1 ] -- word_is refused -- contains "$OUT" "no state file" -- [ ! -s "$FIX/gh.log" ] -- [ ! -f "$STATE_DIR/$PR.json" ]
+newcase r-head-moved
+red_ci
+drive tick "$PR"
+write_pr pr.json OPEN "$HEAD2"
+drive rerun "$PR" --reason "flake"
+check "rerun: head moved since the red => refused (a rerun would test the old commit), nothing issued" \
+  [ "$RC" = 1 ] -- word_is refused -- contains "$OUT" "head moved" -- [ "$(reruns_in_log)" = 0 ] -- [ "$(state .state)" = failed ]
+newcase r-held
+red_ci
+drive tick "$PR"
+sleep 30 & LIVE5=$!
+mk_lock "other:$LIVE5" 1 "$LIVE5" "$NOW"
+drive rerun "$PR" --reason "flake"; expect "rerun: a live poller holds the lease => held-by" "held-by:other:$LIVE5"
+check "rerun: held-by issued no rerun" [ "$(reruns_in_log)" = 0 ]
+kill "$LIVE5" 2>/dev/null; wait "$LIVE5" 2>/dev/null
+newcase r-gh-refuses
+red_ci
+drive tick "$PR"
+XENV="GH_RERUN=fail" drive rerun "$PR" --reason "flake"
+check "rerun: gh run rerun refused => refused, nothing recorded" [ "$RC" = 1 ] -- word_is refused -- contains "$OUT" "no rerun was issued" -- [ "$(state '.reruns // [] | length')" = 0 ] -- [ "$(state .state)" = failed ]
+# partial issue: two red runs, the second rerun call is refused => the one that
+# WAS issued is recorded (it counts against this head), state pending, exit 1
+newcase r-partial
+write_runs "$(run 101 "$CI" completed failure)" "$(run 102 "$AG" completed failure)" "$(run 103 "$CR" completed success)"
+drive tick "$PR"; expect "rerun: two red expected runs => failed" failed
+XENV="GH_RERUN_FAIL_ID=102" drive rerun "$PR" --reason "two flakes"
+check "rerun: partial issue => word failed, exit 1, names the refused run" [ "$RC" = 1 ] -- word_is failed -- contains "$OUT" "issued for 101 but not all" -- contains "$OUT" "run 102"
+check "rerun: partial issue is RECORDED (issued=[101], run_ids=[101,102]) and the state is pending" \
+  [ "$(state '.reruns | length')" = 1 ] -- [ "$(state '.reruns[0].issued | join(",")')" = 101 ] -- [ "$(state '.reruns[0].run_ids | sort | join(",")')" = "101,102" ] -- [ "$(state .state)" = pending ]
+check "rerun: both reruns were attempted" [ "$(reruns_in_log)" = 2 ]
+drive rerun "$PR" --reason "again"
+check "rerun: the partial record still consumes the head's one rerun" [ "$RC" = 1 ] -- word_is refused
+# the run that was NOT issued is a verdict on the next tick, not a stale attempt
+write_runs "$(run 101 "$CI" completed success 2)" "$(run 102 "$AG" completed failure)" "$(run 103 "$CR" completed success)"
+drive tick "$PR"; expect "rerun: the un-issued red run is still a real failure on the next tick" failed "audit-gate.yml failure"
+# PR state from GitHub: CLOSED / MERGED / missing all refuse (fail closed)
+for st in CLOSED MERGED; do
+  newcase "r-pr-$st"
+  red_ci
+  drive tick "$PR"
+  write_pr pr.json "$st"
+  drive rerun "$PR" --reason "flake"
+  check "rerun: PR $st on GitHub => refused, nothing issued" [ "$RC" = 1 ] -- word_is refused -- contains "$OUT" "is $st" -- [ "$(reruns_in_log)" = 0 ]
+done
+newcase r-pr-nostate
+red_ci
+drive tick "$PR"
+jq 'del(.state)' "$FIX/pr.json" >"$FIX/pr.tmp" && mv "$FIX/pr.tmp" "$FIX/pr.json"
+drive rerun "$PR" --reason "flake"
+check "rerun: gh pr view without a state => refused (fail closed), not treated as OPEN" [ "$RC" = 1 ] -- word_is refused -- contains "$OUT" "returned no state" -- [ "$(reruns_in_log)" = 0 ]
+# A. the snapshot judged before the claim is not what gets written: a tick that
+# wrote between our read and our claim (here: the stub rewrites the file during
+# `pr view`, after our snapshot) must be re-read under the lease and re-judged
+newcase r-stale-snapshot
+red_ci
+drive tick "$PR"
+printf '%s\n%s\n' "$STATE_DIR/$PR.json" '.state = "pending" | .history += [{at:1, from:"failed", to:"pending", why:"another tick"}]' >"$FIX/mutate.spec"
+XENV="GH_MUTATE_STATE=$FIX/mutate.spec" drive rerun "$PR" --reason "flake"
+check "rerun: state changed to pending under us => refused, nothing issued" [ "$RC" = 1 ] -- word_is refused -- contains "$OUT" "'pending', not failed" -- [ "$(reruns_in_log)" = 0 ]
+check "rerun: the other writer's row survived (not clobbered by our snapshot)" [ "$(state '.history | last | .why')" = "another tick" ] -- [ "$(state '.reruns // [] | length')" = 0 ]
+newcase r-stale-head
+red_ci
+drive tick "$PR"
+printf '%s\n%s\n' "$STATE_DIR/$PR.json" ".head = \"$HEAD2\"" >"$FIX/mutate.spec"
+XENV="GH_MUTATE_STATE=$FIX/mutate.spec" drive rerun "$PR" --reason "flake"
+check "rerun: head rewritten under us => refused, nothing issued" [ "$RC" = 1 ] -- word_is refused -- contains "$OUT" "changed under us" -- [ "$(reruns_in_log)" = 0 ] -- [ "$(state .head)" = "$HEAD2" ]
+newcase r-stale-observed
+red_ci
+drive tick "$PR"
+# still failed, same head, but the red run's observation was replaced: the
+# write must carry what is on disk now, not our snapshot's observed/history
+printf '%s\n%s\n' "$STATE_DIR/$PR.json" ".observed[\"$CI\"].run_id = 777 | .history += [{at:1, from:\"failed\", to:\"failed\", why:\"rewritten\"}]" >"$FIX/mutate.spec"
+XENV="GH_MUTATE_STATE=$FIX/mutate.spec" drive rerun "$PR" --reason "flake"
+check "rerun: accepted on the re-read: the rerun targets the run the FILE names now (777), not the snapshot's 101" \
+  [ "$RC" = 0 ] -- word_is pending -- [ "$(cat "$FIX/rerun.log")" = "--failed 777" ] -- [ "$(state '.reruns[0].run_ids | join(",")')" = 777 ]
+check "rerun: the other writer's history row is still there after our write" [ "$(state '[.history[].why] | index("rewritten")')" != null ]
+# B. the note writer is charged against the tick budget: a tiny budget defers
+# the note, the merge still lands, and the merged re-entry files it
+newcase r-note-deferred
+mkdir -p "$INBOX"; rm -f "$INBOX"/*.md
+red_ci
+drive tick "$PR"
+drive rerun "$PR" --reason "budget"
+green_ci_attempt2
+drive tick "$PR" --budget 5; expect "flake: with a 5 s budget the merge still lands" merged
+check "flake: the note was deferred, not filed, and the entry is not marked" \
+  grep -q '^\[sweap-merge\] flake note deferred' "$FIX/stderr" -- [ "$(ls "$INBOX"/*.md 2>/dev/null | wc -l | tr -d ' ')" = 0 ] -- [ "$(state '.reruns[0].flake_noted // "unset"')" = unset ]
+drive tick "$PR"; expect "flake: the merged re-entry tick still says merged" merged
+check "flake: the deferred note is filed on the re-entry pass, once" [ "$(ls "$INBOX"/*.md 2>/dev/null | wc -l | tr -d ' ')" = 1 ] -- [ "$(state '.reruns[0].flake_noted')" = true ]
+drive tick "$PR"
+check "flake: a third pass files nothing more" [ "$(ls "$INBOX"/*.md 2>/dev/null | wc -l | tr -d ' ')" = 1 ] -- [ "$(grep -c '^- PR #' "$INBOX"/*.md | tr -d ' ')" = 1 ]
+rm -f "$INBOX"/*.md
+# C. the listing lags the rerun: attempt 1 still reported completed/failure for
+# the rerun's run id is a stale observation, not a verdict — pending until the
+# attempt advances or the appear deadline passes
+newcase r-stale-attempt
+red_ci
+drive tick "$PR"
+drive rerun "$PR" --reason "lagging listing"
+drive tick "$PR"; expect "rerun: the run listing still shows attempt 1 failure right after the rerun => pending, not failed" pending "rerun of run 101 not yet visible"
+check "rerun: the head's one rerun was not consumed by the stale tick (still one entry, state pending)" [ "$(state '.reruns | length')" = 1 ] -- [ "$(state .state)" = pending ] -- [ "$(reruns_in_log)" = 1 ]
+green_ci_attempt2
+drive tick "$PR"; expect "rerun: attempt 2 success => green => merged" merged
+newcase r-stale-attempt-deadline
+red_ci
+drive tick "$PR"
+drive rerun "$PR" --reason "lagging listing"
+drive tick "$PR"; expect "rerun: stale attempt => pending (arms the appear deadline)" pending
+TNOW=$((NOW + 301)) drive tick "$PR"; expect "rerun: attempt 1 still reported after appear_deadline => failed (the rerun never appeared)" failed "never appeared"
+drive rerun "$PR" --reason "once more"
+check "rerun: and the workflow's rerun on this head is spent" [ "$RC" = 1 ] -- word_is refused -- contains "$OUT" "already rerun once"
+# the cap is per (head, workflow): consumer A #319 — ci.yml red, rerun, then
+# claude-review.yml red on the SAME head. The second workflow's first red gets
+# its own rerun; a second red of ci.yml on that head does not.
+newcase r-per-workflow
+red_ci
+drive tick "$PR"
+drive rerun "$PR" --reason "ci flake"
+check "rerun: ci.yml rerun recorded" [ "$RC" = 0 ] -- [ "$(state '.reruns[0].runs[0].path')" = "$CI" ]
+write_runs "$(run 101 "$CI" completed success 2)" "$(run 102 "$AG" completed success)" "$(run 103 "$CR" completed failure)"
+drive tick "$PR"; expect "rerun: ci.yml green on attempt 2 but claude-review.yml red on the same head => failed" failed "claude-review.yml failure"
+drive rerun "$PR" --reason "review flake"
+check "rerun: a DIFFERENT workflow's first red on the same head is accepted, rerun issued for it only" \
+  [ "$RC" = 0 ] -- word_is pending -- [ "$(tail -1 "$FIX/rerun.log")" = "--failed 103" ] -- [ "$(reruns_in_log)" = 2 ] \
+  -- [ "$(state '.reruns | length')" = 2 ] -- [ "$(state '.reruns[1].runs | map(.path) | join(",")')" = "$CR" ]
+write_runs "$(run 101 "$CI" completed failure 3)" "$(run 102 "$AG" completed success)" "$(run 103 "$CR" completed success 2)"
+drive tick "$PR"; expect "rerun: review green on attempt 2, ci red AGAIN on attempt 3 => failed" failed "ci.yml failure"
+drive rerun "$PR" --reason "ci again"
+check "rerun: ci.yml's second red on the same head is refused (per head+workflow), review's spent too" \
+  [ "$RC" = 1 ] -- word_is refused -- contains "$OUT" "already rerun once" -- contains "$OUT" "$CI" -- [ "$(reruns_in_log)" = 2 ] -- [ "$(state '.reruns | length')" = 2 ]
+# a hand-shaped state file (the refuter's fixture): reruns for ci.yml on H, review red on H
+newcase r-per-workflow-fixture
+red_ci
+drive tick "$PR"
+jq --arg h "$HEAD1" --arg ci "$CI" --arg cr "$CR" '.reruns = [{head:$h, run_ids:[101], runs:[{path:$ci, run_id:101, attempt:1}], issued:[101], reason:"earlier", at:1, by:"t"}]
+   | .observed[$ci] = {run_id:101, attempt:2, status:"completed", conclusion:"success"}
+   | .observed[$cr] = {run_id:103, attempt:1, status:"completed", conclusion:"failure"}' "$STATE_DIR/$PR.json" >"$STATE_DIR/$PR.tmp" && mv "$STATE_DIR/$PR.tmp" "$STATE_DIR/$PR.json"
+drive rerun "$PR" --reason "review flake"
+check "rerun: fixture — review red with ci already rerun on H => pending, rerun issued for review only" \
+  [ "$RC" = 0 ] -- word_is pending -- [ "$(cat "$FIX/rerun.log")" = "--failed 103" ] -- [ "$(state '.reruns | length')" = 2 ]
+jq --arg ci "$CI" '.state = "failed" | .observed[$ci] = {run_id:101, attempt:3, status:"completed", conclusion:"failure"}' "$STATE_DIR/$PR.json" >"$STATE_DIR/$PR.tmp" && mv "$STATE_DIR/$PR.tmp" "$STATE_DIR/$PR.json"
+drive rerun "$PR" --reason "ci again"
+check "rerun: fixture — a second call for ci.yml on H => refused" [ "$RC" = 1 ] -- word_is refused -- [ "$(reruns_in_log)" = 1 ]
+
+# (e) --reason is required (argv section also covers this; here: nothing touched)
+newcase r-no-reason
+red_ci
+drive tick "$PR"
+seq_before="$(state .seq)"
+drive rerun "$PR"
+check "rerun: without --reason => usage (exit 2), no gh call, no state change" [ "$RC" = 2 ] -- [ "$(reruns_in_log)" = 0 ] -- [ "$(state .seq)" = "$seq_before" ] -- [ "$(state .state)" = failed ]
+drive rerun "$PR" --reason "   "
+check "rerun: a whitespace-only --reason is no reason" [ "$RC" = 2 ]
+# the driver never reruns on its own (memo D5): a red tick followed by a watch
+# that goes red again issues no `run rerun` — only the hand verb ever does
+drive watch "$PR"
+check "rerun: a red tick and a red watch issued no rerun on their own" word_is failed -- [ "$(grep -c '^run rerun ' "$FIX/gh.log" | tr -d ' ')" = 0 ]
+rm -rf "$INBOX"
 
 # ======================================================================================
 printf '\n%s passed, %s failed\n' "$pass" "$fail"

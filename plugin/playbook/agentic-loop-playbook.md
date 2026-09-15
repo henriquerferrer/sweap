@@ -698,8 +698,25 @@ may ADD dimensions it judges necessary; it may not remove tagged ones.
   `undecidable` (expected set not computable, e.g. `paths:` — escalate);
   `timed_out` (deadline passed — a finding); `attended` (a check needs a human);
   `held-by:<owner>` (another live watcher owns the PR — don't start a second).
-  On `failed`: `gh run rerun --failed <run-id>` once, by hand, with the reason
-  in the PR. Consumers must allowlist it in project `.claude/settings.json`:
+  On `failed`: a red run is a finding first. If you believe it is a flake,
+  re-run it ONCE, by hand, through the driver — `sweap-merge rerun <n>
+  --reason "<why>"` — never with a bare `gh run rerun`. The verb issues the
+  same `gh run rerun --failed <run-id>`, but it refuses unless the run is
+  `completed` with conclusion `failure`, refuses if the same workflow is red on
+  the base's tip (a red main makes rerunning the PR pointless), and unless no
+  rerun was ever recorded for that head SHA *and workflow* — one per head and
+  workflow, ever; a second red of the same workflow on the same head is a
+  finding, not a flake (a different workflow going red on the same head gets
+  its own one rerun — consumer A #319's shape). A bare `gh run rerun` from a
+  session is denied by the merge gate and redirected here, so every rerun is
+  on record. On accept it records `reruns[]`
+  (head, run ids, reason, who, when) in the PR's state file, re-arms the
+  deadlines, and the next `sweap-merge watch <n>` waits as usual. If that head
+  then reaches green, the driver files ONE discovered note (`flaky: <workflow>
+  went red then green on rerun for PR #<n> (<reason>)`, kind gap) and appends
+  a line to it for each later flake of the same workflow — so the flake rate
+  is on record instead of in someone's memory. The driver still never reruns
+  on its own. Consumers must allowlist it in project `.claude/settings.json`:
   **`Bash(sweap-merge:*)`** — the `:*` suffix is the documented equivalent of a
   trailing ` *`, so it matches `sweap-merge watch 12` and bare `sweap-merge`,
   and the space it implies keeps it from matching some other `sweap-merge…`

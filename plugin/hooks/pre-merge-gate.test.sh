@@ -1001,6 +1001,29 @@ expect_launch_deny "m33) PATH= before the bare command -> deny"                 
 expect_launch_deny "m34) SWEAP_MERGE_GH= before the bare command -> deny"           "SWEAP_MERGE_GH=/evil/gh $BARE" 'SWEAP_MERGE_*'
 expect_launch_deny "m35) env wrapper on the bare command -> deny"                   "env -i $BARE"                'env wrapper'
 expect_launch_deny "m36) explicit path to the bin/ wrapper + GIT_DIR= -> deny"      'GIT_DIR=/f/.git plugin/bin/sweap-merge watch 7' GIT_DIR
+
+echo "== rerun redirect (a bare gh run rerun is pointed at sweap-merge rerun) =="
+# The 2026-08-25 memo's open risk for the manual verb: sessions routing around
+# it with a bare `gh run rerun`. The gate denies that and names the verb.
+expect_rerun_deny() {  # $1=label $2=cmd
+  local out; out="$(run_gate green "$2")"
+  if is_deny "$out" && reason "$out" | grep -qF -- 'rerun-redirect:' && reason "$out" | grep -qF -- 'sweap-merge rerun <pr> --reason'; then ok "$1"
+  else bad "$1" "got: $out"; fi
+}
+expect_rerun_deny  "r1) gh run rerun 123 --failed -> deny, names the verb"          'gh run rerun 123 --failed'
+expect_rerun_deny  "r2) gh run rerun --failed 123 -> deny"                          'gh run rerun --failed 123'
+expect_rerun_deny  "r3) gh run rerun 123 (whole run) -> deny"                       'gh run rerun 123'
+expect_rerun_deny  "r4) gh  run   rerun with odd spacing -> deny"                   'gh  run   rerun 123'
+expect_rerun_deny  "r5) && chained after something harmless -> deny"                'gh run view 123 && gh run rerun 123 --failed'
+expect_rerun_deny  "r6) next to the driver on one line -> still deny (no allow-list by proximity)" 'sweap-merge status; gh run rerun 123 --failed'
+expect_launch_ok   "r7) sweap-merge rerun 12 --reason x -> allow (the recorded path)" 'sweap-merge rerun 12 --reason x'
+expect_launch_ok   "r8) sweap-merge rerun with a quoted reason -> allow"            'sweap-merge rerun 12 --reason "e2e timed out under runner contention"'
+expect_launch_ok   "r9) gh run list -> allow"                                       'gh run list --branch main --workflow ci.yml --limit 1'
+expect_launch_ok   "r10) gh run view 123 -> allow"                                  'gh run view 123'
+expect_launch_ok   "r11) gh run view 123 --log-failed -> allow"                     'gh run view 123 --log-failed'
+expect_launch_ok   "r12) the word rerun elsewhere (grep rerun plugin/hooks/*.sh) -> allow" 'grep -n rerun plugin/hooks/sweap-merge.sh'
+expect_launch_ok   "r13) a path ending in gh run rerun-ish text is not the command -> allow" 'cat docs/gh-run-rerun.md'
+expect_launch_ok   "r14) gh run cancel 123 -> allow (not a rerun)"                  'gh run cancel 123'
 expect_launch_deny "m37) bare command after cd, with HOME= -> deny"                 "cd /repo && HOME=/evil $BARE" HOME
 # Whole-token matching: neither the driver's test suite nor its state dir is a
 # launch of the driver, so an env override next to them stays a no-op.

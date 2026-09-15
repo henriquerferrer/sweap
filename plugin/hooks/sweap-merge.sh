@@ -50,6 +50,17 @@ unset sm_reexec_dir sm_reexec_k sm_reexec_v
 #   sweap-merge.sh tick   <pr> [--budget <sec>]   one bounded tick (default 100 s)
 #   sweap-merge.sh watch  <pr> [--budget <sec>]   loop ticks until a terminal state
 #   sweap-merge.sh status [<pr>]                  print the state files, flag dead pollers
+#   sweap-merge.sh rerun  <pr> --reason "<text>"  a HAND rerun of a failed PR's red runs:
+#                                                 recorded in the state file (one per
+#                                                 head SHA and workflow, ever), never automatic; a
+#                                                 rerun that turns green files a flake note
+#
+# Stdout contract (rerun): exactly one line `<word> <reason>`, where <word> is
+# `pending` (accepted and recorded; exit 0), `refused` (a precondition failed
+# and NOTHING was written; exit 1), `failed` (a rerun WAS issued but not every
+# one, or the record could not be written — the state file says which; exit
+# 1), or `held-by:<owner>` (exit 1). Missing/blank --reason is a usage error
+# (exit 2).
 #
 # Stdout contract (tick/watch): exactly one terminal line `<word> <reason>`,
 # where <word> is a state (missing pending green merging merged failed
@@ -187,7 +198,8 @@ sm_iso_epoch() {   # "2026-08-25T10:00:00Z" -> epoch seconds (empty on failure)
 sm_oneline() { printf '%s' "$1" | tr '\n\r\t' '   ' | sed -E 's/  +/ /g; s/^ //; s/ $//'; }
 
 sm_usage() {
-  printf 'usage: sweap-merge.sh tick|watch <pr> [--budget <sec>] | status [<pr>]\n' >&2
+  printf 'usage: sweap-merge.sh tick|watch <pr> [--budget <sec>] | status [<pr>] | rerun <pr> --reason "<text>"\n' >&2
+  printf '  rerun prints one line: pending (recorded, exit 0) | refused (nothing written, exit 1) | failed (issued but not all/not recorded, exit 1); usage errors exit 2\n' >&2
   exit 2
 }
 
@@ -600,6 +612,15 @@ sm_transition() {
   return 0
 }
 
+# sm_disarm: clear the clocks so the tick's "re-arm after superseded" branch
+# computes fresh deadlines on its next pass. The ONE way a state file is
+# re-armed: the superseded branch of sm_tick and a hand `rerun` both go through
+# here, so the arming logic (appear anchored on the later of commit and arm
+# time, complete on the newest run start) lives in exactly one place.
+sm_disarm() {
+  sm_set '.arm_at = null | .appear_deadline = null | .complete_deadline = null | .observed = {} | .verdict = null'
+}
+
 # sm_checkpoint: the ARM-TIME write. A fenced write of the state as it already
 # is — no transition, no history row, no gh call. Until this existed the state
 # file was first created by the tick's first sm_transition, i.e. only AFTER an
@@ -854,7 +875,16 @@ def classify:
          elif $observed[$p] == null then
            (if ($now|tonumber) < ($appear|tonumber) then {s:"missing", r:"\($p) has no run yet"} else {s:"failed", r:"missing \($p)"} end)
          else ($observed[$p] | classify) as $c
-           | (if $c.s == "green" then $c else {s:$c.s, r:"\($p) \($c.r)"} end)
+           | ($observed[$p]) as $o
+           | ([ $stale[] | select(.run_id == $o.run_id and ($o.attempt // 1) <= (.attempt // 1)) ] | first) as $st
+           | if $c.s == "failed" and $o.status == "completed" and $o.conclusion == "failure" and $st != null then
+               # the listing still reports the attempt that was RERUN by hand:
+               # a stale observation, not a verdict, until the attempt advances
+               # or the appear deadline says the rerun never materialised
+               (if ($now|tonumber) < ($appear|tonumber)
+                then {s:"pending", r:"\($p) rerun of run \($o.run_id) not yet visible (attempt \($o.attempt // 1) still reported)"}
+                else {s:"failed", r:"\($p) rerun of run \($o.run_id) never appeared (attempt \($o.attempt // 1) still reported after appear_deadline)"} end)
+             elif $c.s == "green" then $c else {s:$c.s, r:"\($p) \($c.r)"} end
          end ]
    + [ $newest[] | .path as $p | select(($expected | index($p)) == null) | (classify) as $c
        | if $c.s == "green" then $c
@@ -868,10 +898,19 @@ def classify:
 
 # sm_evaluate <expected-json-array> <headfiles-json-array> <appear_deadline>:
 # EV_STATE, EV_REASON, EV_OBSERVED (json), EV_NEWEST_STARTED (iso or empty).
+# $stale = the runs every hand `rerun` ISSUED on the current head ({path,
+# run_id, attempt} as they were when rerun; one entry per verb call, so all
+# entries for the head are unioned): a listing that still shows that attempt as
+# completed/failure is not a verdict (see the filter), or the workflow's one
+# rerun on this head would be consumed by the tick that saw the pre-rerun state.
 sm_evaluate() {
-  local out
+  local out stale
   [ -n "$SM_RUNS_FILE" ] && [ -f "$SM_RUNS_FILE" ] || return 1
-  out="$("$SM_JQ" -cn --slurpfile r "$SM_RUNS_FILE" --argjson expected "$1" --argjson headfiles "$2" \
+  stale="$(printf '%s' "$SM_STATE_JSON" | "$SM_JQ" -c '.head as $h
+            | [ (.reruns // [])[] | select(.head == $h) | . as $e
+                | ($e.runs // [])[] | select(.run_id as $id | ($e.issued // []) | index($id) != null) ]' 2>/dev/null)" || stale='[]'
+  [ -n "$stale" ] || stale='[]'
+  out="$("$SM_JQ" -cn --slurpfile r "$SM_RUNS_FILE" --argjson expected "$1" --argjson headfiles "$2" --argjson stale "$stale" \
           --arg pr "$SM_PR" --arg now "$(sm_now)" --arg appear "$3" '($r[0] // []) as $runs | '"$SM_JQ_EVAL" 2>/dev/null)" || return 1
   [ -n "$out" ] || return 1
   EV_STATE="$(printf '%s' "$out" | "$SM_JQ" -r .state)"
@@ -991,6 +1030,9 @@ sm_post_merge() {
 }
 
 sm_after_merged() {   # run the post-merge hooks exactly once per merged state file
+  # a flake note deferred at green for budget (sm_flake_note) is filed here,
+  # on the merge or on any re-entry; the entry's mark makes it idempotent
+  sm_flake_note
   if [ "$(printf '%s' "$SM_STATE_JSON" | "$SM_JQ" -r '.post_merge_done // false')" = "true" ]; then
     # re-entry: the alarms recorded by the run that did the hooks still matter
     SM_ALERTS="$(printf '%s' "$SM_STATE_JSON" | "$SM_JQ" -r '(.post_merge_alerts // []) | map(select(.rc == 2)) | map(" | \(.hook | sub("\\.sh$"; "")): \(.banner)") | join("")' 2>/dev/null)"
@@ -1082,8 +1124,7 @@ sm_tick() {
       case "$SM_STATE" in superseded|failed|pending) sm_finish "$SM_STATE" "$SM_REASON" ;; esac
       ;;
     superseded)
-      # re-arm on the new head with fresh deadlines
-      sm_set '.arm_at = null | .appear_deadline = null | .complete_deadline = null | .observed = {} | .verdict = null'
+      sm_disarm   # re-arm on the new head with fresh deadlines
       ;;
   esac
   if [ "$SM_STATE" = "merged" ]; then
@@ -1252,7 +1293,7 @@ sm_tick() {
     fi
     sm_transition "$EV_STATE" "$EV_REASON" || sm_finish failed "$SM_REASON"
     case "$EV_STATE" in
-      green) sm_merge_step; break ;;
+      green) sm_flake_note; sm_merge_step; break ;;
       failed|undecidable|attended|timed_out) sm_finish "$EV_STATE" "$SM_REASON" ;;
     esac
     if [ "$SM_MAX_ITER" -gt 0 ] && [ "$iter" -ge "$SM_MAX_ITER" ]; then break; fi
@@ -1357,22 +1398,281 @@ sm_status() {
   return 0
 }
 
+# --- rerun (a HAND verb; the driver never reruns on its own) ------------------------------
+# The 2026-08-25 memo's item 1: every production queue ships without auto-retry,
+# and a rerun issued outside the driver leaves no record. This verb is the ONE
+# accepted path for a rerun: it refuses unless the PR's state is `failed` with a
+# completed `failure` run in the expected set, refuses when the same workflow is
+# also red on the base's tip (a flaky main stalls every PR; rerunning the PR is
+# then pointless), and refuses when a rerun was ever recorded for this head SHA
+# AND workflow path (one per head+workflow, ever — a second red of the same
+# workflow on the same head is a finding; a different workflow's first red on
+# the same head is not, see consumer A #319). It carries
+# its reason, records `reruns[]` in the state file, and re-arms through
+# sm_disarm so the next tick waits with fresh deadlines. Nothing is written on
+# a refusal.
+sm_refuse() {   # print `refused <why>` and exit 1 (nothing written)
+  printf 'refused %s\n' "$(sm_oneline "$1")"
+  sm_lease_release
+  exit 1
+}
+
+# sm_rerun_judge: the checks that decide whether THIS state file admits a
+# rerun, against SM_STATE_JSON as currently loaded. Run twice: once on the
+# pre-claim snapshot (cheap refusals take no lease) and again on a fresh read
+# under the lease — a tick that released between our first read and our
+# mkdir has rewritten history/observed/deadlines, and the write at the end
+# must be built from THAT file, never from the snapshot. Sets RJ_HEAD and
+# RJ_FAILED (json array of {path, run_id, attempt}); refuses otherwise.
+sm_rerun_judge() {
+  local n
+  [ "$SM_STATE" = "failed" ] || sm_refuse "PR #$SM_PR is '$SM_STATE', not failed; a rerun only answers a red run"
+  RJ_HEAD="$(printf '%s' "$SM_STATE_JSON" | "$SM_JQ" -r '.head // ""')"
+  [ -n "$RJ_HEAD" ] || sm_refuse "PR #$SM_PR's state file records no head"
+  # the red runs: expected paths whose newest observed run COMPLETED with
+  # conclusion `failure`. A missing run, a startup_failure, a cancelled or an
+  # in-flight one is not rerunnable (GitHub refuses reruns of unfinished runs,
+  # and the others are not flakes to begin with).
+  # The cap is per (head, workflow path), not per head: consumer A #319 went red
+  # on ci.yml, was rerun, then went red on claude-review.yml on the SAME head
+  # — a different workflow's first flake, not the same one's second. A path
+  # already in reruns[].runs[] for this head is spent; what is left is the
+  # rerunnable set, and only an EMPTY remainder refuses.
+  RJ_FAILED="$(printf '%s' "$SM_STATE_JSON" | "$SM_JQ" -c --arg h "$RJ_HEAD" '
+    ([ (.reruns // [])[] | select(.head == $h) | (.runs // [])[] | .path ]) as $spent
+    | [ (.expected // [])[] as $p | (.observed // {})[$p] // empty
+        | select(.status == "completed" and .conclusion == "failure")
+        | select(($spent | index($p)) == null)
+        | {path: $p, run_id: .run_id, attempt: (.attempt // 1)} ]' 2>/dev/null)" || RJ_FAILED='[]'
+  n="$(printf '%s' "$RJ_FAILED" | "$SM_JQ" 'length' 2>/dev/null)"
+  case "$n" in ''|*[!0-9]*) n=0 ;; esac
+  if [ "$n" = 0 ]; then
+    if [ "$(printf '%s' "$SM_STATE_JSON" | "$SM_JQ" -r --arg h "$RJ_HEAD" '
+          ([ (.reruns // [])[] | select(.head == $h) | (.runs // [])[] | .path ]) as $spent
+          | [ (.expected // [])[] as $p | (.observed // {})[$p] // empty
+              | select(.status == "completed" and .conclusion == "failure") | $p ]
+          | any(. as $p | ($spent | index($p)) != null)')" = "true" ]; then
+      sm_refuse "every red run on head $RJ_HEAD was already rerun once ($(printf '%s' "$SM_STATE_JSON" | "$SM_JQ" -r --arg h "$RJ_HEAD" '(.reruns // []) | map(select(.head == $h)) | map("\((.runs // []) | map(.path) | join(" ")) at \(.at), reason: \(.reason)") | join("; ")')); one rerun per head and workflow, ever — a second red of the same workflow on the same head is a finding, not a flake"
+    fi
+    sm_refuse "PR #$SM_PR failed without a completed 'failure' run in the expected set ($(printf '%s' "$SM_STATE_JSON" | "$SM_JQ" -r '(.history // []) | last | .why // "no reason recorded"')); nothing to rerun"
+  fi
+  return 0
+}
+
+sm_rerun() {
+  local reason="$1" stored_head head base pr_state failed_json n i run_id path ids paths issued="" bad="" red_json red_c red_id red_s
+  SM_DEADLINE=$(( $(sm_real_now) + SM_DEFAULT_BUDGET ))
+  sm_state_read
+  [ -f "$SM_FILE" ] || sm_refuse "no state file for PR #$SM_PR under $SM_DIR (nothing was ever watched); arm a watch first: sweap-merge watch $SM_PR"
+  sm_primary_check || sm_refuse "$SM_REASON"
+  sm_rerun_judge                     # pre-claim snapshot: cheap refusals, no lease
+  stored_head="$RJ_HEAD"
+  if ! sm_lease_claim; then sm_finish "held-by:$SM_HELD_BY" "lease on PR #$SM_PR is held by a live poller; a rerun needs the state file"; fi
+  trap sm_lease_release EXIT
+  # the head must still be the one that went red: a rerun reuses GITHUB_SHA, so
+  # after a push it would test the wrong commit (and the new head gets its own runs)
+  sm_gh pr view "$SM_PR" --json headRefOid,baseRefName,state || sm_refuse "$SM_GH_ERR"
+  head="$(printf '%s' "$BR_OUT" | "$SM_JQ" -r '.headRefOid // ""')"
+  base="$(printf '%s' "$BR_OUT" | "$SM_JQ" -r '.baseRefName // ""')"
+  pr_state="$(printf '%s' "$BR_OUT" | "$SM_JQ" -r '.state // ""')"
+  case "$pr_state" in
+    OPEN) ;;
+    "") sm_refuse "gh pr view returned no state for PR #$SM_PR (fail closed)" ;;
+    *) sm_refuse "PR #$SM_PR is $pr_state; nothing to rerun" ;;
+  esac
+  [ -n "$head" ] || sm_refuse "gh pr view returned no head for PR #$SM_PR (fail closed)"
+  # AUTHORITATIVE read, under the lease: everything judged so far was a
+  # snapshot from before the claim. Re-judge the file as it is now, and refuse
+  # if the head it records is no longer the one we judged.
+  sm_state_read
+  sm_primary_check || sm_refuse "$SM_REASON"
+  sm_rerun_judge
+  [ "$RJ_HEAD" = "$stored_head" ] || sm_refuse "state file changed under us: it recorded head $stored_head before the claim and $RJ_HEAD after; re-run the verb"
+  failed_json="$RJ_FAILED"
+  n="$(printf '%s' "$failed_json" | "$SM_JQ" 'length')"
+  [ -n "$base" ] || base="$(printf '%s' "$SM_STATE_JSON" | "$SM_JQ" -r '.base // "main"')"
+  if [ "$head" != "$stored_head" ]; then
+    sm_refuse "head moved $stored_head -> $head since the red run; the rerun would test the old commit — re-arm the watch instead: sweap-merge watch $SM_PR"
+  fi
+  # a red base tip: the newest run of the same workflow on the base branch
+  i=0
+  while [ "$i" -lt "$n" ]; do
+    path="$(printf '%s' "$failed_json" | "$SM_JQ" -r ".[$i].path")"
+    sm_gh run list --branch "$base" --workflow "$(basename "$path")" --limit 1 --json status,conclusion,headSha,databaseId \
+      || sm_refuse "cannot read $base's tip for $path: $SM_GH_ERR (a rerun needs to know the base is green)"
+    red_json="$(printf '%s' "$BR_OUT" | "$SM_JQ" -c '(if type=="array" then . else [] end) | first // {}' 2>/dev/null)" || red_json='{}'
+    red_s="$(printf '%s' "$red_json" | "$SM_JQ" -r '.status // ""')"
+    red_c="$(printf '%s' "$red_json" | "$SM_JQ" -r '.conclusion // ""')"
+    red_id="$(printf '%s' "$red_json" | "$SM_JQ" -r '.databaseId // "?"')"
+    if [ "$red_s" = "completed" ]; then
+      case "$red_c" in
+        failure|timed_out|startup_failure)
+          sm_refuse "$path is also red on $base's tip (run $red_id: $red_c); rerunning PR #$SM_PR is pointless — fix or rerun $base first" ;;
+      esac
+    fi
+    i=$((i + 1))
+  done
+  # act: one `gh run rerun --failed` per red expected run. Past this point the
+  # record is written whatever happens — a rerun that was issued must count
+  # against this head even if a later call fails.
+  ids=""; paths=""
+  i=0
+  while [ "$i" -lt "$n" ]; do
+    run_id="$(printf '%s' "$failed_json" | "$SM_JQ" -r ".[$i].run_id")"
+    path="$(printf '%s' "$failed_json" | "$SM_JQ" -r ".[$i].path")"
+    if sm_gh run rerun --failed "$run_id"; then
+      issued="${issued}${issued:+ }$run_id"
+    else
+      bad="${bad}${bad:+; }run $run_id ($path): $SM_GH_ERR"
+    fi
+    ids="${ids}${ids:+,}$run_id"; paths="${paths}${paths:+ }$path"
+    i=$((i + 1))
+  done
+  if [ -z "$issued" ]; then
+    sm_refuse "no rerun was issued: $bad"
+  fi
+  # the record is built from the JSON read UNDER the lease (the second
+  # sm_state_read above), so nothing a released tick wrote is clobbered
+  sm_set '.reruns = ((.reruns // []) + [{head:$h, run_ids:($ids | split(",") | map(tonumber)), runs:$runs, reason:$r, at:($at|tonumber), by:$by, issued:($iss | split(" ") | map(tonumber))}])' \
+    --arg h "$stored_head" --arg ids "$ids" --argjson runs "$failed_json" --arg r "$reason" --arg at "$(sm_now)" \
+    --arg by "${USER:-unknown}@$SM_HOST session $SM_SESSION" --arg iss "$issued" \
+    || sm_refuse "state update failed (jq); the rerun of $issued WAS issued but could not be recorded"
+  sm_disarm
+  if ! sm_transition pending "manual rerun ($reason)"; then
+    printf 'failed rerun of %s was issued but the record could not be written: %s\n' "$issued" "$(sm_oneline "$SM_REASON")"
+    exit 1
+  fi
+  if [ -n "$bad" ]; then
+    printf 'failed rerun issued for %s but not all: %s; recorded on head %s\n' "$issued" "$(sm_oneline "$bad")" "$stored_head"
+    exit 1
+  fi
+  printf 'pending manual rerun (%s): gh run rerun --failed %s (%s) on head %s, recorded; re-arm the watch: sweap-merge watch %s\n' \
+    "$(sm_oneline "$reason")" "$(printf '%s' "$issued" | tr ' ' ',')" "$paths" "$stored_head" "$SM_PR"
+  exit 0
+}
+
+# --- the flake note --------------------------------------------------------------------
+# A PR that went red, was rerun BY HAND through `rerun`, and then reaches green
+# on the same head is a flake by definition (same commit, different verdict).
+# That is a finding the pipeline would otherwise lose: it is filed as ONE
+# discovered note (kind gap) per workflow path through the plugin's own note
+# writer, and a later flake of the same workflow APPENDS one line to that note
+# instead of opening a second — the only edit a discovered note ever receives.
+# Never a merge blocker: every failure here is a stderr line, nothing more.
+sm_backlog_dir() {   # the consumer's backlog.dir (CLAUDE.md `## sweap config`), default roadmap/
+  local d=""
+  [ -f "$SM_PRIMARY/CLAUDE.md" ] && d="$(sed -n 's/^backlog\.dir:[[:space:]]*\([^[:space:]]*\).*/\1/p' "$SM_PRIMARY/CLAUDE.md" 2>/dev/null | head -1)"
+  [ -n "$d" ] || d="roadmap/"
+  case "$d" in */) ;; *) d="$d/" ;; esac
+  printf '%s' "$d"
+}
+
+sm_epoch_iso() {   # epoch -> 2026-08-25T10:00:00Z (bash 3.2 / macOS date, then GNU)
+  date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null && return 0
+  date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null && return 0
+  printf '%s' "$1"
+}
+
+sm_flake_note() {
+  local head base_sha inbox node mjs todo n i j m entry path run_id attempt green_attempt reason at ts title body existing noted bound
+  head="$(printf '%s' "$SM_STATE_JSON" | "$SM_JQ" -r '.head // ""')"
+  todo="$(printf '%s' "$SM_STATE_JSON" | "$SM_JQ" -c --arg h "$head" \
+    '[(.reruns // []) | to_entries[] | select(.value.head == $h and ((.value.flake_noted // false) | not)) | .key]' 2>/dev/null)" || todo='[]'
+  n="$(printf '%s' "$todo" | "$SM_JQ" 'length' 2>/dev/null)"
+  case "$n" in ''|*[!0-9]*|0) return 0 ;; esac
+  base_sha="$(printf '%s' "$SM_STATE_JSON" | "$SM_JQ" -r '.base_sha // "?"')"
+  inbox="$SM_PRIMARY/$(sm_backlog_dir)discovered"
+  mjs="$SM_HOOKS_DIR/../tools/sweap-note.mjs"
+  node="$(PATH="$SM_PINNED_PATH" command -v node 2>/dev/null)" || node=""
+  # the note writer is charged against the tick's budget like a gh call: a
+  # slow node start must never eat the budget the merge step needs (and one
+  # of its two attempts). Below the margin the note is DEFERRED — the entry
+  # stays un-noted and the merged re-entry path files it on a later pass.
+  bound=$(( SM_DEADLINE - $(sm_real_now) - 10 ))
+  if [ "$SM_DEADLINE" -gt 0 ] && [ "$bound" -lt 5 ]; then
+    printf '[sweap-merge] flake note deferred: %ss of budget left is too little to start the note writer; it is filed on the next pass\n' "$(( SM_DEADLINE - $(sm_real_now) ))" >&2
+    return 0
+  fi
+  [ "$bound" -gt 20 ] && bound=20
+  noted='"skipped"'
+  if [ ! -d "$inbox" ]; then
+    printf '[sweap-merge] flake note skipped: no discovered inbox at %s (backlog.dir); the rerun stays recorded in the state file\n' "$inbox" >&2
+  elif [ ! -f "$mjs" ]; then
+    printf '[sweap-merge] flake note skipped: sweap-note.mjs not found at %s (the rerun stays recorded in the state file)\n' "$mjs" >&2
+  elif [ -z "$node" ]; then
+    printf '[sweap-merge] flake note skipped: node not found under the pinned PATH (the rerun stays recorded in the state file)\n' >&2
+  else
+    noted='true'
+    at="$(sm_now)"; ts="$(sm_epoch_iso "$at")"
+    i=0
+    while [ "$i" -lt "$n" ]; do
+      j="$(printf '%s' "$todo" | "$SM_JQ" -r ".[$i]")"
+      entry="$(printf '%s' "$SM_STATE_JSON" | "$SM_JQ" -c ".reruns[$j]")"
+      reason="$(printf '%s' "$entry" | "$SM_JQ" -r '.reason // ""')"
+      m="$(printf '%s' "$entry" | "$SM_JQ" -r '(.runs // []) | length')"
+      case "$m" in ''|*[!0-9]*) m=0 ;; esac
+      j=0
+      while [ "$j" -lt "$m" ]; do
+        path="$(printf '%s' "$entry" | "$SM_JQ" -r ".runs[$j].path")"
+        run_id="$(printf '%s' "$entry" | "$SM_JQ" -r ".runs[$j].run_id")"
+        attempt="$(printf '%s' "$entry" | "$SM_JQ" -r ".runs[$j].attempt // 1")"
+        green_attempt="$(printf '%s' "$SM_STATE_JSON" | "$SM_JQ" -r --arg p "$path" '(.observed[$p].attempt // "?")')"
+        existing="$(grep -l -- "^title: flaky: $path " "$inbox"/*.md 2>/dev/null | head -1)"
+        if [ -n "$existing" ]; then
+          # append-only: the one edit a discovered note ever receives
+          if printf -- '- PR #%s head %s run %s at %s\n' "$SM_PR" "$head" "$run_id" "$ts" >>"$existing" 2>/dev/null; then
+            printf '[sweap-merge] flake: %s red then green on rerun again; appended to %s\n' "$path" "${existing#"$SM_PRIMARY"/}" >&2
+          else
+            printf '[sweap-merge] flake note append FAILED for %s (cannot write %s)\n' "$path" "$existing" >&2
+          fi
+        else
+          title="flaky: $path went red then green on rerun for PR #$SM_PR ($reason)"
+          body="$(printf '%s failed on PR #%s at head %s (run %s attempt %s, base %s), was rerun by hand (reason: %s) and went green on attempt %s of the same run with no change to the commit. Same code, two verdicts: a flake. Find the nondeterminism (test, runner, fixture) and fix or quarantine it; each further occurrence is appended below by sweap-merge.\n\n- PR #%s head %s run %s at %s' \
+            "$path" "$SM_PR" "$head" "$run_id" "$attempt" "$base_sha" "$reason" "$green_attempt" "$SM_PR" "$head" "$run_id" "$ts")"
+          sm_bounded "$bound" /bin/sh -c 'cd "$1" && exec "$2" "$3" discovered "$4" gap "$5" "$6" "$7"' sh \
+            "$SM_PRIMARY" "$node" "$mjs" "$title" "PR #$SM_PR" "$body" "sweap-merge rerun"
+          if [ "$BR_RC" = "0" ] && [ -n "$BR_OUT" ]; then
+            printf '[sweap-merge] flake: %s red then green on rerun; filed %s\n' "$path" "$(sm_oneline "$BR_OUT")" >&2
+          else
+            printf '[sweap-merge] flake note FAILED for %s (rc=%s): %s\n' "$path" "$BR_RC" "$(sm_oneline "${BR_ERR:-$BR_OUT}")" >&2
+          fi
+        fi
+        j=$((j + 1))
+      done
+      i=$((i + 1))
+    done
+  fi
+  # mark every entry for this head so a second pass through green (a gate deny
+  # and a later re-evaluation) never files or appends twice
+  sm_set '.reruns = [ .reruns[] | if .head == $h and ((.flake_noted // false) | not) then .flake_noted = $v else . end ]' \
+    --arg h "$head" --argjson v "$noted" || true
+  sm_state_write || true
+  return 0
+}
+
 # --- main -----------------------------------------------------------------------------------
 sm_main() {
-  local verb="${1:-}" pr="" budget="$SM_DEFAULT_BUDGET" a
+  local verb="${1:-}" pr="" budget="$SM_DEFAULT_BUDGET" a reason=""
   [ -n "$verb" ] || sm_usage
   shift
-  case "$verb" in tick|watch|status) ;; *) sm_usage ;; esac
+  case "$verb" in tick|watch|status|rerun) ;; *) sm_usage ;; esac
   while [ $# -gt 0 ]; do
     a="$1"; shift
     case "$a" in
-      --budget) [ $# -gt 0 ] || sm_usage; budget="$1"; shift
+      --budget) [ "$verb" != "rerun" ] && [ $# -gt 0 ] || sm_usage; budget="$1"; shift
         printf '%s' "$budget" | grep -qE '^[0-9]+$' && [ "$budget" -ge 1 ] || sm_usage ;;
-      --budget=*) budget="${a#--budget=}"; printf '%s' "$budget" | grep -qE '^[0-9]+$' && [ "$budget" -ge 1 ] || sm_usage ;;
+      --budget=*) [ "$verb" != "rerun" ] || sm_usage; budget="${a#--budget=}"; printf '%s' "$budget" | grep -qE '^[0-9]+$' && [ "$budget" -ge 1 ] || sm_usage ;;
+      --reason) [ "$verb" = "rerun" ] && [ $# -gt 0 ] || sm_usage; reason="$1"; shift ;;
+      --reason=*) [ "$verb" = "rerun" ] || sm_usage; reason="${a#--reason=}" ;;
       -*) sm_usage ;;   # no --repo/-R/--admin or anything else
       *) [ -z "$pr" ] || sm_usage; pr="$a" ;;
     esac
   done
+  if [ "$verb" = "rerun" ]; then
+    # a hand rerun carries its reason (the memo's rule); an empty one is a usage error
+    reason="$(sm_oneline "$reason")"
+    [ -n "$reason" ] || { printf 'usage: sweap-merge.sh rerun <pr> --reason "<why this red is believed to be a flake>"\n' >&2; exit 2; }
+  fi
   if [ "$verb" != "status" ]; then
     printf '%s' "$pr" | grep -qE '^[0-9]+$' || sm_usage
   elif [ -n "$pr" ]; then
@@ -1391,6 +1691,7 @@ sm_main() {
     status) sm_status "$pr"; exit 0 ;;
     tick) sm_bind_pr "$pr"; sm_tick "$budget" ;;
     watch) sm_bind_pr "$pr"; sm_watch "$budget" ;;
+    rerun) sm_bind_pr "$pr"; sm_rerun "$reason" ;;
   esac
 }
 
