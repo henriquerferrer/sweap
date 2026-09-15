@@ -257,6 +257,56 @@ commit_all "$R" record
 run_gate "$R" --check
 check "unscored > 0 WITH an explicit acknowledgement => valid" 0
 
+# T8p: `proofs_lost:` — an experiment that ran and was not read is not evidence (consumer A F12).
+R="$(new_repo t8p)"
+base="$(head_sha "$R")"
+mk_item "$R" F1.1 'done'
+commit_all "$R"
+mk_record "$R" F1 "$base" "$(head_sha "$R")" 0 0 0 "" "finders_reporting: 6
+proofs_dispatched: 4
+proof_confirmed: 1
+proof_refuted: 0
+proof_unverifiable: 1
+proofs_lost: 2"
+commit_all "$R" record
+run_gate "$R" --check
+check "proofs_lost > 0 with no acknowledgement => invalid" 1
+check_out "the failure says the verdicts are recoverable" "the journal holds the verdicts"
+
+R="$(new_repo t8q)"
+base="$(head_sha "$R")"
+mk_item "$R" F1.1 'done'
+commit_all "$R"
+mk_record "$R" F1 "$base" "$(head_sha "$R")" 0 0 0 "" "finders_reporting: 6
+proofs_dispatched: 4
+proofs_lost: 2
+proofs_lost_accepted: harness outage; the two are re-filed as bucket-2 experiments deliberately"
+commit_all "$R" record
+run_gate "$R" --check
+check "proofs_lost > 0 WITH an explicit acknowledgement => valid" 0
+
+R="$(new_repo t8r)"
+base="$(head_sha "$R")"
+mk_item "$R" F1.1 'done'
+commit_all "$R"
+mk_record "$R" F1 "$base" "$(head_sha "$R")" 0 0 0 "" "finders_reporting: 6
+proofs_dispatched: 4
+proof_confirmed: 3
+proof_refuted: 1"
+commit_all "$R" record
+run_gate "$R" --check
+check "the join keys without a proofs_lost key change nothing => valid" 0
+
+R="$(new_repo t8s)"
+base="$(head_sha "$R")"
+mk_item "$R" F1.1 'done'
+commit_all "$R"
+mk_record "$R" F1 "$base" "$(head_sha "$R")" 0 0 0 "" "finders_reporting: 6
+proofs_lost:"
+commit_all "$R" record
+run_gate "$R" --check
+check "an EMPTY proofs_lost value is not an absent key" 1
+
 R="$(new_repo t8h)"
 base="$(head_sha "$R")"
 mk_item "$R" F1.1 'done'

@@ -376,6 +376,23 @@ validate_record() { # validate_record <milestone> <file> ; 0 = valid
       fail "record $rec: unscored: $unscored finding(s) were never scored by any refuter, so this panel did not run for them — resume the run in workflow_run: ($(fm_get "$rec" workflow_run)) and regenerate, or record why you are closing over it in unscored_accepted:"; ok=0
     fi
   fi
+  # AN EXPERIMENT THAT RAN AND WAS NOT READ IS NOT EVIDENCE EITHER WAY. `proofs_lost:`
+  # counts findings the Validate stage dispatched a prover for and whose verdict never
+  # reached the record. Consumer A F12 (2026-09-12): 26 provers ran, the journal held 26
+  # execution-backed verdicts (25 confirmed, 1 refuted), and the record said 26
+  # UNVERIFIED — triage then filed 22 items to redo experiments already done. The
+  # workflow now writes the count down; this is the gate that reads it. Same shape and
+  # same discharge as `unscored:`: resume the run in `workflow_run:` and regenerate,
+  # or say in `proofs_lost_accepted:` why the milestone closes over it. Same
+  # additive discipline: absent key, unchanged behaviour; presence, not emptiness.
+  if frontmatter "$rec" | grep -qE '^proofs_lost:'; then
+    v="$(fm_get "$rec" proofs_lost)"
+    if ! printf '%s' "$v" | grep -qE '^[0-9]+$'; then
+      fail "record $rec: proofs_lost: '$v' is not a count — fail closed"; ok=0
+    elif case "$v" in *[1-9]*) true ;; *) false ;; esac && [ -z "$(fm_get "$rec" proofs_lost_accepted)" ]; then
+      fail "record $rec: proofs_lost: $v experiment(s) were dispatched to a prover and their verdicts never reached the record — resume the run in workflow_run: ($(fm_get "$rec" workflow_run)) and regenerate before triaging (the journal holds the verdicts), or record why you are closing over it in proofs_lost_accepted:"; ok=0
+    fi
+  fi
   [ "$(fm_get "$rec" milestone)" = "$m" ] || { fail "record $rec: milestone key != $m"; ok=0; }
   base="$(fm_get "$rec" range_base)"; head="$(fm_get "$rec" range_head)"
   # Binding (the mistarget rule): recompute, never trust. Any git uncertainty

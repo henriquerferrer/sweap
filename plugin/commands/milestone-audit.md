@@ -94,7 +94,13 @@ subset of `confirmed` — and the record carries an `unverified:` count plus a
 established defects**: nothing disproved them and nothing demonstrated them.
 Triage them as **bucket 2**, a follow-up item that writes the experiment named
 in the block, and reach for bucket 1 or 3 only if you verified the claim
-yourself. Do not report them as "confirmed by adversarial review" — that claims
+yourself. Read the status line first, though: a block that says the sandboxed
+run **was lost** had its prover die, not fail — resume the Workflow
+(`resumeFromRunId`) before triaging, exactly as for a panel that stopped
+answering; a block that says the sandboxed run **could not either** was
+answered and is a real coverage gap. And a block with a `Sandboxed run:`
+section and no `UNVERIFIED` line was settled by execution — that one IS a
+verified defect (or, if the prover refuted it, it is not in the record at all). Do not report them as "confirmed by adversarial review" — that claims
 three adversaries failed to refute what three adversaries never looked at. If
 the `unverified` count is large, say so in the summary: it means the audit's
 reading tier was out of its depth on that surface, which is worth more than any

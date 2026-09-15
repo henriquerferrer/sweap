@@ -280,7 +280,14 @@ the item is scoped too big — split it.
    locally when the project's services are available, else verified by CI on the
    PR (see Environment parity).
 3. **Adversarial review:** dispatch a fresh-context review agent that sees only
-   the diff + the plan. Fix confirmed findings.
+   the diff + the plan. Fix confirmed findings. **A re-review is a NEW
+   dispatch** with the new diff, never a message to the reviewer that is still
+   alive: a re-messaged reviewer's context drifts and every round finds a new
+   class of remark (consumer A DV.9, 2026-09-07: one reviewer re-messaged five
+   times, seven rounds, the last three about comment wording, ~600k tokens;
+   the CI reviewer then approved the PR on its first pass). Non-blocking
+   remarks belong under the reviewer's `Advisory` section and never flip the
+   verdict.
 4. **Conditional review dimensions** (from the item file's `review-dimensions`
    frontmatter — see below): run each required extra reviewer before the PR.
 5. **Merge with `sweap-merge watch <n>`** (the merge driver — it waits, gates,
@@ -1232,7 +1239,11 @@ item that writes the missing experiment, not as a bucket-1 bug. Never let it be
 counted as "confirmed by adversarial review": that claims three adversaries
 failed to refute it when in fact three adversaries never looked. A large
 `unverified` count is itself the finding — it means the audit's reading tier is
-out of its depth on that surface.
+out of its depth on that surface. The block says which of two things happened:
+the sandboxed run *could not settle it either* (answered, a coverage gap) or
+*was lost* (the prover died — resume the Workflow before triaging). A block
+carrying a `Sandboxed run:` section and no `UNVERIFIED` line was settled by
+execution and is a verified defect.
 
 **A zero-findings audit must prove it ran.** "This audit was clean" and "this
 audit ran" are different claims, and a `0 / 0 / 0` record makes the first while
@@ -1619,3 +1630,11 @@ the human's standing answers — treat them as given, do not re-ask in a session
 4. Check `docs/superpowers/plans/` for an in-flight plan with unchecked steps —
    that means a feature was interrupted mid-implementation; resume it before
    starting anything new.
+5. Check `.claude/sweap-run.md` for a `stalled:` line. The StopFailure hook
+   writes one when the orchestrator's own turn ended on an API error mid-run
+   (consumer A 2026-09-09, Claude Code 2.1.263: a 500 at 23:31 and nothing moved
+   for ten hours). Since Claude Code 2.1.269 a `/goal` run retries an API
+   error with backoff and pauses only after that, and the line says which
+   case applies; several `stalled:` lines within ~25 min are one outage. The
+   run is not over: re-read the run file's goal, verify the in-flight item's
+   state from git and `sweap-merge status`, and continue.

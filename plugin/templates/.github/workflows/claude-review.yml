@@ -381,6 +381,13 @@ jobs:
             echo "::error::No verdict from reviewer '$REVIEWER_LOGIN' (user.type Bot) newer than head $HEAD_SHA after TWO passes (retry outcome: $RETRY_OUTCOME) — failing closed. Both transcripts are attached to this run as the 'reviewer-transcript-*' artifact (pass1.json = first pass); read them before theorising. Re-run the review, or investigate why neither pass posted. If the reviewer posts under a different login (custom github_token app), set repo variable CLAUDE_REVIEWER_LOGIN."
             exit 1
           fi
+          # Size next to verdict, as a plain notice: one turn reviews a +11k
+          # diff and a +200 diff alike, and whether that matters is a question
+          # the next milestone audit can only answer if the sizes are on record.
+          # A diagnostic, not a gate — nothing here changes the outcome.
+          size=$(gh pr view "$PR" --repo "$REPO" --json additions,deletions,changedFiles \
+            --jq '"+\(.additions) -\(.deletions) across \(.changedFiles) file(s)"' 2>/dev/null || echo "unknown")
+          echo "::notice::review-size: $size; verdict: $verdict"
           if [ -z "$FIRST_VERDICT" ]; then
             echo "::warning::The verdict came from the RETRY pass — the first pass ended without posting. This is the failure the retry exists for, not a healthy run: read claude-execution-output.pass1.json in the 'reviewer-transcript-*' artifact and see what the first pass did instead of posting."
           fi

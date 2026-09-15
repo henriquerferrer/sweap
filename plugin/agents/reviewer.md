@@ -77,6 +77,14 @@ For each confirmed finding: file/line, what's wrong, why it matters, and
 violates. Only report findings you're actually confident in — don't pad the
 list with speculative nitpicks to look thorough.
 
+Remarks that do not meet the `needs-work` bar below (style, naming, a comment
+that could be clearer, a nice-to-have) go under a heading `### Advisory`,
+after the findings and before the verdict. Advisory never flips the verdict,
+and an implementer never has to answer it. If you are messaged for another
+round instead of being re-dispatched (which the playbook forbids), answer
+only whether the previously confirmed findings are closed; do not open a new
+class of finding on a diff you have already verdicted.
+
 Then, as the **required final section**, a one-line verdict. This exact
 string, on its own line, is what the merge-gate CI check greps for — get it
 character-for-character right:

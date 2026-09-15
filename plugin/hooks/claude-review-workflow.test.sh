@@ -49,6 +49,8 @@ ok "both action steps pin the same action sha"         test "$(count 'uses: anth
 # The prompt: one copy, one-turn rule, sent by both passes.
 ok "the prompt is defined once at job level"           test "$(count '^      REVIEW_PROMPT:')" = 1
 ok "the prompt states the one-turn rule"               grep -qF 'Do the ENTIRE review in this one turn' "$YML"
+ok "the verdict step records the diff size beside the verdict" grep -qF '::notice::review-size:' "$YML"
+ok "the size notice is a diagnostic, not a gate"           bash -c '! grep -E "review-size" "$1" | grep -q "exit"' _ "$YML"
 ok "the prompt says an Action never re-invokes"        grep -qF 'invokes you exactly once and never again' "$YML"
 ok "the prompt still demands the Verdict line"         grep -qF '"Verdict: approve" or "Verdict: needs-work"' "$YML"
 ok "the first pass sends the shared prompt"            grep -qF 'prompt: ${{ env.REVIEW_PROMPT }}' "$YML"

@@ -414,6 +414,12 @@ const TUNING = {
   refutedAt: 0.5,
   killVotes: 2,
   proofTickets: 1,
+  // Reasoning effort per stage. Named here, not as literals at the dispatch
+  // sites, because the record stamps them (`find_effort:` etc.): the per-block
+  // `refuted_votes:`/`proven:` rows are only comparable across audits that ran
+  // under the same regime, and a regime change that is not written down turns
+  // the labeled set into noise. Change these only with a labeled comparison.
+  effort: { find: 'high', refute: 'high', prove: 'high' },
 }
 
 const tally = (refutations, tuning) => {
@@ -466,7 +472,7 @@ const found = await pipeline(
     agentAs('reader',
       `${lens.prompt}\n\nMilestone scope (from a prior mapping agent):\n${scopeSummary}\n\nRead the actual code before claiming anything. Only report findings you can support with specific code evidence. No style nits — defects only.` +
         NO_WRITES,
-      { label: `find:${lens.key}`, phase: 'Find', schema: FINDINGS, effort: 'high' }
+      { label: `find:${lens.key}`, phase: 'Find', schema: FINDINGS, effort: TUNING.effort.find }
     ).then((result) => {
       // A finder that produced NOTHING is not a clean lens, and the difference
       // is invisible one line later (`result?.findings ?? []` flattens both to
@@ -493,7 +499,7 @@ const found = await pipeline(
                 `How your number is used, exactly: this finding dies if ${TUNING.killVotes} of the ${REFUTER_SEATS.length} independent refuters score above ${TUNING.refutedAt}. So score above ${TUNING.refutedAt} when you judge it more likely than not that the finding is wrong, and at or below it when you do not. You are graded per call: a correct call earns 1 point and an incorrect one costs ${WRONG_CALL_PENALTY} (the t/(1-t) rule at t = ${TUNING.refutedAt}). There is no answer that scores 0 — you cannot decline to score, and the field below is not a way to.\n\n` +
                 `If, and only if, reading genuinely cannot settle this, ALSO fill 'experiment' with the exact command or test that would. That is a ticket, not a verdict: it does not replace your score (score anyway, on what you did manage to read), and it does not resolve the finding — it routes it to an agent that can actually run things. Name a command; "write a test for it" is not a ticket.` +
                 NO_WRITES,
-              { label: `refute${i}:${f.title.slice(0, 30)}`, phase: 'Refute', schema: REFUTATION, effort: 'high' }
+              { label: `refute${i}:${f.title.slice(0, 30)}`, phase: 'Refute', schema: REFUTATION, effort: TUNING.effort.refute }
             )
           )
         ).then((refutations) => ({ ...f, lens: lens.key, ...tally(refutations, TUNING) }))
@@ -563,20 +569,50 @@ const proofs = await parallel(
         `Finding (lens ${f.lens}, severity ${f.severity}): ${f.title}\nFile: ${f.file}\nClaim: ${f.claim}\nEvidence given: ${f.evidence}\n\n` +
         `The experiment the ticket named:\n${f.experiment || '(none named — design the smallest decisive experiment yourself)'}\n\n` +
         `Run it. Paste the exact command and its exact output as your evidence. Return 'refuted' if the claim does not hold, 'confirmed' if it does, or 'unverifiable' if you genuinely could not run a decisive experiment (say what blocked you). Never report a result you did not observe.`,
-      { label: `prove:${f.title.slice(0, 30)}`, phase: 'Validate', schema: PROOF, effort: 'high', isolation: 'worktree' }
-    ).then((p) => ({ finding: f, proof: p }))
+      { label: `prove:${f.title.slice(0, 30)}`, phase: 'Validate', schema: PROOF, effort: TUNING.effort.prove, isolation: 'worktree' }
+    )
   )
 )
-for (const r of proofs.filter(Boolean)) {
-  const f = r.finding
-  const v = r.proof?.verdict
-  // A LOST validator leaves the finding exactly as the panel left it: surviving
-  // but unproven. Losing the empirical gate must never silently upgrade a
-  // finding to "verified", and must never kill it either.
-  if (v === 'refuted') { f.confirmed = false; f.proven = 'refuted' }
-  else if (v === 'confirmed') { f.proven = 'confirmed' }
-  else { f.proven = 'unverifiable' }
-  f.proofEvidence = r.proof?.evidence ?? null
+// PROOFS-START — extracted and evaluated by milestone-audit.test.mjs, like TALLY.
+// Proofs are applied BY POSITION, never by object identity. `parallel` returns
+// its results in thunk order with a lost thunk left as null in place — but
+// every value that crosses a parallel()/pipeline() boundary comes back as a
+// CLONE of what the thunk returned (measured 2026-09-13 with a probe workflow:
+// a wrapper `{ finding: f, proof }` returned through parallel() had
+// `wrapper.finding !== f`). The previous shape wrote the verdict onto
+// `wrapper.finding`, i.e. onto the clone, while the record was assembled from
+// `all`, the originals. The F12 audit ran 26 provers, the journal holds 26
+// execution-backed verdicts (25 confirmed, 1 refuted), and the record said
+// 26 UNVERIFIED with no evidence — every experiment ran and none was read.
+// Keep this function pure over (pending, proofs); it must reference nothing
+// outside the markers.
+const applyProofs = (pending, proofs) => {
+  for (let i = 0; i < pending.length; i++) {
+    const f = pending[i]
+    const p = proofs[i]
+    // A LOST validator leaves the finding exactly as the panel left it:
+    // surviving but unproven. Losing the empirical gate must never silently
+    // upgrade a finding to "verified", and must never kill it either — it is
+    // named `lost` so the record can say which of the two happened.
+    if (!p || typeof p !== 'object') { f.proven = 'lost'; f.proofEvidence = null; continue }
+    if (p.verdict === 'refuted') { f.confirmed = false; f.proven = 'refuted' }
+    else if (p.verdict === 'confirmed') { f.proven = 'confirmed' }
+    else { f.proven = 'unverifiable' }
+    f.proofEvidence = typeof p.evidence === 'string' && p.evidence ? p.evidence : null
+  }
+  return pending
+}
+// PROOFS-END
+applyProofs(pending, proofs)
+const proofCount = (v) => pending.filter((f) => f.proven === v).length
+if (pending.length) {
+  log(`sandboxed runs: ${proofCount('confirmed')} confirmed, ${proofCount('refuted')} refuted, ${proofCount('unverifiable')} could not run a decisive experiment, ${proofCount('lost')} lost`)
+  if (proofCount('lost')) {
+    log(
+      `⚠ ${proofCount('lost')} of ${pending.length} dispatched experiments never returned a verdict — those findings carry ` +
+        `\`proofs_lost:\` in the record and the audit gate refuses it until the run is resumed or the loss is accepted in \`proofs_lost_accepted:\`.`
+    )
+  }
 }
 
 const confirmed = all.filter((f) => f.confirmed)
@@ -704,6 +740,32 @@ const record = [
   // `confirmed`, emitted only when non-zero, so `raw = refuted + confirmed`
   // still holds in audit-gate.sh and sweap_format does not move.
   ...(unscored.length ? [`unscored: ${unscored.length}`] : []),
+  // THE JOIN BETWEEN READING AND RUNNING, written down where it accumulates.
+  // Emitted only when the Validate stage ran (something was ticketed), all
+  // additive, sweap_format unchanged: how many experiments were dispatched and
+  // how each ended. `proofs_lost` is the one the gate reads — a prover that was
+  // dispatched and whose verdict never reached the record is the F12 shape
+  // (26 journaled verdicts, 26 UNVERIFIED blocks), and it must not pass again
+  // without someone saying so in `proofs_lost_accepted:`. `proof_refuted`
+  // findings are already inside `refuted:` (their `confirmed` was cleared), so
+  // `raw = refuted + confirmed` is untouched. Over several milestones these
+  // keys plus the per-block `refuted_votes:`/`proven:` lines are the labeled
+  // set the TUNING comment says a recalibration needs — grown from real
+  // records, not planted canaries.
+  ...(pending.length
+    ? [
+        `proofs_dispatched: ${pending.length}`,
+        `proof_confirmed: ${proofCount('confirmed')}`,
+        `proof_refuted: ${proofCount('refuted')}`,
+        `proof_unverifiable: ${proofCount('unverifiable')}`,
+        ...(proofCount('lost') ? [`proofs_lost: ${proofCount('lost')}`] : []),
+      ]
+    : []),
+  // The regime the rows above were produced under. Additive; without it a
+  // later effort or model change silently pools incomparable rows.
+  `find_effort: ${TUNING.effort.find}`,
+  `refute_effort: ${TUNING.effort.refute}`,
+  `prove_effort: ${TUNING.effort.prove}`,
   `workflow_run: <FILL:this run's workflow id>`,
   `journal_sha256: <FILL:shasum -a 256 <transcriptDir>/journal.jsonl>`,
   '---',
@@ -720,11 +782,15 @@ const record = [
       `### ${i + 1}. ${f.title}`,
       `severity: ${f.severity}`,
       `lens: ${f.lens}`,
+      // How the panel voted and what execution said, side by side. This is the
+      // per-finding row of the labeled set described at `proofs_dispatched:`.
+      `refuted_votes: ${f.refutedVotes ?? 0}/${f.scored ?? 0}`,
+      `proven: ${f.proven ?? 'none'}`,
       ...(unproven
         ? [
             f.scored === 0
               ? `status: UNVERIFIED — no refuter returned a usable score on this finding; the panel did not run`
-              : `status: UNVERIFIED — a refuter could not settle this by reading${f.proven === 'unverifiable' ? ' and the sandboxed run could not either' : ''}`,
+              : `status: UNVERIFIED — a refuter could not settle this by reading${f.proven === 'unverifiable' ? ' and the sandboxed run could not either' : f.proven === 'lost' ? ' and the sandboxed run was lost (resume the workflow before triaging)' : ''}`,
             `experiment: ${f.experiment || '(none named)'}`,
             `disposition: <FILL: followup <id> — an item that writes the experiment above; use fix_pr/blocked only if you have verified it yourself>`,
           ]
@@ -761,6 +827,12 @@ return {
     // one number a human reading that summary must not have to derive.
     unscored: unscored.length,
     finders_reporting: reporting.length,
+    // The Validate join, in the summary too: a run summary that says
+    // "26 unverified" must also say whether 26 experiments ran and were read.
+    proofs_dispatched: pending.length,
+    proof_confirmed: proofCount('confirmed'),
+    proof_refuted: proofCount('refuted'),
+    proofs_lost: proofCount('lost'),
   },
   record,
 }

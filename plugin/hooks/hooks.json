@@ -64,6 +64,17 @@
           }
         ]
       }
+    ],
+    "StopFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/stop-failure-notify.sh",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }

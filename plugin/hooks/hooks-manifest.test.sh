@@ -13,7 +13,8 @@ parses() { jq -e "$1" "$2" >/dev/null 2>&1; }
 ok "manifest parses" parses . "$ROOT/.claude-plugin/plugin.json"
 ok "manifest has no inline hooks key (the loader drops non-string entries silently)" test "$(jq -r 'has("hooks")' "$ROOT/.claude-plugin/plugin.json")" = "false"
 ok "hooks/hooks.json exists and parses" parses .hooks "$ROOT/hooks/hooks.json"
-ok "declares SessionStart, PreToolUse and PostToolUse" test "$(jq -r '.hooks | keys | join(",")' "$ROOT/hooks/hooks.json")" = "PostToolUse,PreToolUse,SessionStart"
+ok "declares SessionStart, PreToolUse, PostToolUse and StopFailure" test "$(jq -r '.hooks | keys | join(",")' "$ROOT/hooks/hooks.json")" = "PostToolUse,PreToolUse,SessionStart,StopFailure"
+ok "StopFailure has no matcher (every API-error class ends a run the same way)" test "$(jq -r '.hooks.StopFailure[0] | has("matcher")' "$ROOT/hooks/hooks.json")" = "false"
 n=0
 while IFS= read -r cmd; do
   f="$(printf '%s' "$cmd" | sed -E 's#.*/(hooks/[^" ]+).*#\1#')"

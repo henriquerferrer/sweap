@@ -321,7 +321,7 @@ test("the shipped tuning is the documented one", () => {
   assert.equal(TUNING.proofTickets, 1);
   // Enumerated, so a tunable added without the comment that justifies it fails
   // here rather than shipping as an unexplained number.
-  assert.deepEqual(Object.keys(TUNING).sort(), ["killVotes", "proofTickets", "refutedAt"]);
+  assert.deepEqual(Object.keys(TUNING).sort(), ["effort", "killVotes", "proofTickets", "refutedAt"], "a new tunable must be named here and stamped into the record (see the effort test)");
 });
 
 // A refuter's answer: evidence fields plus a score, and optionally a ticket.
@@ -439,3 +439,90 @@ test("a range end that is not an immutable commit id is refused before the panel
   assert.match(SRC, /never a ref such as HEAD, a branch name or a tag/,
     "the SCOPE schema must ask for SHAs, so the guard is a backstop and not the only signal")
 })
+
+// --- Validate: proofs reach the record ------------------------------------------
+// The F12 audit (2026-09-12, wf_880c48cf-167) dispatched 26 provers, every one
+// returned an execution-backed verdict, and the record showed 26 UNVERIFIED with
+// no evidence. Cause, measured with a probe workflow: a value returned through
+// parallel() is a CLONE — `{ finding: f, proof }` came back with
+// `wrapper.finding !== f` — so the loop wrote the verdict onto the clone and the
+// record read the original. The block is applied by index and evaluated here
+// against a structuredClone'd result array, the same shape the harness hands back.
+const proofsSrc = SRC.match(/\/\/ PROOFS-START[\s\S]*?\n([\s\S]*?)\n\/\/ PROOFS-END/);
+assert.ok(proofsSrc, "could not extract the PROOFS block — keep the markers around a single pure `applyProofs`");
+const { applyProofs } = new Function(`${proofsSrc[1]}; return { applyProofs };`)();
+
+const pendingFixture = () => [
+  { title: "a", confirmed: true, needsProof: true, scored: 3 },
+  { title: "b", confirmed: true, needsProof: true, scored: 3 },
+  { title: "c", confirmed: true, needsProof: true, scored: 3 },
+  { title: "d", confirmed: true, needsProof: true, scored: 3 },
+];
+
+test("prover verdicts are applied to the ORIGINAL findings even when the results come back cloned", () => {
+  const pending = pendingFixture();
+  const returned = structuredClone([
+    { verdict: "confirmed", evidence: "$ just test x\n1 passed" },
+    { verdict: "refuted", evidence: "$ just test y\nthe guard fires" },
+    { verdict: "unverifiable", evidence: "needs live credentials" },
+    null,
+  ]);
+  applyProofs(pending, returned);
+  assert.equal(pending[0].proven, "confirmed");
+  assert.equal(pending[0].confirmed, true);
+  assert.equal(pending[0].proofEvidence, "$ just test x\n1 passed");
+  assert.equal(pending[1].proven, "refuted");
+  assert.equal(pending[1].confirmed, false, "an execution-backed refutation kills the finding");
+  assert.equal(pending[2].proven, "unverifiable");
+  assert.equal(pending[2].confirmed, true);
+  assert.equal(pending[3].proven, "lost", "a null slot is a LOST validator, distinct from one that ran and could not settle");
+  assert.equal(pending[3].confirmed, true, "losing the validator never kills and never verifies");
+  assert.equal(pending[3].proofEvidence, null);
+});
+
+test("the Validate dispatch carries no object identity through parallel()", () => {
+  const validate = SRC.slice(SRC.indexOf("const proofs = await parallel("), SRC.indexOf("// PROOFS-START"));
+  assert.doesNotMatch(validate, /\.then\(\s*\(\w+\)\s*=>\s*\(\{\s*finding/,
+    "wrapping the finding in the thunk's return value is the exact bug: the wrapper comes back cloned and the write lands on the clone");
+  assert.match(SRC, /applyProofs\(pending, proofs\)/, "the block must be applied to `pending`, the same array the record is built from");
+  assert.match(SRC, /const pending = all\.filter\(\(f\) => f\.needsProof\)/, "`pending` must be a filter over `all`, so its elements ARE the record's objects");
+});
+
+test("a lost sandboxed run is named in the record, apart from one that ran and could not settle", () => {
+  assert.match(SRC, /f\.proven === 'lost' \? ' and the sandboxed run was lost/,
+    "the record must tell a validator that never answered from one that answered `unverifiable`");
+  const unverifiedRule = SRC.match(/const isUnverified = \(f\) => (.+)/);
+  assert.ok(unverifiedRule);
+  assert.match(unverifiedRule[1], /f\.proven !== 'confirmed'/, "`lost` and `unverifiable` must both count as unverified — only an execution-backed `confirmed` clears it");
+});
+
+test("the record writes the reading/running join down where it accumulates", () => {
+  // Per block: how the panel voted and what execution said. Per record: how many
+  // experiments were dispatched and how each ended. These are the labeled rows a
+  // future recalibration of TUNING needs, grown from real records — and
+  // `proofs_lost:` is the number the gate reads.
+  assert.match(SRC, /`refuted_votes: \$\{f\.refutedVotes \?\? 0\}\/\$\{f\.scored \?\? 0\}`/, "each block must carry the panel's vote ratio");
+  assert.match(SRC, /`proven: \$\{f\.proven \?\? 'none'\}`/, "each block must carry the execution verdict, or 'none' when nothing was ticketed");
+  const fm = SRC.slice(SRC.indexOf("`finders_reporting: ${reporting.length}`"), SRC.indexOf("`workflow_run: <FILL"));
+  assert.match(fm, /\.\.\.\(pending\.length\s*\?/, "the join keys are emitted only when the Validate stage ran");
+  for (const k of ["proofs_dispatched", "proof_confirmed", "proof_refuted", "proof_unverifiable"]) {
+    assert.match(fm, new RegExp("`" + k + ": "), `frontmatter must carry ${k}:`);
+  }
+  assert.match(fm, /\.\.\.\(proofCount\('lost'\) \? \[`proofs_lost: /, "`proofs_lost:` is emitted only when non-zero, like `unscored:` — presence is the signal the gate keys on");
+  assert.match(SRC, /proofs_lost: proofCount\('lost'\),/, "stats must carry proofs_lost too, so the run summary cannot say '26 unverified' without saying whether the experiments were read");
+});
+
+test("a lost experiment is logged with the ⚠ shape and names the gate key", () => {
+  assert.match(SRC, /if \(proofCount\('lost'\)\) \{\s*\n\s*log\(\s*\n\s*`⚠ /, "lost provers get the same loud shape as an unscored panel");
+  assert.match(SRC, /proofs_lost_accepted/, "the log must name the discharge key so the operator knows the two honest exits");
+});
+
+test("effort is a named tunable stamped into the record, not a literal at the dispatch sites", () => {
+  assert.deepEqual(TUNING.effort, { find: "high", refute: "high", prove: "high" }, "the shipped regime is high on every stage; change it only with a labeled comparison");
+  const code = SRC.split("\n").filter((l) => !l.trimStart().startsWith("//")).join("\n");
+  assert.doesNotMatch(code, /effort: 'high'/, "no dispatch may hard-code effort — the record could not say which regime produced its rows");
+  for (const stage of ["find", "refute", "prove"]) {
+    assert.match(SRC, new RegExp("effort: TUNING\\.effort\\." + stage), `the ${stage} dispatch must read TUNING.effort.${stage}`);
+    assert.match(SRC, new RegExp("`" + stage + "_effort: \\$\\{TUNING\\.effort\\." + stage + "\\}`"), `frontmatter must stamp ${stage}_effort:`);
+  }
+});
