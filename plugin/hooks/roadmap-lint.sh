@@ -83,6 +83,19 @@ if printf '%s\n' "$fm" | grep -q '^carried:'; then
   esac
 fi
 
+# `harm:` is why a follow-up outranks features: the class of harm it removes.
+# Optional and never required — an item without it is untriaged, not harmless,
+# and schedules exactly as before. All this lint owes it is the closed enum, so
+# `harm: maintainability` can't buy a place at the front of the frontier.
+harm=""
+if printf '%s\n' "$fm" | grep -q '^harm:'; then
+  harm="$(get harm | sed 's/[[:space:]]*#.*$//')"
+  case "$harm" in
+    security|data-loss|wrong-data|outage) : ;;
+    *) fail "invalid harm: ${harm:-<empty>} (security|data-loss|wrong-data|outage — an item with no harm class carries no harm: key)" ;;
+  esac
+fi
+
 # --- depends_on: the flat inline [a, b] form the whole greppable substrate
 # assumes. A YAML block list (or a bare scalar) reads as an empty inline value
 # and would silently skip dependency resolution, so reject anything that is not
@@ -155,6 +168,16 @@ if [ "$status" = "todo" ]; then
   fi
   if has_placeholder "$(printf '%s\n%s\n' "$spec" "$acc")"; then
     fail "unfilled placeholder (<...> or <lowercase phrase>) in Spec/Acceptance of a todo item"
+  fi
+  # todo-only, like the spec gate above: a done item tagged after the fact must
+  # not redden a landed audit record that references it.
+  if [ -n "$harm" ]; then
+    hsec="$(section 'Harm[[:space:]]*$')"
+    if printf '%s' "$hsec" | grep -q '[^[:space:]]'; then
+      has_placeholder "$hsec" && fail "unfilled placeholder (<...> or <lowercase phrase>) in the '## Harm' section"
+    else
+      fail "harm: $harm without a '## Harm' section (who is harmed, by what steps a user can take on the default branch today)"
+    fi
   fi
 fi
 

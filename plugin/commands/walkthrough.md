@@ -127,7 +127,7 @@ queues sweap already drains. **`/walkthrough` mints no item files itself:**
 
 | the observation | outlet | who drains it |
 |---|---|---|
-| contradicts a stated `## Acceptance` bullet | `writeDiscovered` — `kind: gap`, `from: <item id>`, `milestone: <M>` | `/milestone` promotes it to a `followup_of: <M>` item whose `## Acceptance (e2e)` becomes a permanent test |
+| contradicts a stated `## Acceptance` bullet | `writeDiscovered` — `kind: gap`, `from: <item id>`, `milestone: <M>` | `/milestone` triages it: with a harm class it becomes a `followup_of: <M>` item whose `## Acceptance` becomes a permanent test; without one it waits for you at `/roadmap` — an agent never parks what you filed |
 | a UI/aesthetic shortfall | same, with the *why* naming the contract clause it should become | the clause plus its check land with the item |
 | works as specced and is still wrong | `writeDiscovered` — `kind: direction` | `/roadmap` decides: an item, a spec line, or a `declined:` |
 | a genuinely new want | `writeIdea` | `/roadmap` triage |
@@ -175,8 +175,9 @@ both inboxes per End-of-run hygiene. Non-item, so it lands during audit debt;
 it rides the roadmap-only CI lane, so it costs a `checks` run rather than an e2e
 cycle. Merge on green through the normal gate
 (`bash "${CLAUDE_PLUGIN_ROOT}/hooks/sweap-merge.sh" watch <n>`), then run
-end-of-run hygiene as always. Report what the gap notes will become: they drain
-**debt-first**, at the front of the next run's frontier.
+end-of-run hygiene as always. Report what the gap notes will become: the ones
+with a harm class drain **debt-first**, at the front of the next run's frontier;
+the rest are yours to decide at the next `/roadmap`.
 
 **Safety rails on the half where you act.**
 - Browser actions only on explicit request, one at a time, narrated first.

@@ -92,9 +92,10 @@ its actual output.
 subset of `confirmed` — and the record carries an `unverified:` count plus a
 `status: UNVERIFIED` line on those blocks. Those are **coverage gaps, not
 established defects**: nothing disproved them and nothing demonstrated them.
-Triage them as **bucket 2**, a follow-up item that writes the experiment named
-in the block, and reach for bucket 1 or 3 only if you verified the claim
-yourself. Read the status line first, though: a block that says the sandboxed
+Triage them as **bucket 2** — where the claimed harm has a class, the follow-up
+item writes the experiment named in the block; where it has none, the finding is
+parked like any other — and reach for bucket 1 or 3 only if you verified the
+claim yourself. Read the status line first, though: a block that says the sandboxed
 run **was lost** had its prover die, not fail — resume the Workflow
 (`resumeFromRunId`) before triaging, exactly as for a panel that stopped
 answering; a block that says the sandboxed run **could not either** was
@@ -113,10 +114,22 @@ yourself — the Workflow does not):
 1. **Bug** (the code fails its own spec) — open a follow-on fix-PR through the
    gate. Hands-off in an unattended run; still a separate gated PR, never an
    edit made by the audit itself.
-2. **Small gap / non-urgent** (races, infra) — write it as a new item file
-   under `backlog.dir` with `followup_of: <milestone>` (`status: todo`,
-   tagged, lint-clean). These auto-fold, debt-first, into the next
-   `/milestone` run.
+2. **Small gap / non-urgent** (races, infra) — apply `/milestone`'s **harm bar**
+   (its "Discovered-items triage" step owns the four classes and the
+   weak-check rule; do not restate them here).
+   - **Has a class → a follow-up:** a new item file under `backlog.dir` with
+     `followup_of: <milestone>`, `harm: <class>` and a `## Harm` section
+     (`status: todo`, tagged, lint-clean). It folds, debt-first, into the next
+     `/milestone` run.
+   - **No class → parked.** ALL such findings of this audit share ONE item:
+     `<id> — <milestone> audit: parked findings`, `status: deferred`,
+     `followup_of: <milestone>`, `depends_on: []`, `premise: parked <date> — no
+     harm class`. Its body is one line per finding pointing at the record block
+     (`### <n> — <title>`), never a copy — the record already holds the finding
+     and its proof. Every such block's disposition is `followup <that id>`. The
+     item exists so the disposition resolves; nothing schedules it, and only a
+     human un-parks a finding (by authoring it as its own item). Never archive
+     it: the record names the file.
 3. **Design / scope gap** (the feature should do something it never promised)
    — this is a direction-loop call, not correctness. Do NOT spec or build it.
    Write it as a `status: blocked` item file with the question verbatim in

@@ -142,6 +142,21 @@ test("isUnblocked: item dep must be done; bare-milestone dep needs ALL its items
   assert.equal(isUnblocked(byId.get("F5.1"), byId, byM), false);  // milestone F9 has no items
 });
 
+test("isUnblocked: a milestone's follow-ups are its debt, not its members — a parked one does not hold the dep open", () => {
+  const items = [
+    mk("F1.1", "done"),
+    mk("F1.2", "deferred", [], { followupOf: "F1" }),
+    mk("F2.1", "todo", ["F1"]),
+    mk("F6.1", "todo", [], { followupOf: "F6" }),
+    mk("F7.1", "todo", ["F6"]),
+  ];
+  const byId = new Map(items.map((i) => [i.id, i]));
+  const byM = new Map();
+  for (const i of items) { const m = milestoneOf(i.id); if (!byM.has(m)) byM.set(m, []); byM.get(m).push(i); }
+  assert.equal(isUnblocked(byId.get("F2.1"), byId, byM), true);   // F1's only open item is a parked follow-up
+  assert.equal(isUnblocked(byId.get("F7.1"), byId, byM), false);  // F6 has follow-ups only — still "no items"
+});
+
 test("compareItems: debt-first overrides numeric; else numeric id (F1.9 before F1.10)", () => {
   const debt = mk("F1.20", "todo", [], { followupOf: "F1" }); // numerically last, but debt → must lead
   const a = mk("F1.10", "todo"), b = mk("F1.9", "todo"), c = mk("F1.2", "todo");

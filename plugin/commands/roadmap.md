@@ -113,7 +113,8 @@ review is asked for:
    And the **discovered inbox** (`<backlog.dir>discovered/*.md`): every
    `kind: direction` note is THIS command's to decide — it is a scope question
    a worker correctly refused to answer alone mid-run — and any `kind: gap`
-   note `/milestone` could not place (no resolvable milestone) waits here too.
+   note `/milestone` left for you (no resolvable milestone, or you filed it and it
+   has no harm class) waits here too.
    Each becomes an item, a line in an item's spec, or a `declined:` — never
    silently nothing.
    **Ask, explicitly, what in this milestone is NOT an agent's to do** —

@@ -633,6 +633,68 @@ carried: 3
 '
 check "carried:/blocked: retained on a todo item passes (post-unblock provenance)" 0 "$WORK/C1.6.md"
 
+# --- harm: the closed enum, and the '## Harm' section a todo item owes it ---
+harm_item() { # harm_item <id> <status> <harm-line> <harm-section>
+  mk "$1.md" "---
+id: $1
+title: harm case
+status: $2
+depends_on: []
+review-dimensions: []
+followup_of: F1
+$3
+---
+
+# $1 — harm case
+
+## Spec
+- **Surface:** src/a.ts
+- **Interfaces:** none
+- **Out of scope:** everything else
+
+## Acceptance (vitest)
+- it works
+$4"
+}
+harm_item HB.1 todo 'harm: wrong-data' '
+## Harm
+A therapist opening a patient whose notes read failed is told the patient has no notes.
+'
+check "harm: in the enum with a filled '## Harm' passes" 0 "$WORK/HB.1.md"
+
+harm_item HB.2 todo 'harm: maintainability' '
+## Harm
+Future authors are slowed down.
+'
+check "harm: outside the enum fails" 1 "$WORK/HB.2.md"
+
+harm_item HB.3 todo 'harm: security' ''
+check "harm: on a todo item without a '## Harm' section fails" 1 "$WORK/HB.3.md"
+
+harm_item HB.4 todo 'harm: security' '
+## Harmless
+Not the section.
+'
+check "'## Harmless' does not satisfy '## Harm'" 1 "$WORK/HB.4.md"
+
+harm_item HB.5 todo 'harm: outage   # flake recorded by the driver' '
+## Harm
+The owner cannot merge: checks reds on a timeout one run in five.
+'
+check "a trailing comment on harm: is not part of the value" 0 "$WORK/HB.5.md"
+
+harm_item HB.6 'done' 'harm: security' ''
+check "a done item tagged after the fact owes no '## Harm' (a landed record must not redden)" 0 "$WORK/HB.6.md"
+
+harm_item HB.7 todo '' ''
+check "a follow-up with no harm: key passes (untriaged, never required)" 0 "$WORK/HB.7.md"
+
+harm_item HB.8 todo 'harm: data-loss' '
+## Harm
+<who is harmed>
+'
+check "a placeholder in '## Harm' fails" 1 "$WORK/HB.8.md"
+
 check "missing file fails" 1 "$WORK/does-not-exist.md"
 
 out="$(bash "$LINT" 2>&1)"; rc=$?

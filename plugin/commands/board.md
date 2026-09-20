@@ -16,7 +16,7 @@ right now, what is ready next, and the hand-offs and blocked questions standing
 between it and done, with the audit's verdict at the foot. Below it: frontier /
 in-flight / merge queue / hand-offs / blocked, then the backlog (the running
 milestone marked), the idea inbox, the **discovered inbox** (notes captured
-mid-run — `gap` promotes at the next `/milestone`, `direction` waits for
+mid-run — `gap` is triaged at the next `/milestone`, `direction` waits for
 `/roadmap`), **roadmap changes sitting on branches** (from
 `hooks/stranded-roadmap.sh`: a rider on an open PR is shown plainly; a branch
 whose PR is closed or that never had one is flagged as stranded, with a note

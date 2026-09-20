@@ -102,12 +102,14 @@ hazard.
   `discovered_by:`, `milestone_hint:`, `created:`; body = *why*, written so a
   fresh session can act on it after the branch it was found on is gone.
   `kind: gap` = the spec promised it (a bug, a race, infra the spec assumed):
-  agent work, promoted mechanically by the next `/milestone` into a
-  `followup_of:` item. `kind: direction` = not in the spec: a human's call,
+  agent work, TRIAGED by the next `/milestone` against the harm bar — promoted
+  into a `followup_of:` item when the fix removes a class of harm, parked
+  otherwise. `kind: direction` = not in the spec: a human's call,
   surfaced by `/roadmap` like an idea. Invisible to lint, dep resolution and
-  the frontier until promoted; promotion moves the note to
-  `roadmap/discovered/archive/` with `promoted_to:` (or `declined:`) appended,
-  the only edit a note ever receives. Gate-exempt by path, like `ideas/`
+  the frontier until promoted; triage moves the note to
+  `roadmap/discovered/archive/` with `promoted_to:` (or `declined:`, which for
+  a park reads `declined: parked: <reason>`) appended, the only edit a note
+  ever receives. Gate-exempt by path, like `ideas/`
   (`audit-gate.sh`'s "other subdirs" arm), which is what makes it safe to
   carry on any PR during audit debt. Filenames carry a hash suffix so two
   sessions capturing the same title from two branches never collide. **The one
@@ -138,6 +140,7 @@ trivial (this flatness is a format contract, not a style preference):
     review-dimensions: []    # from the review.dimensions config set
     lane:                    # optional; same-lane items NEVER co-dispatch
     followup_of:             # optional milestone tag — marks an audit-debt item
+    harm:                    # optional — security | data-loss | wrong-data | outage: why a follow-up outranks features (owes a ## Harm section)
     premise:                 # REQUIRED when deferred — machine-checkable predicate
     blocked:                 # REQUIRED when blocked — the question awaiting "> ANSWER:"
     carried:                 # optional int — milestone boundaries this question has survived
@@ -321,8 +324,11 @@ change it is. Nothing else is sanctioned:
    un-deciding a gap costs a minute, an agent deciding direction costs a
    milestone. Commit the note on the branch you are on and carry on: the sweep
    rule (End-of-run hygiene) lands it with the PR you are opening anyway, the
-   next `/milestone` promotes every `gap` (debt-first, as a `followup_of:`
-   item with a real spec), and `/roadmap` triages every `direction`.
+   next `/milestone` triages every `gap` against the harm bar (promoted ones
+   drain debt-first, as `followup_of:` items with a real spec; the rest are
+   parked), and `/roadmap` triages every `direction`. File everything you see
+   and do not argue its importance — capture stays exhaustive precisely because
+   a separate pass does the filtering.
 2. **A status flip → the item's own PR.** Unchanged: the `status:` line in
    `roadmap/<ID>.md` travels with *that* item's PR — conflict-free by
    construction — never with someone else's.
@@ -331,20 +337,11 @@ change it is. Nothing else is sanctioned:
    document; it changes at milestone boundaries with the human present.
 
 **Why a note and not an item file.** An item file authored mid-run on a feature
-branch has three defects the research memo
-(`docs/research/2026-08-22-mid-run-discovered-items.md`) documents: it is
-backlog-advancing for `audit-gate.sh --files`, so a code PR that would have
-passed can be denied for the rider it carries; its id was minted against a
-branch, not main, so two sessions can mint the same one; and it dies with the
-branch if the PR is abandoned. Consumer A #181 carried three such files and an
-index retitle, guarded only by a session diff-checking them after every
-rebase. A note is gate-exempt by path, has no id to collide, and is one file a
-rescue PR can carry. The rule is framed as protocol rather than prohibition
-because the evidence (METR 2025, Karpathy 2026, and this playbook's own
-untracked-ideas lesson above) is that agents route around an expensive rule —
-so the sanctioned path is also the cheap one: the roadmap-only CI lane (next
-section) makes the PR that lands a note cost one `checks` run, not two e2e
-runs.
+branch is backlog-advancing for the audit gate, mints its id against a branch
+(two sessions can collide), and dies with an abandoned branch; a note is
+gate-exempt by path, has no id, and one rescue PR can carry it. The sanctioned
+path is also the cheap one — the roadmap-only CI lane (next section) — because
+agents route around an expensive rule.
 
 ## Roadmap-only CI lane (why landing a backlog file is cheap)
 
@@ -974,7 +971,11 @@ bare-milestone dep is a deliberate "resurface when that milestone completes"
 marker, not an auto-promote trigger.
 
 **Lifecycle — an item is *unblocked* when every `depends_on` item is `status: done`.**
-Unblocked ≠ ready; it **never auto-promotes**. On unblock the agent evaluates the
+An item with an EMPTY `depends_on` is never unblocked: it was parked by a decision
+(the harm bar — see `/milestone`'s triage step), not behind a dependency, and only a
+human un-parks it. A parked follow-up is also never archived (path 3 does not apply):
+the audit record that filed it names the file, and the gate fails a record whose
+file is gone. Unblocked ≠ ready; it **never auto-promotes**. On unblock the agent evaluates the
 premise and takes exactly one path:
 
 1. **Premise machine-checkable AND verifiably holds** → auto-promote to `status: todo`.
@@ -1426,14 +1427,15 @@ Hard-won rules for the required check, WHERE ONE IS AVAILABLE (research memo,
 1. **Bug** (code fails its own spec): the session opens a follow-on fix-PR
    through the gate. Hands-off in an unattended run (no human needed), but still a
    separate gated PR — the audit workflow never edits code.
-2. **Small gap / non-urgent** (races, infra): write it as a new item file under
-   `backlog.dir` with `followup_of: <milestone>` set (`status: todo`, tagged,
-   lint-clean). Hands-off. These are **auto-folded, debt-first, into the next
-   `/milestone` run** — its pre-flight audit-debt scan collects every unblocked
-   `status: todo` item file with `followup_of:` set and drains it ahead
-   of the named milestone (or as a standalone **debt-only run** when no milestone
-   is runnable). Bucket-2 is a tracked queue with a defined drain, not a
-   dead-drop — nobody has to remember it.
+2. **Small gap / non-urgent** (races, infra): apply the **harm bar**
+   (`/milestone`'s triage step owns it). A finding whose fix removes a class of
+   harm becomes its own item file with `followup_of: <milestone>` and `harm:`
+   (`status: todo`, tagged, lint-clean) and is **auto-folded, debt-first, into
+   the next `/milestone` run** — or a standalone **debt-only run** when no
+   milestone is runnable. Every finding with no class is **parked**: one
+   `status: deferred` item per audit lists them by record block, so each
+   disposition resolves and nothing schedules them. True is not the bar —
+   follow-ups outrank features, so the bar is the harm the fix removes.
 3. **Design / scope gap** (the feature *should* do something it never promised):
    this is a **direction-loop** change, not correctness — do NOT spec or build
    it. Write it as a `status: blocked` item file with the question verbatim in

@@ -102,7 +102,7 @@ export function renderPage() {
     </form>
     <div class="col" id="ideas"></div>
   </section>
-  <section><h2>Discovered (captured mid-run — <code>gap</code> promotes at the next /milestone, <code>direction</code> waits for /roadmap)</h2>
+  <section><h2>Discovered (captured mid-run — <code>gap</code> is triaged at the next /milestone, <code>direction</code> waits for /roadmap)</h2>
     <div class="col" id="discovered"></div>
   </section>
   <section><h2>Roadmap changes on branches, not on main</h2>

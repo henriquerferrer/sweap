@@ -72,11 +72,14 @@ Deferred-item backstop (see the playbook's "Deferred items" section). Before
 resolving the milestone, scan `backlog.dir` for newly-unblocked
 **`status: deferred`** item files — these may have unblocked outside an
 autonomous run (e.g. a hand-merged dependency) and the end-of-run scan never
-fired. (A frontmatter scan — no header matching needed.) An item counts as unblocked when
+fired. (A frontmatter scan — no header matching needed.) An item with an empty
+`depends_on` is never a candidate: it was parked by a decision, not behind a
+dependency, and only a human un-parks it. Otherwise an item counts as unblocked when
 either: (a) every **item-level** `depends_on` entry (a dotted ID like `F4.3`
 or `DS3.4`, any configured prefix) has its file at `status: done`; or (b) a
 **milestone-level** entry (a bare tag like `F#` or `DS#`) has *completed* —
-item files for that milestone exist and every one is `status: done` (this
+item files for that milestone exist and every one that is not a follow-up
+(`followup_of:` — its debt, not a member) is `status: done` (this
 pre-flight is the designated surfacing point for milestone-level deps, which
 the item scan cannot catch). For each unblocked
 item, apply the lifecycle: if its `premise:` is machine-checkable and verifiably
@@ -85,49 +88,74 @@ it for the human to re-decide (re-spec or drop) — do not promote on a stale or
 uncheckable premise. Report any you found. The scan is stateless (just re-reads
 current statuses), so running it here every time is safe and idempotent.
 
-Discovered-items promotion (see the playbook's "Backlog format" and
-"Discovered work — the three-lane rule"). Before the audit-debt scan, read the
-discovered inbox — `<backlog.dir>discovered/*.md` (the `loadDiscovered` /
+Discovered-items triage (see the playbook's "Backlog format" and "Discovered
+work — the three-lane rule"). Before the audit-debt scan, read the discovered
+inbox — `<backlog.dir>discovered/*.md` (the `loadDiscovered` /
 `promotionTarget` helpers in `${CLAUDE_PLUGIN_ROOT}/tools/sweap-board.lib.mjs`,
-or a frontmatter scan). For every note with `kind: gap` whose target milestone
+or a frontmatter scan). Read every `kind: gap` note whose target milestone
 resolves (`milestone_hint:`, else the milestone of `discovered_from:` when that
-is an item id):
+is an item id) TOGETHER, then give each exactly one outcome. A note being true
+is not the bar — follow-ups drain ahead of features, so the bar is the harm the
+fix removes.
 
-1. **Mint the id against main** with `nextItemId(projectDir, backlogDir,
-   <milestone>)` from the lib — never by hand. It counts `archive/` too, so a
-   dropped id is never reused, and minting here rather than at capture is the
-   whole reason a note carries no id (two sessions cannot collide on main).
-2. **Author the item file**: `status: todo`, `followup_of: <milestone>`,
-   `discovered_from: <the note's>`, `depends_on: []`, `review-dimensions:` as
-   the surface warrants, and a real `## Spec` (Surface / Interfaces / Out of
-   scope) + `## Acceptance (e2e)` written from the note's *why* — a note is a
-   lead, the item is the spec. `followup_of:` is what keeps the milestone's
-   completeness (and any landed audit record) untouched while putting the item
-   at the front of the frontier: it drains as debt, first.
-3. `bash ${CLAUDE_PLUGIN_ROOT}/hooks/roadmap-lint.sh <file>` — fix before the
-   PR opens, same spec gate as `/roadmap`.
-4. **Archive the note with its provenance**: `archiveDiscovered(projectDir,
-   backlogDir, <file>, { promotedTo: <id> })` — the note moves to
-   `discovered/archive/` with `promoted_to:` appended, create-only, so a re-run
-   can never clobber the record.
+**The harm bar.** Name one class, or the note has none:
+- `security` — authz, tenancy, or personal data reaching someone it should not.
+- `data-loss` — a user's data destroyed or irreversibly corrupted.
+- `wrong-data` — a user is shown something false, including a failed read
+  rendered as a fact.
+- `outage` — a user cannot complete a task the product promises, or the pipeline
+  cannot ship: a red default branch, a broken deploy, a flake the merge driver
+  recorded (a slow test someone saw locally is not one).
+
+The harm must be reachable — steps a user can take on the default branch today;
+a latent or unmeasured harm has no class. A weak check (a test that cannot fail,
+a guard with a hole, lint that skips a folder) takes a class only when it
+DIRECTLY asserts harm-class behaviour: the server refusing a role, the tenant
+scope on a query. A check on a check, or a UI mirror of a rule the server
+already enforces, does not.
+
+- **Has a class → promote.** Mint the id against main with
+  `nextItemId(projectDir, backlogDir, <milestone>)` — never by hand (it counts
+  `archive/` too, so a dropped id is never reused). Author the item file:
+  `status: todo`, `followup_of: <milestone>`, `harm: <class>`,
+  `discovered_from: <the note's>`, `depends_on: []`, `review-dimensions:` as the
+  surface warrants, a `## Harm` section (one or two sentences: who is harmed, by
+  what steps), and a real `## Spec` (Surface / Interfaces / Out of scope) +
+  `## Acceptance` written from the note's *why* — a note is a lead, the item is
+  the spec. Run `sweap-roadmap-lint <file>` and fix before the PR opens, then
+  `archiveDiscovered(projectDir, backlogDir, <file>, { promotedTo: <id> })`.
+- **No class, and an agent filed it → park.** `archiveDiscovered(projectDir,
+  backlogDir, <file>, { declined: "parked: <one-line reason>" })`. The note
+  stays in `discovered/archive/`, greppable by `declined: parked`; moving it
+  back re-opens it.
+- **No class, and a human filed it** (a `/walkthrough` or `/handoff` session —
+  its `discovered_by:` or its body says so) **→ leave it in the inbox** and list
+  it with the `direction` notes below. The bar filters what agents noticed,
+  never what the owner asked for; `/roadmap` decides it with them.
+
+**The same pass, over follow-ups already in the backlog**: every unblocked
+`status: todo` item with `followup_of:` set and no `harm:` — what an older
+plugin promoted mechanically, or an audit filed before this rule. Skip an item
+that carries `blocked:` (a human's answer made it work) or that another open
+item names in `depends_on` (its author declared it needed). Tag the rest
+(`harm:` + `## Harm`), or park it: `status: deferred` with `premise: parked
+<date> — no harm class: <reason>`. **Never move a follow-up to `archive/`** —
+the audit record that filed it names the file, and the gate fails a record
+whose file is gone.
 
 Notes with no resolvable target, every `kind: direction` note, and every note
-the board lib reports as `kind: unknown` (a `kind:` that is neither gap nor
-direction — the file was written by hand against the playbook's rule, since the
-`sweap-note` writer refuses it; the board card's notes count them) are NOT
-promoted here — list them alongside the hand-offs and blocked questions so the
-human sees them at kickoff, and leave them for `/roadmap` (direction is that
-command's loop, not this one's; an unknown kind is a file to fix, not a lead
-to triage). Land the promotions as ONE PR,
-`chore(backlog): promote <n> discovered item(s)`, through the gate, in a
-worktree like any other: it IS backlog-advancing, so during record-debt it is
-correctly denied — skip promotion, say so, and let the record land first. Merge
-on green (it rides the roadmap-only CI lane, so this is a `checks` run, not an
-e2e cycle), run end-of-run hygiene, then continue: the audit-debt scan below
-picks the promoted items up as `D`. Stateless and idempotent — a re-run finds
-the notes archived and nothing to do. In a non-interactive kickoff
-(`/loop-schedule`, headless drivers) this step runs exactly the same way; it
-needs no human.
+the board lib reports as `kind: unknown` are NOT triaged here — list them
+alongside the hand-offs and blocked questions so the human sees them at kickoff,
+and leave them for `/roadmap`. Land the whole pass as ONE PR,
+`chore(backlog): triage — promote <p> of <n> discovered note(s)`, its body
+listing each promotion (class + harm sentence) and each park (reason), through
+the gate, in a worktree like any other: it IS backlog-advancing, so during
+record-debt it is correctly denied — skip it, say so, and let the record land
+first. Merge on green (it rides the roadmap-only CI lane), run end-of-run
+hygiene, then continue: the audit-debt scan below picks the promoted items up
+as `D`. A promote rate near 100% means the bar is not being applied — say so in
+the run summary. Stateless and idempotent, and it needs no human: a
+non-interactive kickoff runs it exactly the same way.
 
 Audit-debt scan (see the playbook's "Milestone audit" section). Collect the
 debt set `D`: every item file with `followup_of:` set — for ANY configured
@@ -221,7 +249,8 @@ on both arms, and take either answer without argument:
 ```
 <Mprev> shipped <n> items and nobody has looked at it.
 
-  Test it now  → ~35 min. Findings land as debt and drain FIRST in this run.
+  Test it now  → ~35 min. Findings with a harm class drain FIRST in this run;
+                 the rest wait for you at /roadmap.
   Later        → the run starts now; <Mprev>'s findings, if any, arrive a
                  milestone late and cost a second drain.
 ```

@@ -287,10 +287,10 @@ export function loadIdeas(projectDir, backlogDir) {
 // status, no spec. It is the transactional-outbox row of the pipeline: written
 // at discovery time to a place whose fate is independent of the feature branch
 // that might die, gate-exempt by path (audit-gate.sh's "other subdirs" arm),
-// and relayed later by a promotion step that is idempotent on the filename.
+// and relayed later by a triage step that is idempotent on the filename.
 // `kind:` is the ONE judgment the capturing session makes, on the line the
 // playbook's audit triage already draws: `gap` = the spec promised it (a bug, a
-// race, infra) — agent work, promoted mechanically by the next /milestone;
+// race, infra) — agent work, triaged against the harm bar by the next /milestone;
 // `direction` = not in the spec — a human's call, surfaced by /roadmap.
 // The hash suffix is what lets the same title be captured twice from two
 // branches without the create-only write failing on the second.
@@ -432,7 +432,9 @@ export function isUnblocked(item, byId, byMilestone) {
     // otherwise treat it as a milestone dep (all its items done). Classifying by
     // membership (not by counting dots) is what makes multi-segment ids work.
     if (byId.has(dep)) return byId.get(dep).status === "done";
-    const items = byMilestone.get(dep) || [];
+    // Follow-ups are debt OF a milestone, not members of it (audit-gate.sh draws
+    // the same line): a parked one must not hold the milestone open forever.
+    const items = (byMilestone.get(dep) || []).filter((i) => !i.followupOf);
     return items.length > 0 && items.every((i) => i.status === "done");
   });
 }

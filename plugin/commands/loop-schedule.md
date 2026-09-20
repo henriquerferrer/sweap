@@ -77,7 +77,7 @@ recurring/one-off decision above). Prompt body, in this order:
 >    Legacy pre-flight;
 >    the audit-gate `--check` and its DEFERRED/FAIL/AGING handling;
 >    Deferred-item backstop;
->    Discovered-items promotion;
+>    Discovered-items triage;
 >    the audit-debt scan;
 >    the hand-off scan taking the Non-interactive exit (never run `/handoff`;
 >    take the hand-offs-outstanding shape and name the skipped hand-offs in
