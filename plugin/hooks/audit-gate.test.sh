@@ -591,12 +591,12 @@ commit_all "$R" "baseline with inline comment"
 run_gate "$R" --check
 check "inline-comment baseline still exempts F1" 0
 
-# --- record format versioning + legacy (pre-format) records ---------------------
-# Regression suite for the 2026-08-11 consumer A miss: F9's record landed as pure
-# prose (written by a sweap that had no record format yet) and a later plugin
-# refresh retroactively turned it into merge-blocking debt. A tightening must
-# report inherited records, never wedge the loop on them — and must still refuse
-# to let NEW pre-format records in.
+# --- record format versioning -----------------------------------------------------
+# There is NO grandfathering. An earlier gate reported an already-merged record
+# with no `sweap_format:` as STALE (non-blocking) — built for consumer A F9's prose
+# record, long since migrated. It was a hole: deleting that one key from ANY
+# merged record downgraded its validation failure to a warning. Milestones that
+# predate adoption are exempted by `audit.baseline`, which is explicit.
 anchor_main() { git -C "$1" update-ref refs/remotes/origin/main HEAD; }
 # mk_prose_record <repo> <milestone>: a pre-format record — pure prose, no frontmatter.
 mk_prose_record() { printf '# %s milestone audit\n\nWe audited it. Trust me.\n' "$2" > "$1/roadmap/audits/$2.md"; }
@@ -615,24 +615,35 @@ run_gate "$R" --check
 check "unknown sweap_format => hard debt" 1
 check_out "names the format mismatch" "sweap_format: 2 but this gate speaks format 1"
 
-# T28: an ALREADY-MERGED pre-format record is reported as STALE, not FAIL —
-# --check passes so the repo's loop is not wedged by a format introduction.
+# T28: an ALREADY-MERGED pre-format record is hard debt, in both modes.
 R="$(new_repo t28)"
 mk_item "$R" F1.1 'done'
 mk_prose_record "$R" F1
 commit_all "$R"
 anchor_main "$R"
 run_gate "$R" --check
-check "merged pre-format record => STALE, not debt" 0
-check_out "STALE line names the record and the migration path" "STALE: record roadmap/audits/F1.md predates"
-
-# T29: and it does not block a backlog-advancing merge (the F10-on-top case).
+check "merged pre-format record => hard debt" 1
+check_out "judged strictly, not grandfathered" "FAIL: record roadmap/audits/F1.md: missing sweap_format:"
 run_gate "$R" --files roadmap/F2.1.md
-check "stale-only debt does not block an item-file PR" 0
+check "and it blocks an item-file PR" 1
 
-# T30: THE DOOR CLOSES. A pre-format record introduced by the work under review
-# (its adding commit is not reachable from origin/main) is judged strictly — so
-# "legacy" can be inherited but never authored.
+# T29: THE HOLE. A merged record that fails validation must not become
+# non-blocking by ALSO losing its sweap_format: key.
+R="$(new_repo t29)"
+base="$(head_sha "$R")"
+mk_item "$R" F1.1 'done'
+commit_all "$R"
+mk_record "$R" F1 "$base" "$(head_sha "$R")" 0 0 0
+commit_all "$R" rec
+anchor_main "$R"
+sed -i.bak '/^range_head:/d; /^sweap_format:/d' "$R/roadmap/audits/F1.md" && rm -f "$R/roadmap/audits/F1.md.bak"
+commit_all "$R" "strip two keys"
+run_gate "$R" --check
+check "stripping sweap_format does not downgrade a broken record" 1
+
+# T30: a pre-format record introduced by the work under review
+# (its adding commit is not reachable from origin/main) is judged strictly, like
+# every other.
 R="$(new_repo t30)"
 mk_item "$R" F1.1 'done'
 commit_all "$R"
@@ -690,15 +701,6 @@ sed -i.bak 's/^defects: 9$/defects: 0/' "$R/roadmap/audits/F1.md" && rm -f "$R/r
 commit_all "$R" dropall
 run_gate "$R" --check
 check "defects: 0 with confirmed findings => invalid" 1
-
-# T33: the anchor is overridable (CI on a PR points it at origin/<base_ref>).
-R="$(new_repo t32)"
-mk_item "$R" F1.1 'done'
-mk_prose_record "$R" F1
-commit_all "$R"
-git -C "$R" update-ref refs/remotes/origin/release HEAD
-OUT="$( (cd "$R" && SWEAP_MAIN_REF=origin/release bash "$GATE" --check) 2>&1)"; RC=$?
-check "SWEAP_MAIN_REF selects the anchor" 0
 
 # --- multi-axis audits (code + Tier-2 UI) ---------------------------------------
 # A UI-heavy milestone is audited on two axes, each a separate run with its own

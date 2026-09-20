@@ -222,7 +222,7 @@ Two exits from this, both narrow:
   post). Then print the **hand-offs-outstanding** template, with the cost
   restated in one line. `/handoff` step 5 covers recording a started-but-unfinished
   hand-off.
-- **Non-interactive** — `/loop-schedule` and any headless driver. `/handoff`
+- **Non-interactive** — any headless driver (`claude -p`, a scheduled agent). `/handoff`
   requires a human in the session and must never run unattended, so these skip
   it entirely and use the hand-offs-outstanding template directly, naming the
   skipped hand-offs in their notification. These drivers reference this
@@ -270,7 +270,7 @@ escalation could key on, is exactly the signal that cannot detect the failure.
 What is watched instead is yield: if `stats.dry` reaches 3, say so and recommend
 cutting `/walkthrough` back to a UI-only spot-check rather than offering it harder.
 
-Non-interactive kickoffs — `/loop-schedule` and any headless driver — skip this
+Non-interactive kickoffs — any headless driver — skip this
 entirely and name the skip in their notification, exactly as they do for
 `/handoff`; `/walkthrough` requires a human in the session and must never run
 unattended.
@@ -403,8 +403,8 @@ sweap's failure was the exact inverse: the instructions existed ONLY in the
 channel no tool could read. So the record is the source and the printed block is
 a rendering of it — never the other way round. Order by what each step releases
 (longest downstream chain first, then breadth), show at most three, and give
-each one its command, what it unblocks, and its *Done when*. `/loop-schedule`
-and headless drivers write the record and print nothing.
+each one its command, what it unblocks, and its *Done when*. Headless drivers
+write the record and print nothing.
 
 Then **print** the exact goal line, filled in, for the user to paste — do NOT
 try to set `/goal` yourself (only the user can invoke it). Pick the template by

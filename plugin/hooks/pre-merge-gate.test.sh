@@ -717,38 +717,34 @@ else bad "G6) backtick merge -> deny" "out: $out"; fi
 
 echo "== post-merge-redcheck.sh backstop =="
 
-# (i) merge that landed RED -> exit 2 + marker file written
-rm -f "$WORK/.claude/main-red-"*.flag 2>/dev/null
+# (i) merge that landed RED -> exit 2 + loud banner. It writes NO file: nothing
+# ever read the marker it used to drop.
 mkdir -p "$WORK/.claude"
-# Point the backstop's primary-derivation at $WORK by running inside a git repo there.
 ( cd "$WORK" && git init -q 2>/dev/null )
 err="$(run_backstop failure 'gh pr merge 42 --squash' 2>&1 1>/dev/null)"; rc=$?
 if [ "$rc" = "2" ] && printf '%s' "$err" | grep -q 'RED MAIN'; then
   ok "i) red merge -> exit 2 loud banner"
 else bad "i) red merge -> exit 2" "rc=$rc err=$err"; fi
-if ls "$WORK"/.claude/main-red-*.flag >/dev/null 2>&1; then
-  ok "i2) red merge -> gitignored marker written"
-else bad "i2) marker written" "no marker in $WORK/.claude"; fi
+if ! ls "$WORK"/.claude/main-red-*.flag >/dev/null 2>&1; then
+  ok "i2) red merge -> no marker file"
+else bad "i2) no marker file" "a marker appeared in $WORK/.claude"; fi
 
-# (j) green merge -> backstop quiet (exit 0, no marker)
-rm -f "$WORK"/.claude/main-red-*.flag 2>/dev/null
+# (j) green merge -> backstop quiet
 run_backstop green 'gh pr merge 42 --squash' >/dev/null 2>&1; rc=$?
-if [ "$rc" = "0" ] && ! ls "$WORK"/.claude/main-red-*.flag >/dev/null 2>&1; then
-  ok "j) green merge -> backstop silent, no marker"
-else bad "j) green merge -> silent" "rc=$rc, marker present?"; fi
+if [ "$rc" = "0" ]; then ok "j) green merge -> backstop silent"
+else bad "j) green merge -> silent" "rc=$rc"; fi
 
 # (k) non-merge command -> backstop no-op
 run_backstop failure 'ls -la' >/dev/null 2>&1; rc=$?
 if [ "$rc" = "0" ]; then ok "k) non-merge -> backstop no-op"
 else bad "k) non-merge -> no-op" "rc=$rc"; fi
 
-# (l) chained merge where the SECOND landed red -> backstop alarms + marks it.
-rm -f "$WORK"/.claude/main-red-*.flag 2>/dev/null
+# (l) chained merge where the SECOND landed red -> backstop alarms on it.
 export GH_STUB_43=failure
 err="$(run_backstop green 'gh pr merge 42 --squash && gh pr merge 43 --squash' 2>&1 1>/dev/null)"; rc=$?
 unset GH_STUB_43
-if [ "$rc" = "2" ] && printf '%s' "$err" | grep -q '#43' && ls "$WORK"/.claude/main-red-*.flag >/dev/null 2>&1; then
-  ok "l) chained green&&red -> backstop alarms + marks #43"
+if [ "$rc" = "2" ] && printf '%s' "$err" | grep -q '#43'; then
+  ok "l) chained green&&red -> backstop alarms on #43"
 else bad "l) chained backstop" "rc=$rc err=$err"; fi
 
 echo "== audit-gate integration =="

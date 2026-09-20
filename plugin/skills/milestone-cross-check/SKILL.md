@@ -52,8 +52,10 @@ check against —
    simultaneous mutation, idempotency of any retry/scan. Is each decided or
    silently assumed?
 6. **Acceptance-criteria testability.** Is every AC an observable, deterministic
-   e2e assertion (concrete role + action + outcome, incl. the negative /
-   unauthorized case), or is any of them vague / wall-clock-dependent /
+   assertion at the layer that can fail for it — a rule (permission, tenancy,
+   state machine) against the handler or lib function, a journey / a11y / focus /
+   race in the browser — with concrete role + action + outcome, incl. the
+   negative / unauthorized case, or is any of them vague / wall-clock-dependent /
    unassertable?
 7. **Scope tiering.** Is anything marked core (P0 / `[todo]`) that is really
    cuttable (should be split to a later item), or vice versa? Over-scoped first

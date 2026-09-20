@@ -526,3 +526,24 @@ test("effort is a named tunable stamped into the record, not a literal at the di
     assert.match(SRC, new RegExp("`" + stage + "_effort: \\$\\{TUNING\\.effort\\." + stage + "\\}`"), `frontmatter must stamp ${stage}_effort:`);
   }
 });
+
+// --- one finder per lens key, extracted and actually executed ------------------
+const lensesSrc = SRC.match(/\/\/ LENSES-START\n([\s\S]*?)\/\/ LENSES-END/);
+assert.ok(lensesSrc, "could not extract the LENSES block — keep the markers around a single pure `mergeLenses`");
+const { mergeLenses } = new Function(`${lensesSrc[1]}; return { mergeLenses };`)();
+
+test("mergeLenses: a project extra that repeats a default key replaces it — one finder per key", () => {
+  const defaults = [{ key: "correctness", prompt: "d1" }, { key: "authz", prompt: "generic" }];
+  const extra = [{ key: "tenancy", prompt: "p1" }, { key: "authz", prompt: "permissions.ts matrix" }];
+  const out = mergeLenses(defaults, extra, "default-plus");
+  assert.deepEqual(out.map((l) => l.key), ["correctness", "authz", "tenancy"]);
+  assert.equal(out.find((l) => l.key === "authz").prompt, "permissions.ts matrix");
+});
+
+test("mergeLenses: default ignores extras; explicit replaces the defaults, and falls back to them when empty", () => {
+  const defaults = [{ key: "correctness", prompt: "d1" }];
+  assert.deepEqual(mergeLenses(defaults, [{ key: "x", prompt: "p" }], "default"), defaults);
+  assert.deepEqual(mergeLenses(defaults, [{ key: "x", prompt: "p" }, { key: "x", prompt: "q" }], "explicit").map((l) => l.prompt), ["q"]);
+  assert.deepEqual(mergeLenses(defaults, [], "explicit"), defaults);
+  assert.deepEqual(mergeLenses(defaults, [], undefined), defaults);
+});

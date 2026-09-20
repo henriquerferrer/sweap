@@ -81,7 +81,7 @@ sense: one stated mission, one time-box, and a sheet at the end a third party
 could read.
 
 1. **Build the charter, cap it, show it before starting.** Union two sources:
-   every item's `## Spec` **Surface** and `## Acceptance (e2e)` bullets, and the
+   every item's `## Spec` **Surface** and `## Acceptance` bullets, and the
    diff of the merges that landed `M` (surfaces that shipped but were never
    specced appear only in the second). **Six to eight stops, 30–45 minutes.**
    Cut ruthlessly: keep only the routes where a *person's reaction* is the only
@@ -174,19 +174,21 @@ the same milestone the same day do not collide — the second gets a `-2` suffix
 both inboxes per End-of-run hygiene. Non-item, so it lands during audit debt;
 it rides the roadmap-only CI lane, so it costs a `checks` run rather than an e2e
 cycle. Merge on green through the normal gate
-(`bash "${CLAUDE_PLUGIN_ROOT}/hooks/sweap-merge.sh" watch <n>`), then run
+(`sweap-merge watch <n>`), then run
 end-of-run hygiene as always. Report what the gap notes will become: the ones
 with a harm class drain **debt-first**, at the front of the next run's frontier;
 the rest are yours to decide at the next `/roadmap`.
 
 **Safety rails on the half where you act.**
 - Browser actions only on explicit request, one at a time, narrated first.
-- **Seed only through the declared `test.seed` command.** Never ad-hoc SQL,
+- **Seed only through the declared `test.seed` command** (`## sweap config`;
+  undeclared = do not seed, ask the human to). Never ad-hoc SQL,
   never a destructive operation, never "just this once". An agent once generated
   ~4,000 fictional records against eleven explicit prohibitions; the lesson is
   that the rail has to be a constraint on what is invocable, not a sentence the
   model is asked to remember.
-- `test.url` must not resolve to production. Hard stop, no in-command override.
+- `test.url` (`## sweap config`; undeclared = ask for the URL) must not resolve
+  to production. Hard stop, no in-command override.
 - Never trigger a native browser dialog — it blocks every subsequent command.
 - **The session never edits code.** It observes and captures. Fixes are items.
 

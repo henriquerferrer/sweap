@@ -191,9 +191,7 @@ never the gate. One `FAIL:` is not about formatting: if the record says `raw: 0`
 the gate demands `finders_reporting: >= 1`, because a zero-findings record and a
 record from a run whose finders all died are the same document otherwise. The
 Workflow emits that key; if you are hand-writing a record and cannot honestly
-fill it, the audit did not run and the answer is to run it, not to fill it in. A `STALE:` line is an inherited pre-format record from an older
-sweap; it does not block, and it is not yours to fix in this run unless it names
-the milestone you just audited.
+fill it, the audit did not run and the answer is to run it, not to fill it in.
 
 Post a summary quoting the Workflow's returned `{milestone, range, stats}`
 verbatim plus lenses used and where each confirmed finding landed (fix-PR link,

@@ -55,6 +55,10 @@ overrides only the keys that differ from the baked defaults. The keys:
   Default **`push`**.
 - **`turns.default`** — the default turn budget for an autonomous run. Default
   **`160`**.
+- **`test.url`** / **`test.seed`** — optional, read only by `/walkthrough`: the
+  URL the acceptance pass opens (never production) and the ONE command allowed
+  to create test data. Undeclared, `/walkthrough` opens nothing and seeds
+  nothing by itself — the human drives.
 - **`parallel`** — max concurrent roadmap items. Default **`1`**, the serial
   loop. `2` or more opts into coordinator mode, which is opt-in for a stated
   reason rather than the standard run shape (see **Parallel runs** for the
@@ -260,7 +264,7 @@ deletes the legacy sections. Because the spec gate is todo-only, **done /
 blocked / deferred items migrate as plain records** — frontmatter plus their
 existing prose preserved under `## Notes`, no `## Spec`/`## Acceptance`
 required. Only the `todo` items need a synthesized `## Spec` (Surface /
-Interfaces / Out of scope) + `## Acceptance (e2e)`. The session performs the
+Interfaces / Out of scope) + `## Acceptance`. The session performs the
 split (a purpose-built parser for the project's specific legacy format is
 fine) and lints every produced file; multi-segment ids (a `DS.2` milestone
 with `DS.2.1` items) are supported.
@@ -599,9 +603,10 @@ may ADD dimensions it judges necessary; it may not remove tagged ones.
     `--admin`/`--repo`/`-R` outright. On any uncertainty (gh errors/times out) it
     denies *recoverably* (fail-closed, never fail-open, never a permanent wedge);
     a later retry passes once checks are green. A `PostToolUse` backstop
-    (`post-merge-redcheck`) re-checks after the merge and, if `main` somehow landed
-    red, drops a gitignored `.claude/main-red-<sha>.flag` marker + a loud banner so
-    the next run opens a remediation PR (it never commits to `main`). **Why it
+    (`post-merge-redcheck`) re-checks after a session-issued `gh pr merge` and, if
+    `main` somehow landed red, prints a loud banner so the run opens a remediation
+    PR (it never commits to `main`; `sweap-merge` does not need it — its gate runs
+    in the driver's own loop). **Why it
     exists:** the instruction-level gate silently failed once — a `gh pr checks
     <n> --watch | tail` pipe masked the real exit code (a pipe returns `tail`'s
     `0`), so a PR whose `e2e` had FAILED got merged and briefly broke `main`. The
@@ -1100,7 +1105,7 @@ The operational recipe (run the workflow, triage, write the record from the
 workflow's `record` field, `--check`, land it in one PR) is `/milestone-audit`;
 the record format and every rule the gate enforces on it are
 `playbook/audit-record.template.md`. This section is the doctrine those two
-implement, and it is the drift guard for `/loop-schedule`'s prompt.
+implement.
 
 ### Auto-launch and read-only toolset
 
@@ -1309,17 +1314,12 @@ audit passes the gate. The adversarial refuter design and the human on the
 direction loop remain the answer for that.
 
 **The record format is versioned (`sweap_format`)**, and the schema lives in
-one place — `playbook/audit-record.template.md`, "Rules the gate enforces". The
-gate classifies rather than fails: a record already merged without the key is
-reported as `STALE:` and never blocks; a record introduced by the work under
-review is judged strictly. Legacy can be **inherited but never authored** —
-provenance comes from git, not file content, and uncertainty (no remote,
-unresolvable anchor) means everything is judged strictly. When you bump the
+one place — `playbook/audit-record.template.md`, "Rules the gate enforces".
+Every record carries the current version; there is no grandfathering (a
+milestone that predates adoption goes in `audit.baseline`). When you bump the
 format, bump `RECORD_FORMAT` in `hooks/audit-gate.sh`, the `SWEAP_FORMAT`
-constant in `workflows/milestone-audit.js`, and the template together.
-Consumer repos drain `STALE:` records by **transcription, not by re-auditing**
-— the audit already ran and its fix-PRs and follow-ups already exist; the
-recipe is the template's "Migrating a `STALE:` record".
+constant in `workflows/milestone-audit.js` and the template together, and
+migrate the merged records in the same PR.
 
 ### Enforcing the audit gate in CI
 
@@ -1552,7 +1552,7 @@ an in-flight branch at width 1 too, and a Free-plan repo never reports BEHIND.
 | Workflow (multi-agent orchestration) | Deterministic fan-out: parallel finders + adversarial verifiers; use for audits/reviews, not feature code | Claude (user opt-in, e.g. "ultracode") |
 | `/goal` (built-in) | Sets a stop condition checked by an evaluator model after every turn; Claude keeps chaining turns until the condition is demonstrably met. Preferred driver for roadmap execution: `/goal <condition, incl. verification commands shown in transcript> or stop after N turns`. **User-only — Claude cannot invoke `/goal`; a human pastes it** | User sets once; Claude sustains |
 | `/loop` + self-scheduled wakeups | Time-paced recurring iteration; better for polling/monitoring (CI, deploys) than for goal-directed backlog work | User starts once; Claude sustains |
-| Cron jobs / scheduled cloud agents (`/schedule`) | Sessions that start on a schedule (nightly deps bump, backlog grooming, post-merge audit) — cloud routines run even if the PC is off. `/loop-schedule` builds the prompt by referencing `/milestone`'s steps by name — it carries no copy of the goal — and the plugin must be installed by the routine's environment setup script | Claude can create; runs unattended |
+| Cron jobs / scheduled cloud agents (`/schedule`) | Sessions that start on a schedule (nightly deps bump, backlog grooming, post-merge audit) — a scheduled kickoff runs `/milestone` non-interactively; a cloud routine cannot merge while CI runs on self-hosted runners that are off | Claude can create; runs unattended |
 | Headless `claude -p` + auto permission mode | Scripted/CI-triggered sessions; classifier gates commands | Scripts/CI/events |
 | Agentic CI (GitHub Actions) | Claude reviews every PR; merge gated on green e2e + clean review | Git events |
 | `claude --continue` / `--resume` | Reopen a session after a crash/reboot from its on-disk transcript. Not run protection: default auto-compact on 1M models fires near the limit, after quality has degraded — end runs via `turns`/frontier | User |

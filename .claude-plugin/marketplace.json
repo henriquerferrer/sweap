@@ -6,7 +6,7 @@
     {
       "name": "sweap",
       "source": "./plugin",
-      "description": "Autonomous agentic-dev pipeline: per-feature TDD loop, hook-enforced merge-greenness gate, file-per-item roadmap/milestone/audit commands, parallel coordinator + read-only board, cron driver. Scaffolds itself on first session; configured per-project via the '## sweap config' block in CLAUDE.md."
+      "description": "Autonomous agentic-dev pipeline: per-feature TDD loop, hook-enforced merge-greenness gate, file-per-item roadmap/milestone/audit commands, parallel coordinator + read-only board. Scaffolds itself on first session; configured per-project via the '## sweap config' block in CLAUDE.md."
     }
   ]
 }

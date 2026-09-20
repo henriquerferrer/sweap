@@ -15,6 +15,8 @@ backlog.file:     ROADMAP.md
 backlog.dir:      roadmap/                  # one file per item — see playbook "Backlog format"
 backlog.prefix:   F                        # one or more comma-separated prefixes, e.g. `F` or `F, DS`
 # services.up:    just services-up          # uncomment only if you have local test services
+# test.url:       http://localhost:3000     # /walkthrough only — where the acceptance pass opens the app; never production
+# test.seed:      just seed-test            # /walkthrough only — the ONE command allowed to create test data
 audit.lenses:     default
 audit.baseline:   []
 review.dimensions: security, ui, migration

@@ -989,7 +989,7 @@ sm_run_gate() {   # returns 0 on allow; on deny/absent/timeout/unparseable sets 
 # PostToolUse payload. They run with the SESSION's cwd (where the driver was
 # launched), not <primary>: post-merge-cleanup.sh skips the worktree the caller
 # stands in, and each hook derives <primary> itself. Their alarms are the
-# harness's out-of-band channel (stderr + exit 2 = "RED MAIN"/"AUDIT DEBT";
+# harness's out-of-band channel (stderr + exit 2 = "AUDIT DEBT"/"AUDIT DUE";
 # cleanup's additionalContext on stdout): forwarded to our stderr prefixed by
 # the hook name, recorded in the state file, and an exit-2 banner is folded into
 # the terminal reason so the session sees "merged BUT ...".
@@ -999,7 +999,7 @@ sm_post_merge() {
     '{hook_event_name:"PostToolUse", tool_name:"Bash", tool_input:{command:$c}, tool_response:{stdout:$out, stderr:"", interrupted:false}, cwd:$cwd}')"
   tmp="$(mktemp 2>/dev/null)" || return 0
   printf '%s\n' "$payload" >"$tmp"
-  for s in post-merge-cleanup.sh post-merge-redcheck.sh post-merge-auditcheck.sh; do
+  for s in post-merge-cleanup.sh post-merge-auditcheck.sh; do
     [ -f "$SM_HOOKS_DIR/$s" ] || continue
     SM_STDIN_FILE="$tmp"
     sm_run_hook 30 "$SM_INVOKE_CWD" "$SM_HOOKS_DIR/$s" || true

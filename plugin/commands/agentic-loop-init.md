@@ -47,7 +47,7 @@ This mechanically, idempotently:
    and no cross-repo access — both repos being private would otherwise require a
    secret whose expiry would block every PR.
 4. **Runtime gitignore rules:** ensures the project's `.gitignore` excludes
-   sweap's runtime files — `post-merge-redcheck.sh`'s marker file
+   sweap's runtime files — `session-main-redcheck.sh`'s marker file
    (`.claude/main-red-*.flag`), the coordinator's parallel-runs board
    (`.claude/sweap-board.md`), the run file `/milestone` writes at kickoff
    (`.claude/sweap-run.md`) and the merge driver's state dir

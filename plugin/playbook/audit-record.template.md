@@ -145,35 +145,6 @@ produced which finding; do not invent per-finding attribution for a UI axis.
   must name an item file that exists, carries `followup_of: <milestone>`, passes
   roadmap-lint, and (for `blocked`) is actually `status: blocked`.
 
-## Migrating a `STALE:` record — transcribe, do not re-audit
-
-A `STALE:` line means the record predates this format, i.e. it was written by an
-older sweap. **The audit itself already ran.** Its findings were already
-triaged, and fix-PRs and follow-up items were already opened off the back of
-them. Re-running `/milestone-audit` to "fix" the record is the wrong instinct on
-every axis: it spends a full adversarial audit to produce a *different* result
-set, and the record you land then documents a run that nothing in the backlog
-came from — the fix-PRs and follow-up items still trace to the original run.
-That is strictly worse evidence than what you started with.
-
-Migrate by transcription instead. Everything the format needs is normally
-recoverable from the record and the run that produced it:
-
-| key | where it comes from |
-|---|---|
-| `range_base` / `range_head` | the range the old record states, split on `..` |
-| `lens_mode` / `lenses` | `audit.lenses` in CLAUDE.md as it was for that run |
-| `raw` / `refuted` / `confirmed` | the stats the old record already quotes |
-| `workflow_run` | the `wf_*` transcript dir for that run |
-| `journal_sha256` | `shasum -a 256 <that dir>/journal.jsonl` |
-| `###` blocks + `disposition:` | the dispositions the old record already records in prose — the fix-PR numbers and `followup_of:` items it produced |
-
-Then re-run `--check`. Only if the run's evidence is genuinely unrecoverable
-(the transcript is gone AND the old record does not state its stats) does
-`audit.baseline` become the right home — and add it with a comment saying why,
-because baseline is an acknowledgement, not a dodge. Re-audit only when no
-audit ever actually ran.
-
 ## Verifying it
 
     bash "${CLAUDE_PLUGIN_ROOT}"/hooks/audit-gate.sh --check

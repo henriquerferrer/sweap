@@ -181,7 +181,7 @@ review is asked for:
    get committed where they sit, same backstop),
    update the index's milestone list (move the
    milestone out of "Later milestones"), and run
-   `bash ${CLAUDE_PLUGIN_ROOT}/hooks/roadmap-lint.sh <file>` on every new item
+   `sweap-roadmap-lint <file>` on every new item
    file — fix failures before the PR opens (authoring and dispatch share one
    spec gate). All of it lands as one PR through the gate.
 4. **Merge + clean up** — the direction call is fully spent at reconciliation, so
@@ -189,9 +189,10 @@ review is asked for:
    green** (CI + the `review` verdict both green; never override `needs-work` —
    fix and re-push). Do NOT ask the human to review the write-up. Then run
    **end-of-run hygiene, always** (mandatory, never skipped — see the playbook):
-   `gh pr merge <n> --squash` (do NOT trust `--delete-branch` — in a worktree flow
-   the branch is always checked out, so gh's local delete aborts and never removes
-   the remote). The `post-merge-cleanup` hook then removes the worktree, the local
+   `sweap-merge watch <n>` — the merge path, never a bare `gh pr merge` (and never
+   `--delete-branch`: in a worktree flow the branch is always checked out, so gh's
+   local delete aborts and never removes the remote). The `post-merge-cleanup`
+   hook then removes the worktree, the local
    branch, and the origin branch automatically; confirm none linger
    (`git worktree list`, `git branch`, `git branch -r`) and if any do, finish by
    hand: `git worktree remove` → `git branch -D` → `git push origin --delete`.

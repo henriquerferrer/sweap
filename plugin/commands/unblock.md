@@ -70,8 +70,8 @@ a *task* the human performs, not a question; that one is `/handoff`.
      command: a blocked item is a record without a full spec, and
      `roadmap-lint.sh` requires both for `todo`, so the flip is not a one-line
      edit. Write them to the same standard `/roadmap` writes items — surface,
-     interfaces, out-of-scope, e2e acceptance — then run
-     `bash ${CLAUDE_PLUGIN_ROOT}/hooks/roadmap-lint.sh <file>` and fix failures
+     interfaces, out-of-scope, acceptance criteria that name their layer — then
+     run `sweap-roadmap-lint <file>` and fix failures
      before the PR opens (authoring and dispatch share one spec gate).
    - **The answer produces no work** ("keep it as-is", "that's already right")
      → `status: done`, with the answer as the record and a

@@ -150,9 +150,7 @@ if [ "$rc" = "0" ]; then
   exit 0
 fi
 
-# Only a clean, non-zero verdict alarms. STALE: lines are pre-format records
-# inherited from an older sweap — reported by --check, non-blocking by design,
-# and emphatically not a "you just merged debt" event.
+# Only a clean, non-zero verdict alarms.
 [ "$rc" = "1" ] || exit 0
 fails="$(printf '%s\n' "$out" | grep '^FAIL:' || true)"
 [ -n "$fails" ] || exit 0

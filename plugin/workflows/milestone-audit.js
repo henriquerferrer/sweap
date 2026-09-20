@@ -276,12 +276,20 @@ const lensConfig = await agent(
   { label: 'lens-config', phase: 'Scope', schema: LENS_CONFIG }
 )
 
-const LENSES = (() => {
-  const extra = lensConfig?.lenses ?? []
-  if (lensConfig?.mode === 'default-plus') return [...DEFAULT_LENSES, ...extra]
-  if (lensConfig?.mode === 'explicit') return extra.length ? extra : DEFAULT_LENSES
-  return DEFAULT_LENSES
-})()
+// LENSES-START
+// One finder per KEY. A project that lists a default key among its extras
+// (consumer A: `default + [tenancy, authz, ...]`) used to get that lens twice — a
+// second high-effort finder plus its refuters on every audit, and a lost-lens
+// check (keyed) that one live copy could mask. The project's lens wins the
+// collision: it is the one grounded in this codebase.
+const mergeLenses = (defaults, extra, mode) => {
+  const base = mode === 'explicit' ? (extra.length ? [] : defaults) : defaults
+  const byKey = new Map(base.map((l) => [l.key, l]))
+  if (mode === 'default-plus' || mode === 'explicit') for (const l of extra) byKey.set(l.key, l)
+  return [...byKey.values()]
+}
+// LENSES-END
+const LENSES = mergeLenses(DEFAULT_LENSES, lensConfig?.lenses ?? [], lensConfig?.mode)
 
 // READ-ONLY IS A TOOLSET, NOT A SENTENCE. Every Find/Refute agent runs as
 // `audit-reader` (agents/audit-reader.md: Read, Grep, Glob — no Write, no Edit,

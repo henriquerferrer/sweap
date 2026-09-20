@@ -57,11 +57,10 @@ shift
 fails=0
 fail() { echo "FAIL: $1"; fails=1; }
 
-# Record format version. Bump ONLY together with a migration story: every
-# already-merged record written under an older format is classified LEGACY (see
-# record_is_legacy) and reported without blocking, so a tightening can never
-# retroactively wedge a consumer repo's loop. New records must carry the current
-# version — that is what keeps "legacy" a closing door rather than a loophole.
+# Record format version. Every record must carry the current one. A bump needs
+# its own migration (rewrite the merged records in the same PR): there is no
+# grandfathering — the old "legacy record" exemption let ANY merged record's
+# validation failure be downgraded to non-blocking by also deleting this key.
 RECORD_FORMAT=1
 
 # The mainline anchor used to tell "already merged" from "introduced by the work
@@ -83,6 +82,21 @@ cfg_get() { [ -f CLAUDE.md ] && sed -n "s/^$1:[[:space:]]*//p" CLAUDE.md | head 
 BACKLOG_DIR="$(cfg_get 'backlog\.dir')"
 BACKLOG_DIR="${BACKLOG_DIR:-roadmap/}"
 case "$BACKLOG_DIR" in */) : ;; *) BACKLOG_DIR="$BACKLOG_DIR/" ;; esac
+
+# --files can only deny a PR that touches a top-level item file (the last arm of
+# merge mode's case, below — keep the two in step). A code-only PR is decided
+# here, before any record is validated: that validation is what cost a code-only
+# Consumer A merge 6s of the gate's ~10s budget and timed three of them out.
+if [ "$MODE" = "--files" ]; then
+  touches_items=0
+  for f in "$@"; do
+    case "$f" in
+      "${BACKLOG_DIR}"*/*) : ;;
+      "${BACKLOG_DIR}"*.md) touches_items=1 ;;
+    esac
+  done
+  [ "$touches_items" = 1 ] || exit 0
+fi
 
 BASELINE="$(cfg_get 'audit\.baseline' | tr -d '[]' | tr ',' ' ')"
 in_baseline() { local m; for m in $BASELINE; do [ "$m" = "$1" ] && return 0; done; return 1; }
@@ -636,33 +650,8 @@ DONE_ITEMS_EOF
   [ "$ok" = 1 ]
 }
 
-# --- legacy (pre-format) records -------------------------------------------------
-# A record is LEGACY iff it carries no `sweap_format:` key AND the commit that
-# added it is already reachable from the mainline anchor. Both halves matter:
-#   - no sweap_format  => it was written before the format existed (a record
-#     written by a current plugin always carries the key),
-#   - already on the mainline => it is water under the bridge, not something the
-#     work under review is introducing. `git log <anchor> -- <path>` walks ONLY
-#     commits reachable from <anchor>, so a record added by the PR under review
-#     yields nothing here and is judged strictly.
-# This is what makes the door close behind the migration: you can never author
-# NEW legacy, only inherit it. Provenance comes from git, not from file content,
-# so it cannot be forged by writing a frontmatter-less file.
-# Fails CLOSED on any uncertainty (no remote, unresolvable anchor) — nothing is
-# legacy, every record is judged strictly.
-record_is_legacy() { # record_is_legacy <file> ; 0 = legacy
-  local rec="$1" anchor add
-  [ -z "$(fm_get "$rec" sweap_format)" ] || return 1
-  anchor="$(git rev-parse --verify -q "${MAIN_REF}^{commit}" 2>/dev/null)" || return 1
-  [ -n "$anchor" ] || return 1
-  add="$(git log --diff-filter=A --format=%H "$anchor" -- "$rec" 2>/dev/null | tail -1)"
-  [ -n "$add" ]
-}
-
 # --- debt set -------------------------------------------------------------------
-# DEBT blocks merges. STALE is reported but never blocks — see record_is_legacy.
 DEBT=""
-STALE=""
 while IFS= read -r m; do
   [ -n "$m" ] || continue
   in_baseline "$m" && continue
@@ -680,15 +669,10 @@ while IFS= read -r m; do
     DEBT="$DEBT$m"$'\n'
     [ "$MODE" = "--check" ] && fail "milestone $m is complete but has no audit record ($rec) — run /milestone-audit for it"
   elif ! rec_out="$(validate_record "$m" "$rec")"; then
-    if record_is_legacy "$rec"; then
-      STALE="$STALE$m"$'\n'
-      [ "$MODE" = "--check" ] && printf 'STALE: record %s predates the sweap_format %s record contract (written by an older sweap) — it does NOT block merges. MIGRATE IT BY TRANSCRIPTION: the audit already ran, so add the frontmatter from evidence the record and its run already contain (range, lens set, stats, workflow_run, journal_sha256 from the run journal) and give each distinct defect a disposition: line. Do NOT re-run /milestone-audit to "fix" this — that spends a full audit to produce a DIFFERENT record and discards the evidence the original triage was based on. Re-audit only if no audit ever actually ran; add %s to audit.baseline only if its evidence is genuinely unrecoverable.\n' "$rec" "$RECORD_FORMAT" "$m"
-    else
-      DEBT="$DEBT$m"$'\n'
-      if [ "$MODE" = "--check" ]; then
-        [ -n "$rec_out" ] && printf '%s\n' "$rec_out"
-        fails=1
-      fi
+    DEBT="$DEBT$m"$'\n'
+    if [ "$MODE" = "--check" ]; then
+      [ -n "$rec_out" ] && printf '%s\n' "$rec_out"
+      fails=1
     fi
   fi
 done <<COMPLETE_EOF
@@ -739,8 +723,8 @@ ATTENDED_EOF
   # A [blocked] item is a question waiting on a human. Unlike audit debt, an
   # unanswered direction call is LEGITIMATELY deferrable — the cost of waiting is
   # real but bounded, and blocking a build on someone's taste call would be
-  # crying wolf. So this prints and never fails; `AGING:` joins `DEFERRED:` and
-  # `STALE:` as a non-failing prefix.
+  # crying wolf. So this prints and never fails; `AGING:` joins `DEFERRED:` as a
+  # non-failing prefix.
   #
   # Why it lives here at all, when the board and the run summary already list
   # blocked items: those are read-only displays, and consumer A proved they change

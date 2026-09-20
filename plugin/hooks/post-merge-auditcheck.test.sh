@@ -74,9 +74,11 @@ anchor_main "$R"
 run_hook "$R" "gh pr merge 122 --squash"
 check "record malformed BY this merge => alarms" 2
 
-# T3: the mirror image. A record inherited from an older sweap — already on the
-# mainline before this merge — is pre-format debt, not something this merge did.
-# It must stay quiet, or every merge in a migrating repo cries wolf forever.
+# T3: a pre-format record that was ALREADY on the mainline alarms too. There is no
+# grandfathering any more — the exemption let any merged record's failure be
+# downgraded by deleting one key — so this is debt, and the gate is already
+# denying every backlog-advancing PR over it. Pre-adoption milestones belong in
+# `audit.baseline`.
 R="$(new_repo t3)"
 mk_done_item "$R" F9.1
 printf '# F9 audit\n\nprose only, no frontmatter.\n' > "$R/roadmap/audits/F9.md"
@@ -88,7 +90,7 @@ printf -- '---\nid: F10.1\ntitle: x\nstatus: todo\ndepends_on: []\nreview-dimens
 commit_all "$R" "PR #125: author F10"
 anchor_main "$R"
 run_hook "$R" "gh pr merge 125 --squash"
-check "record inherited from an older sweap => stays quiet" 0
+check "a pre-format record already on the mainline => alarms (no grandfathering)" 2
 
 # T4: a complete milestone with no record, where THIS merge is what completed it.
 # Not an alarm: the audit reads the MERGED branch, so it could not have run

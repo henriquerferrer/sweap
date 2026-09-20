@@ -220,14 +220,14 @@ case "${FAKE_GATE:-allow}" in
 esac
 exit 0
 G
-for s in post-merge-cleanup.sh post-merge-redcheck.sh post-merge-auditcheck.sh; do
+for s in post-merge-cleanup.sh post-merge-auditcheck.sh; do
   cat >"$FAKE_PLUGIN/hooks/$s" <<'P'
 #!/usr/bin/env bash
 me="$(basename "$0")"
 input="$(cat)"
 [ -n "${PM_LOG:-}" ] && { printf '%s\n' "$me" >>"$PM_LOG"; printf '%s\n' "$input" >"$PM_LOG.$me.in"; pwd >"$PM_LOG.$me.cwd"; }
-if [ "$me" = post-merge-redcheck.sh ] && [ "${PM_RED:-}" = 1 ]; then
-  printf '\n################################################################\n## RED MAIN: PR #7 merged while NOT green — e2e FAILURE\n##   marker: /x/main-red-abc.flag\n################################################################\n' >&2
+if [ "$me" = post-merge-auditcheck.sh ] && [ "${PM_RED:-}" = 1 ]; then
+  printf '\n################################################################\n## AUDIT DEBT ON MAIN after this merge — audit-gate.sh --check fails:\n##   FAIL: milestone F1 is complete but has no audit record\n################################################################\n' >&2
   exit 2
 fi
 if [ "$me" = post-merge-cleanup.sh ] && [ "${PM_CTX:-}" = 1 ]; then
@@ -247,7 +247,7 @@ mkdir -p "$WORK/nowhere/hooks"; cp "$DRIVER" "$WORK/nowhere/hooks/sweap-merge.sh
 REALCLEAN_PLUGIN="$WORK/plugin-realclean"
 mkdir -p "$REALCLEAN_PLUGIN/hooks"
 cp "$FAKE_PLUGIN/hooks/"*.sh "$REALCLEAN_PLUGIN/hooks/"; : >"$REALCLEAN_PLUGIN/hooks/$SENTINEL"
-cp "$HERE/post-merge-cleanup.sh" "$HERE/stranded-roadmap.sh" "$REALCLEAN_PLUGIN/hooks/" 2>/dev/null
+cp "$HERE/post-merge-cleanup.sh" "$HERE/stranded-roadmap.sh" "$HERE/lib-merge-parse.sh" "$REALCLEAN_PLUGIN/hooks/" 2>/dev/null
 # the whole REAL hooks dir (real gate, real post-merge hooks, the driver under
 # test) with the sentinel: for cases that need the real gate's verdict
 REAL_PLUGIN="$WORK/plugin-real"
@@ -1095,17 +1095,18 @@ rm -rf "$FORGED" "$REPO/sub" "$WORK/bare"
 printf '== Merge outcomes (D4, E2)\n\'
 newcase m-success
 drive tick "$PR"; expect "merge: success => merged" merged
-check "merge: post-merge scripts invoked once each, in order" [ "$(tr '\n' ' ' <"$FIX/pm.log")" = "post-merge-cleanup.sh post-merge-redcheck.sh post-merge-auditcheck.sh " ]
+check "merge: post-merge scripts invoked once each, in order" [ "$(tr '\n' ' ' <"$FIX/pm.log")" = "post-merge-cleanup.sh post-merge-auditcheck.sh " ]
 check "merge: post_merge_done flag set" [ "$(state .post_merge_done)" = true ]
-pin="$(cat "$FIX/pm.log.post-merge-redcheck.sh.in")"
+pin="$(cat "$FIX/pm.log.post-merge-auditcheck.sh.in")"
 check "merge: PostToolUse payload carries the merge command + tool_response" \
   [ "$(printf '%s' "$pin" | jq -r '.hook_event_name + "|" + .tool_name + "|" + .tool_input.command + "|" + .cwd')" = "PostToolUse|Bash|gh pr merge $PR --squash|$REPO" ]
 check "merge: tool_response.stdout is the merge output" contains "$(printf '%s' "$pin" | jq -r .tool_response.stdout)" "Squashed and merged"
 check "merge: post-merge scripts run in <primary>" [ "$(cat "$FIX/pm.log.post-merge-cleanup.sh.cwd")" = "$REPO" ]
 drive tick "$PR"; expect "merge: re-entry on merged => merged again (idempotent)" merged
-check "merge: re-entry does not re-run post-merge scripts" [ "$(wc -l <"$FIX/pm.log" | tr -d ' ')" = 3 ]
+check "merge: re-entry does not re-run post-merge scripts" [ "$(wc -l <"$FIX/pm.log" | tr -d ' ')" = 2 ]
 check "merge: re-entry issues no second merge" [ "$(merges_in_log)" = 1 ]
-# the payload satisfies the real hooks' parser and the real redcheck backstop
+# the payload satisfies the real hooks' parser, and the real redcheck (no longer on
+# the driver's list, still wired for a session-issued merge) accepts the same shape
 r="$(bash -c '. "$1"; parse_merge_command "$2"; echo "$MC_MERGE_RELATED $MC_PRS"' _ "$HERE/lib-merge-parse.sh" "gh pr merge $PR --squash")"
 check "merge: lib-merge-parse extracts the PR from the synthetic command" [ "$r" = "1 $PR" ]
 ( cd "$REPO" && printf '%s' "$pin" | env PATH="$STUB_BIN:$PATH" GH_FIX="$FIX" bash "$HERE/post-merge-redcheck.sh" >/dev/null 2>&1 ); rrc=$?
@@ -1114,7 +1115,7 @@ check "merge: REAL post-merge-redcheck.sh accepts the payload (green rollup, exi
 newcase m-reconcile-merged
 write_pr pr.after.json MERGED
 XENV="GH_MERGE=fail" drive tick "$PR"; expect "merge: gh pr merge fails but reconcile says MERGED => merged" merged "reconciled"
-check "merge: reconcile-merged runs post-merge once" [ "$(wc -l <"$FIX/pm.log" | tr -d ' ')" = 3 ]
+check "merge: reconcile-merged runs post-merge once" [ "$(wc -l <"$FIX/pm.log" | tr -d ' ')" = 2 ]
 check "merge: exactly one merge attempt" [ "$(merges_in_log)" = 1 ]
 
 newcase m-reconcile-moved
@@ -1144,13 +1145,13 @@ write_pr pr.after.json OPEN "$HEAD2"   # (the stub serves pr.after.json once a m
 drive tick "$PR"; expect "merge: head moved => superseded" superseded
 check "merge: superseded resets merge_attempts" [ "$(state .merge_attempts)" = 0 ]
 
-newcase m-redcheck-alarm
+newcase m-postmerge-alarm
 XENV="PM_RED=1" drive tick "$PR"
-expect "merge: redcheck exit 2 => still merged, banner folded into the reason" merged "RED MAIN"
-check "merge: redcheck stderr forwarded, prefixed by hook name" grep -q '^\[post-merge-redcheck.sh\] ## RED MAIN' "$FIX/stderr"
-check "merge: alarm recorded in the state file" [ "$(state '.post_merge_alerts[0].hook + "|" + (.post_merge_alerts[0].rc|tostring)')" = "post-merge-redcheck.sh|2" ]
+expect "merge: a post-merge hook's exit 2 => still merged, banner folded into the reason" merged "AUDIT DEBT"
+check "merge: alarm stderr forwarded, prefixed by hook name" grep -q '^\[post-merge-auditcheck.sh\] ## AUDIT DEBT' "$FIX/stderr"
+check "merge: alarm recorded in the state file" [ "$(state '.post_merge_alerts[0].hook + "|" + (.post_merge_alerts[0].rc|tostring)')" = "post-merge-auditcheck.sh|2" ]
 check "merge: stdout stays one line" [ "$(printf '%s\n' "$OUT" | wc -l | tr -d ' ')" = 1 ]
-drive tick "$PR"; expect "merge: re-entry on merged still carries the recorded alarm" merged "RED MAIN"
+drive tick "$PR"; expect "merge: re-entry on merged still carries the recorded alarm" merged "AUDIT DEBT"
 newcase m-cleanup-context
 XENV="PM_CTX=1" drive tick "$PR"; expect "merge: cleanup additionalContext => merged" merged
 check "merge: cleanup's additionalContext forwarded to stderr" grep -q '^\[post-merge-cleanup.sh\] sweap: backlog files are STRANDED' "$FIX/stderr"
@@ -1290,7 +1291,7 @@ runs_doc 3 "$(run 101 "$CI" completed success)" "$(run 102 "$AG" completed succe
 drive watch "$PR"
 check "watch: exits 0 on merged" [ "$RC" = 0 ]
 check "watch: one line per transition (pending green merging merged)" [ "$(printf '%s\n' "$OUT" | cut -d' ' -f1 | tr '\n' ' ')" = "pending green merging merged " ]
-check "watch: post-merge ran once" [ "$(wc -l <"$FIX/pm.log" | tr -d ' ')" = 3 ]
+check "watch: post-merge ran once" [ "$(wc -l <"$FIX/pm.log" | tr -d ' ')" = 2 ]
 newcase wt-watch-fail
 write_runs "$(run 101 "$CI" completed failure)" "$(run 102 "$AG" completed success)" "$(run 103 "$CR" completed success)"
 drive watch "$PR"

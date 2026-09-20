@@ -17,7 +17,7 @@ Install sweap in your current project:
 /agentic-loop-init
 ```
 
-This initializes the agentic-dev loop, enabling per-feature isolation, automated gating, and cron-driven roadmap management.
+This initializes the agentic-dev loop, enabling per-feature isolation and automated gating.
 
 ### Commands on your PATH
 

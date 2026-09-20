@@ -561,13 +561,23 @@ test("readRunFile parses .claude/sweap-run.md; absent or milestone-less reads as
   assert.deepEqual(readRunFile(dir), {
     milestone: "F4", shape: "milestone+debt", scope: ["F3.9", "F3.11"],
     turns: 160, started: "2026-08-20T09:14:00Z", deferredHandoffs: ["F4.8"],
-    ended: null, reason: null, needs: [], whyNotAgent: {},
+    ended: null, reason: null, needs: [], whyNotAgent: {}, stalled: null,
   });
   const none = fixture({ ".claude/sweap-run.md": "---\nturns: 160\n---\n" });
   assert.equal(readRunFile(none), null);
   const missing = fixture({ "CLAUDE.md": "x" });
   assert.equal(readRunFile(missing), null);
   rmSync(dir, { recursive: true }); rmSync(none, { recursive: true }); rmSync(missing, { recursive: true });
+});
+
+test("readRunFile: the LAST appended stalled: line is read from below the frontmatter", () => {
+  const dir = fixture({
+    ".claude/sweap-run.md": "---\nmilestone: F4\n---\n\n/goal ...\nstalled: 2026-09-12T03:10:00Z api_error — first\nstalled: 2026-09-12T09:40:00Z overloaded — turn ended on an API error; the run is not over: resume the run (529)\n",
+  });
+  const run = readRunFile(dir);
+  assert.equal(run.stalled.at, "2026-09-12T09:40:00Z");
+  assert.match(run.stalled.detail, /overloaded — turn ended/);
+  rmSync(dir, { recursive: true });
 });
 
 test("readRunFile: a junk turns: value reads as null, never NaN on the card", () => {
@@ -582,14 +592,12 @@ test("classifyAudit sorts audit-gate --check lines by their documented prefixes"
     "FAIL: record roadmap/audits/F2.md: raw (3) != refuted (1) + confirmed (1)",
     "FAIL: hand-off F4.8: status: attended was introduced by abc123 but the item file was added by def456 — ...",
     "DEFERRED: milestone F5 becomes complete in the state under review, so its audit cannot have run yet ...",
-    "STALE: record roadmap/audits/F1.md predates the sweap_format 1 record contract ...",
     "AGING: blocked F4.3 — carried 2 milestone boundaries: \"which db?…\"",
   ].join("\n");
   const c = classifyAudit(out, 1);
   assert.deepEqual(c.debt, ["F3", "F2"]);
   assert.deepEqual(c.deferred, ["F5"]);
   assert.deepEqual(c.integrity, ["F4.8"]);
-  assert.deepEqual(c.stale, ["F1"]);
   assert.equal(c.unknown, false);
 });
 
@@ -674,7 +682,7 @@ test("buildMilestoneCard: counts, ready, hand-offs and blocked are scoped to the
 
 test("buildMilestoneCard audit: this milestone's debt beats another's; another's still shows as blocking", () => {
   const items = [mk("F2.1", "todo")];
-  const base = { debt: [], deferred: [], stale: [], integrity: [], unknown: false };
+  const base = { debt: [], deferred: [], integrity: [], unknown: false };
   assert.equal(card(items, { audit: { ...base, debt: ["F2"] } }).audit.state, "debt");
   const other = card(items, { audit: { ...base, debt: ["F1"] } }).audit;
   assert.equal(other.state, "blocked-by-debt");
@@ -687,7 +695,7 @@ test("buildMilestoneCard audit: this milestone's debt beats another's; another's
 
 test("buildMilestoneCard audit: an open hand-off means the audit is NOT DUE, not clean", () => {
   const items = [mk("F2.1", "todo"), mk("F2.2", "attended", [], { handoff: "sign it" })];
-  const base = { debt: [], deferred: [], stale: [], integrity: [], unknown: false };
+  const base = { debt: [], deferred: [], integrity: [], unknown: false };
   const a = card(items, { audit: base }).audit;
   assert.equal(a.state, "not-due");
   assert.match(a.detail, /hand-off/);
@@ -1455,4 +1463,13 @@ test("a discovered note with an unreadable kind is announced in the card's notes
   assert.ok(note, "the card must announce unknown-kind notes");
   assert.match(note, /^2 discovered note/, "the count is the number of unreadable notes");
   assert.match(note, /set kind: to gap or direction/, "the note says what to fix");
+});
+
+test("buildMilestoneCard: a stall shows until the run records an end AFTER it", () => {
+  const items = [mk("F4.1", "todo")];
+  const stalled = { at: "2026-09-12T09:40:00Z", detail: "2026-09-12T09:40:00Z overloaded — resume the run" };
+  const live = buildMilestoneCard({ items, runFile: { milestone: "F4", scope: [], needs: [], whyNotAgent: {}, deferredHandoffs: [], ended: null, stalled } });
+  assert.deepEqual(live.stalled, stalled);
+  const recovered = buildMilestoneCard({ items, runFile: { milestone: "F4", scope: [], needs: [], whyNotAgent: {}, deferredHandoffs: [], ended: "2026-09-12T14:00:00Z", reason: "turns-exhausted", stalled } });
+  assert.equal(recovered.stalled, null);
 });

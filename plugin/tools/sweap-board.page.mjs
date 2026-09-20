@@ -193,6 +193,7 @@ function milestoneCard(m) {
     + ' — ' + esc(m.end.detail) + ' <span class="meta">(' + esc(VERDICT[m.end.verdict] || m.end.verdict) + ')</span>' + planBlock(m.end.plan) + '</div>';
   else if (m.idle) endbar = '<div class="endbar end-idle"><b>idle</b> — '+esc(m.idle.detail)
     + '. The run is not ended; it just is not working.</div>';
+  if (m.stalled) endbar = '<div class="endbar end-contradicted"><b>stalled</b> — '+esc(m.stalled.detail)+'</div>' + endbar;
 
   const col = (title, rows, msg) => '<div><h4>'+title+'</h4>'+(rows.length ? rows.join("") : '<div class="empty">'+esc(msg)+'</div>')+'</div>';
   el.innerHTML =
@@ -211,7 +212,6 @@ function milestoneCard(m) {
     + endbar
     + '<div class="audit a-'+esc(m.audit.state)+'">'+(AUDIT_ICON[m.audit.state]||"")+' audit: '+esc(m.audit.state)
     +   (m.audit.detail ? ' — '+esc(m.audit.detail) : '')
-    +   (m.audit.stale.length ? ' · stale record(s): '+m.audit.stale.map(esc).join(", ") : '')
     + '</div>';
 }
 function draw(s) {

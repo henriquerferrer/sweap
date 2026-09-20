@@ -98,10 +98,16 @@ export function readMilestoneIndex(projectDir, backlogFile) {
 export function readRunFile(projectDir) {
   let text;
   try { text = readFileSync(join(projectDir, ".claude", "sweap-run.md"), "utf8"); } catch { return null; }
-  const { fm } = parseFrontmatter(text);
+  const { fm, body } = parseFrontmatter(text);
   if (!fm || !fm.milestone) return null;
   const turns = Number(fm.turns);
+  // stop-failure-notify.sh APPENDS `stalled: <ts> <what>` below the frontmatter
+  // when the orchestrator's turn dies on an API error. The last one is the live
+  // one; it is the only trace that failure leaves anywhere a tool can read.
+  const stalls = String(body || "").split("\n").filter((l) => l.startsWith("stalled: "));
+  const lastStall = stalls.length ? stalls[stalls.length - 1].slice("stalled: ".length).trim() : null;
   return {
+    stalled: lastStall ? { at: lastStall.split(" ")[0], detail: lastStall } : null,
     milestone: fm.milestone,
     shape: fm.shape || null,
     scope: parseList(fm.scope),
@@ -797,6 +803,9 @@ export function buildMilestoneCard({ items, index = [], runFile = null, inFlight
     id,
     end,
     idle,
+    // Only while the run has not recorded an end AFTER it: a stall the run
+    // recovered from and then finished is history, not a state.
+    stalled: runFile && runFile.stalled && !(runFile.ended && String(runFile.ended) > runFile.stalled.at) ? runFile.stalled : null,
     goal: entry ? entry.goal : null,
     sketch: entry ? entry.sketch : false,
     state: flight.length ? "running" : "next",
@@ -816,17 +825,16 @@ export function buildMilestoneCard({ items, index = [], runFile = null, inFlight
       detail,
       debtMilestones: audit ? audit.debt : [],
       integrity: audit ? audit.integrity : [],
-      stale: audit ? audit.stale : [],
     },
   };
 }
 
 // audit-gate.sh --check speaks in line prefixes (its own header documents the
 // contract): FAIL: milestone/record = audit debt, FAIL: hand-off = a backlog-
-// integrity violation no audit discharges, DEFERRED: = not debt yet, STALE: =
-// an old record format that never blocks, AGING: = informational.
+// integrity violation no audit discharges, DEFERRED: = not debt yet, AGING: =
+// informational.
 export function classifyAudit(stdout, code) {
-  const res = { debt: [], deferred: [], stale: [], integrity: [], unknown: false };
+  const res = { debt: [], deferred: [], integrity: [], unknown: false };
   let recognized = 0;
   for (const l of String(stdout || "").split("\n")) {
     let m;
@@ -834,7 +842,6 @@ export function classifyAudit(stdout, code) {
     else if ((m = l.match(/^FAIL: record (\S+?):/))) { res.debt.push(basename(m[1], ".md")); recognized++; }
     else if ((m = l.match(/^FAIL: hand-off (\S+?):/))) { res.integrity.push(m[1]); recognized++; }
     else if ((m = l.match(/^DEFERRED: milestone (\S+)/))) { res.deferred.push(m[1]); recognized++; }
-    else if ((m = l.match(/^STALE: record (\S+?)\s/))) { res.stale.push(basename(m[1], ".md")); recognized++; }
     else if (/^(AGING|FAIL):/.test(l)) recognized++;
   }
   // A non-zero exit we cannot read a single known line out of means the gate did
@@ -1007,7 +1014,7 @@ export async function buildState(projectDir, { git, gh, audit = null, stranded: 
   let auditRes = null;
   if (audit) {
     try { const a = await audit(); auditRes = classifyAudit(a.stdout, a.code); }
-    catch { auditRes = { debt: [], deferred: [], stale: [], integrity: [], unknown: true }; }
+    catch { auditRes = { debt: [], deferred: [], integrity: [], unknown: true }; }
     if (auditRes.unknown) notes.push("audit status unavailable (audit-gate --check did not run here)");
     for (const bad of auditRes.integrity) notes.push(`backlog integrity: hand-off ${bad} was transitioned into, not authored — no audit discharges this`);
   }

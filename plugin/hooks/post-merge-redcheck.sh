@@ -2,19 +2,18 @@
 #
 # post-merge-redcheck.sh — belt-and-suspenders backstop to pre-merge-gate.sh.
 #
-# Wired as a PostToolUse(Bash) hook (see .claude/settings.json). Fires on EVERY
-# Bash tool call and self-filters to `gh pr merge`. After a merge it re-checks the
+# Wired as a PostToolUse(Bash) hook (hooks/hooks.json). Fires on EVERY Bash tool
+# call and self-filters to `gh pr merge`. After a merge it re-checks the
 # just-merged PR's rollup; if a merge somehow landed while a check was
-# definitively RED (FAILURE/ERROR/CANCELLED/TIMED_OUT/ACTION_REQUIRED — i.e. the
-# exact "broke main" incident this whole change targets), it:
-#   (a) emits a loud stderr banner (fed back to the session via exit 2) and a
-#       best-effort macOS notification, and
-#   (b) drops a GITIGNORED marker file in the PRIMARY checkout's .claude/
-#       (.claude/main-red-<sha>.flag) recording the PR + failing checks.
+# definitively RED (FAILURE/ERROR/CANCELLED/TIMED_OUT/ACTION_REQUIRED) it emits a
+# loud stderr banner, fed back to the session via exit 2. Nothing else: it writes
+# no file and never touches `main`.
 #
-# It NEVER commits anything and NEVER touches `main` (that would violate the
-# never-commit-to-main rule). Remediation is the agent's job: the marker + banner
-# surface the red main so the next run opens a fix PR through the gate.
+# It covers ONE path: a session-issued `gh pr merge` whose PreToolUse gate was
+# killed by the harness before it could answer. `sweap-merge` does not run it —
+# the driver runs the gate in its own loop, fail-closed, seconds before a merge
+# pinned to the head it judged, so this would re-read the identical rollup. A red
+# push-run on main is session-main-redcheck.sh's job.
 #
 # Scope note: this alarms only on DEFINITIVELY-failed checks (a broken main), not
 # on PENDING — the pre-merge gate is the comprehensive greenness control; this is
@@ -58,21 +57,11 @@ command -v gh >/dev/null 2>&1 || exit 0
 
 GH_TIMEOUT="${MERGE_GATE_GH_TIMEOUT:-10}"
 
-# Marker goes in the PRIMARY checkout so it survives worktree cleanup and the next
-# session sees it (same primary-derivation trick the cleanup hook uses).
-marker_dir=""
-gitdir="$(git rev-parse --git-common-dir 2>/dev/null)" || gitdir=""
-if [ -n "$gitdir" ]; then
-  primary="$(cd "$(dirname "$gitdir")" 2>/dev/null && pwd)" || primary=""
-  [ -n "$primary" ] && [ -d "$primary/.claude" ] && marker_dir="$primary/.claude"
-fi
-[ -n "$marker_dir" ] || marker_dir="$(pwd)/.claude"
-
 any_red=0
 banner=""
 
-check_one() {   # $1 = pr ; on a definitively-red rollup: writes a marker + notifies
-  local pr="$1" tmp ghpid watcher json red sha marker
+check_one() {   # $1 = pr ; on a definitively-red rollup: adds to the banner
+  local pr="$1" tmp ghpid watcher json red
   printf '%s' "$pr" | grep -qE '^[0-9]+$' || return 0
   tmp="$(mktemp 2>/dev/null)" || return 0
   gh pr view "$pr" --json statusCheckRollup,mergeCommit >"$tmp" 2>/dev/null &
@@ -102,26 +91,8 @@ check_one() {   # $1 = pr ; on a definitively-red rollup: writes a marker + noti
   ' 2>/dev/null)"
   [ -n "$red" ] || return 0   # this PR is not red
 
-  sha="$(printf '%s' "$json" | jq -r '.mergeCommit.oid // empty' 2>/dev/null)"
-  [ -n "$sha" ] || sha="pr${pr}"
-  mkdir -p "$marker_dir" 2>/dev/null || true
-  marker="$marker_dir/main-red-${sha}.flag"
-  {
-    printf 'RED MAIN DETECTED after merge of PR #%s\n' "$pr"
-    printf 'merge commit: %s\n' "$sha"
-    printf 'detected at: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)"
-    printf 'failing checks: %s\n' "$red"
-    printf '\nRemediation: open a fix PR through the gate to make main green again.\n'
-    printf 'Do NOT commit directly to main. Delete this marker once main is green.\n'
-  } >"$marker" 2>/dev/null || true
-
-  if command -v osascript >/dev/null 2>&1; then
-    osascript -e "display notification \"PR #$pr merged with RED checks: $red\" with title \"consumer A: main is RED\"" >/dev/null 2>&1 || true
-  fi
-
   any_red=1
   banner="${banner}## RED MAIN: PR #${pr} merged while NOT green — ${red}
-##   marker: ${marker}
 "
 }
 

@@ -2,7 +2,7 @@
 #
 # post-merge-cleanup.sh — end-of-run hygiene, mechanically enforced.
 #
-# Wired as a PostToolUse(Bash) hook gated on `gh pr merge` (see .claude/settings.json).
+# Wired as a PostToolUse(Bash) hook (hooks/hooks.json); it filters itself to a merge.
 # After a PR merges it: (1) fast-forwards the primary checkout so `main` never drifts,
 # (2) prunes stale remote-tracking refs left by `--delete-branch`, (3) removes any
 # worktree whose branch has a MERGED PR and deletes that local branch, and (4) runs
@@ -20,6 +20,24 @@
 #
 # Portable: derives the primary checkout from the shared git dir, no hard-coded paths.
 set -uo pipefail
+
+# SELF-FILTER to a merge, like post-merge-redcheck.sh and post-merge-auditcheck.sh.
+# The registration's `if: Bash(gh pr merge:*)` does not hold on compound commands:
+# in one consumer A run 314 of 315 firings were on commands with no merge in them
+# (`until gh run view ...`, `cd ... && ...`), each spending 8-13s in gh and
+# re-injecting the stranded-backlog banner. Anything we cannot judge (no jq, no
+# parser beside us, an unreadable payload, run by hand on a TTY) keeps the old
+# behaviour: run.
+parse_lib="$(dirname "${BASH_SOURCE[0]}")/lib-merge-parse.sh"
+if command -v jq >/dev/null 2>&1 && [ -r "$parse_lib" ] && [ ! -t 0 ]; then
+  cmd="$(jq -r '.tool_input.command // empty' 2>/dev/null)"
+  if [ -n "$cmd" ]; then
+    # shellcheck source=/dev/null
+    . "$parse_lib"
+    parse_merge_command "$cmd"
+    [ "${MC_MERGE_RELATED:-1}" = "1" ] || exit 0
+  fi
+fi
 
 command -v gh >/dev/null 2>&1 || exit 0
 
