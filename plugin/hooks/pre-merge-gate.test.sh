@@ -874,7 +874,7 @@ expect_deny "q21) if-wrapped push -> deny (greedy 1 != precise 0)" 'if true; the
 expect_deny "q22) echo \"git push origin feat/x\" -> deny (accepted over-block)" 'echo "git push origin feat/x"' 'push-related but is not a plain'
 expect_deny "q23) bash -c \"git push origin main\" -> deny" 'bash -c "git push origin main"' 'push-related but is not a plain'
 expect_deny "q24) -C \"/dir with space\" -> deny (precise 1, greedy 0)" 'git -C "/dir with space" push origin main' 'push-related but is not a plain'
-expect_deny "q25) unbalanced quote -> deny"              'git push origin "main' 'push-related but is not a plain'
+expect_deny "q25) unbalanced quote -> deny, and the reason says so" 'git push origin "main' 'could not be tokenised'
 expect_deny "q26) SWEAP_PUSH_GATE=off inline prefix -> still deny" 'SWEAP_PUSH_GATE=off git push origin main' "$B"
 out="$(SWEAP_BASE_BRANCH=develop run_push 'git push origin develop')"
 if is_deny "$out" && reason "$out" | grep -q "base branch 'develop'"; then ok "q27) SWEAP_BASE_BRANCH=develop + push develop -> deny"
@@ -907,9 +907,11 @@ $PG checkout -q --detach
 expect_deny "q33) detached HEAD + origin HEAD -> deny (recoverable)" 'git push origin HEAD' 'detached'
 $PG checkout -q feat/x
 
-# q34: awk missing -> sentinel deny even for an item branch
+# q34: awk missing -> sentinel deny even for an item branch. ($NOAWK's `printf`
+# link is dangling — `command -v printf` names the builtin — so xargs cannot run
+# there either and the deny that fires first is the tokeniser's; either is closed.)
 out="$(PATH="$NOAWK" GH_STUB=green bash "$GATE" <<<"$(jq -cn --arg c 'git push origin feat/x' --arg d "$PREPO" '{tool_name:"Bash",cwd:$d,tool_input:{command:$c}}')")"
-if is_deny "$out" && reason "$out" | grep -q 'push-related but is not a plain'; then ok "q34) awk/tr missing + push feat/x -> sentinel deny"
+if is_deny "$out" && reason "$out" | grep -qE 'push-related but is not a plain|could not be tokenised'; then ok "q34) awk/tr missing + push feat/x -> sentinel deny"
 else bad "q34) awk missing -> deny" "got: $out"; fi
 
 # q35: parser lib unreadable (hook copied without the lib) -> deny
@@ -939,6 +941,123 @@ push_json="$(jq -cn --arg c 'git push origin main' --arg d "$PREPO" '{tool_name:
 out="$(PATH="$NOJQ" bash "$GATE" <<<"$push_json")"
 if is_deny "$out" && reason "$out" | grep -q 'jq is unavailable'; then ok "q38) jq missing + push -> deny (fail-closed)"
 else bad "q38) jq missing + push -> deny" "got: $out"; fi
+
+echo "== push gate: false-denial relief (84 false denials : 1 true refusal, 2026-08-25..09-20) =="
+# Three shapes were denied that are not pushes to the base: (a) the bare WORD
+# `push` (JS `.push(`, prose) in a command xargs cannot tokenise; (b) a named
+# item-branch push chained with such text; (c) a refspec-less push after
+# `cd <worktree> &&` / under `git -C <worktree>`. Hook cwd is $PREPO throughout:
+# on feat/x for the s-cases, ON MAIN for the t-cases unless a label says otherwise.
+WT="$PF/wt"   # a worktree on feat/y, upstream origin/feat/y
+T="but could not be tokenised, so the gate cannot tell"
+R="cannot resolve where this push would land"
+
+# MUST NOW ALLOW
+expect_allow "s1) heredoc writing a .ts file: items.push(1) + an apostrophe -> no-op" $'cat > f.ts <<\'EOF\'\n// it\'s a list\nitems.push(1)\nEOF'
+expect_allow "s2) markdown heredoc: don't push yet -> no-op"                          $'cat > note.md <<\'EOF\'\ndon\'t push yet\nEOF\necho done'
+expect_allow "s3) python heredoc (never redacted) with the word push, no git -> no-op" $'python3 - <<\'PY\'\n# don\'t\nout.push(1)\nPY'
+expect_allow "s4) git stash push chained with an escaped quote -> no-op"              'git stash push -u -m "wip" >/dev/null && just e2e 2>&1 | grep -E "passed|\"GET" | head'
+expect_allow "s5) git stash push after an apostrophe heredoc -> no-op"                $'cat >> t.spec.ts <<\'EOF\'\n// it\'s\nEOF\ngit stash push -- apps/web/src && git status --short'
+expect_allow "s6) cd <abs worktree on feat/y> && git push -> allow"                   "cd $WT && git push"
+expect_allow "s7) ... && git push 2>&1 | tail -3 -> allow"                            "cd $WT && git push 2>&1 | tail -3"
+expect_allow "s8) ... && git push --force-with-lease -q -> allow"                     "cd $WT && git push --force-with-lease -q 2>&1 | tail -2"
+expect_allow "s9) ... && git push origin HEAD -> allow"                               "cd $WT && git push origin HEAD 2>&1 | tail -5"
+expect_allow "s10) cd <wt> on its own line, then git push -> allow"                   "cd $WT"$'\ngit push'
+expect_allow "s11) git -C <abs worktree> push -> allow"                               "git -C $WT push"
+expect_allow "s12) git -C <abs worktree> push origin HEAD -> allow"                   "git -C $WT push origin HEAD"
+expect_allow "s13) -C on ANOTHER git call, push runs in cwd (feat/x) -> allow"        "git -C $WT status && git push"
+expect_allow "s14) apostrophe commit heredoc, then push -u origin feat/x -> allow"    $'git add -A && git commit -q -F - <<\'EOF\'\nfix: the gate doesn\'t fire\nEOF\ngit push -u origin feat/x 2>&1 | tail -2'
+expect_allow "s15) escaped-quote -m, then push -u origin feat/x -> allow"             'git commit -q -m "fix: the \"quoted\" word" && git push -u origin feat/x'
+expect_allow "s16) escaped-quote -m, then bare push on feat/x -> allow"               'git commit -q -m "fix: the \"quoted\" word" && git push 2>&1 | tail -2'
+expect_allow "s17) checkout -b X && push -u origin X (named refspec) -> allow"        'git checkout -b feat/new && git push -u origin feat/new'
+expect_allow "s18) switch -c X && commit && push -u origin X -> allow"                'git switch -c feat/new && git commit -q -m x && git push -u origin feat/new'
+# A hook that outlives its 25 s timeout does not block, so the parser's cost is a
+# control too: this shape (a ~20 KB heredoc commit, then the push) took 8-20 s
+# when the tokeniser forked one printf per token and joined lines in bash 3.2.
+big=""; i=0
+while [ "$i" -lt 301 ]; do big="${big}the gate doesn't fire on line $i of this long commit body"$'\n'; i=$((i+1)); done
+big_cmd="git commit -q -F - <<'EOF'"$'\n'"${big}EOF"$'\n'"git push -u origin feat/x"
+t0="$(date +%s)"
+expect_allow "s19) ~20 KB apostrophe heredoc commit, then push -u origin feat/x -> allow" "$big_cmd"
+t1="$(date +%s)"
+if [ $((t1 - t0)) -le 8 ]; then ok "s19b) ...and the hook decided in $((t1 - t0))s (<= 8s; its timeout is 25s)"
+else bad "s19b) the hook must stay far inside its 25s timeout" "took $((t1 - t0))s"; fi
+
+# MUST STILL DENY — a checkout/switch in the same command (hook cwd on feat/x: the
+# branch the hook can read is NOT the branch at push time). t1/t2 were ALLOWED
+# before this group existed.
+expect_deny "t1) git checkout main && git push -> deny"              'git checkout main && git push' 'git checkout'
+expect_deny "t2) git switch main; git push origin HEAD -> deny"      'git switch main; git push origin HEAD' 'git checkout'
+expect_deny "t3) cd <wt> && git checkout main && git push -> deny"   "cd $WT && git checkout main && git push" 'git checkout'
+expect_deny "t4) cd <wt> && git switch main && git push origin HEAD -> deny" "cd $WT && git switch main && git push origin HEAD" 'git checkout'
+expect_deny "t5) checkout hidden in an if -> deny (greedy)"          'if true; then git checkout main; fi; git push' 'git checkout'
+expect_deny "t6) checkout behind a quoted -C path -> deny (precise)" 'git -C "/dir with space" checkout main; git push' 'git checkout'
+
+$PG checkout -q main
+# ...the push forms themselves
+expect_deny "t10) echo ok; git push origin main -> deny"             'echo ok; git push origin main' "$B"
+expect_deny "t11) --force origin main -> deny"                       'git push --force origin main' "$B"
+expect_deny "t12) bare -f on main -> deny"                           'git push -f' "$B"
+expect_deny "t13) bare --force-with-lease on main -> deny"           'git push --force-with-lease' "$B"
+expect_deny "t14) x=\$(git push origin main) -> deny"                'x=$(git push origin main)' 'push-related but is not a plain'
+expect_deny "t15) backticks -> deny"                                 'x=`git push origin main`' 'push-related but is not a plain'
+expect_deny "t16) bash <<EOF push EOF -> deny"                       $'bash <<\'EOF\'\ngit push origin main\nEOF' "$B"
+expect_deny "t17) bash <<EOF with an apostrophe -> deny"             $'bash <<\'EOF\'\n# it\'s\ngit push origin main\nEOF' "$T"
+expect_deny "t18) cat <<EOF | bash -> deny"                          $'cat <<\'EOF\' | bash\ngit push origin main\nEOF' "$B"
+expect_deny "t19) cat <<EOF | bash with an apostrophe -> deny"       $'cat <<\'EOF\' | bash\n# it\'s\ngit push origin main\nEOF' "$T"
+expect_deny "t20) python os.system(git push origin main) -> deny"    $'python3 - <<\'PY\'\nimport os; os.system("git push origin main")  # it\'s\nPY' "$T"
+# ...a heredoc body is only set aside when it carries no `git … push`
+expect_deny "t21) script written by heredoc, then run -> deny"       $'cat > p.sh <<\'EOF\'\ngit push origin main\nEOF\nbash p.sh' 'push-related but is not a plain'
+expect_deny "t22) same, untokenisable -> deny"                       $'cat > p.sh <<\'EOF\'\n# it\'s\ngit push origin main\nEOF\nbash p.sh' "$T"
+expect_deny "t23) same, push behind a quoted -C (greedy-blind) -> deny" $'cat > p.sh <<\'EOF\'\n# it\'s\ngit -C "/dir with space" push origin main\nEOF\nbash p.sh' "$T"
+expect_deny "t24) untokenisable + quoted -C push (greedy-blind) -> deny" 'git -C "/dir with space" push origin main && echo "it'"'"'s \"x\""' 'push-related but is not a plain'
+expect_deny "t24b) still untokenisable + quoted -C push -> deny (no precise parse to lean on)" 'git -C "/dir with space" push origin main # it'"'"'s' "$T"
+expect_deny "t24c) git and push on different lines, greedy-blind, still untokenisable -> deny" $'git -c "user.name=a\nb" push origin main # it\'s' "$T"
+expect_deny "t24d) the same split inside a python heredoc -> deny" $'python3 - <<PYEOF\n# don\'t edit\nimport subprocess\nsubprocess.run(["git","-C","/abs/path with space",\n"push","origin","main"])\nPYEOF' "$T"
+# ...prose that now tokenises must not carry a real push past the gate
+expect_deny "t25) apostrophe commit heredoc, then push origin main -> deny" $'git commit -q -F - <<\'EOF\'\nfix: doesn\'t\nEOF\ngit push origin main' "$B"
+expect_deny "t26) apostrophe commit heredoc, then bare push on main -> deny" $'git commit -q -F - <<\'EOF\'\nit\'s\nEOF\ngit push' "$B"
+expect_deny "t27) escaped-quote -m, then push origin main -> deny"   'git commit -m "a \"b\"" && git push origin main' "$B"
+expect_deny "t28) escaped-quote -m, then push origin HEAD on main -> deny" 'git commit -m "a \"b\"" && git push origin HEAD' "$B"
+expect_deny "t29) -m ending in a backslash pair is a closed string -> deny" 'git commit -m "a\\" && git push origin main && echo "b\\"' "$B"
+expect_deny "t30) same behind an apostrophe heredoc (fallback path) -> deny" $'cat > n.md <<\'EOF\'\ndon\'t\nEOF\ngit commit -m "a\\\\" && git push origin main && echo "b\\\\"' "$B"
+# ...cd / -C: resolved IN the directory, so the primary on main still denies
+expect_deny "t40) cd <primary on main> && git push -> deny"          "cd $PREPO && git push" "$B"
+expect_deny "t41) git -C <primary on main> push -> deny"             "git -C $PREPO push" "$B"
+expect_deny "t42) git -C <primary on main> push origin HEAD -> deny" "git -C $PREPO push origin HEAD" "$B"
+expect_deny "t43) git -C <wt> status && git push, cwd on main -> deny" "git -C $WT status && git push" "$B"
+expect_deny "t44) cd <wt> && git push origin HEAD:main -> deny"      "cd $WT && git push origin HEAD:main" "$B"
+expect_deny "t45) cd <wt> && git push --all -> deny"                 "cd $WT && git push --all" 'every branch'
+expect_deny "t46) cd <wt> && git -C <primary> push -> deny (own -C wins)" "cd $WT && git -C $PREPO push" "$B"
+expect_deny "t47) git -C <wt> -C <primary> push -> deny (last -C wins)" "git -C $WT -C $PREPO push" "$B"
+# ...and every cd the gate does not follow keeps today's refusal
+expect_deny "t50) cd <wt> || git push -> deny"                       "cd $WT || git push" "$R"
+expect_deny "t51) two cds -> deny"                                   "cd $WT; cd $PREPO && git push" "$R"
+expect_deny "t52) cd <wt>/../repo -> deny"                           "cd $WT/../repo && git push" "$R"
+expect_deny "t53) cd - -> deny"                                      "cd $WT && cd - && git push" "$R"
+expect_deny "t54) cd \"\$VAR\" -> deny"                              'cd "$WT" && git push' "$R"
+expect_deny "t55) pushd -> deny"                                     "pushd $WT && git push" "$R"
+expect_deny "t56) cd <wt> | ... -> deny"                             "cd $WT | git push" "$R"
+expect_deny "t57) cd <wt> & ... -> deny"                             "cd $WT & git push" "$R"
+expect_deny "t58) git push; cd <wt> -> deny"                         "git push; cd $WT" "$R"
+expect_deny "t59) cd not first: echo x | cd <wt> && git push -> deny" "echo x | cd $WT && git push" "$R"
+expect_deny "t60) cd not first: false || cd <wt> && git push -> deny" "false || cd $WT && git push" "$R"
+expect_deny "t61) cd not first: test -d nope && cd <wt>; git push -> deny" "test -d nope && cd $WT; git push" "$R"
+expect_deny "t62) env cd <wt> (a child's cd) -> deny"                "env cd $WT && git push" "$R"
+expect_deny "t63) a second cd the walker cannot see (if) -> deny"    "cd $WT && if true; then cd $PREPO; fi; git push" "$R"
+expect_deny "t64) a second cd the walker cannot see ({ }) -> deny"   "cd $WT && { cd $PREPO; } && git push" "$R"
+expect_deny "t65) cd inside a heredoc fed to bash -> deny"           $'bash <<\'EOF\'\ncd '"$WT"$'\nEOF\ngit push' "$R"
+expect_deny "t66) cd with a redirection -> deny"                     "cd $WT 2>/dev/null && git push" "$R"
+expect_deny "t67) cd -P <wt> -> deny"                                "cd -P $WT && git push" "$R"
+expect_deny "t68) cd <glob> -> deny"                                 "cd ${WT}* && git push" "$R"
+expect_deny "t69) cd <wt> && git -C . push (relative own -C) -> deny" "cd $WT && git -C . push" "$R"
+expect_deny "t70) --git-dir re-anchors the repo -> deny"             "cd $WT && git --git-dir=$PREPO/.git push" "$R"
+expect_deny "t71) GIT_DIR= prefix -> deny"                           "cd $WT && GIT_DIR=$PREPO/.git git push" "$R"
+expect_deny "t72) exported GIT_DIR + -C <wt> -> deny"                "export GIT_DIR=$PREPO/.git; git -C $WT push" "$R"
+expect_deny "t73) (cd <wt>) is a subshell: push runs on main -> deny" "(cd $WT) && git push" "$B"
+expect_deny "t74) hook cwd is the feature worktree, cd <primary on main> && git push -> deny" "cd $PREPO && git push" "$B" "$WT"
+expect_deny "t75) hook cwd is the feature worktree, git -C <primary on main> push -> deny"    "git -C $PREPO push" "$B" "$WT"
+$PG checkout -q feat/x
 
 echo "== merge-driver launch hygiene (belt B) =="
 # The gate refuses a `sweap-merge.sh` launch line that carries an environment

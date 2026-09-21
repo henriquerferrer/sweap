@@ -72,7 +72,11 @@
 # as the merge branch: greedy trip-wire + precise parse (lib-merge-parse.sh,
 # parse_push_command) must agree, or the push is denied recoverably. Accepted
 # over-blocks (re-issue the push plainly): a push wrapped in if/$()/bash -c, an
-# `echo "git push …"` mention, a `-C` path with spaces, a push after `cd`. Prose
+# `echo "git push …"` mention, a `-C` path with spaces, a refspec-less push after
+# any `cd` but a single leading `cd /literal/absolute/dir &&` (that one, and the
+# push's own `git -C /abs/dir`, are resolved IN that directory), and a
+# refspec-less push sharing a command with `git checkout`/`git switch` (the
+# branch the hook reads now is not the branch at push time). Prose
 # the shell never runs — a PR body/title, a commit message, a heredoc body — is
 # redacted before the trip-wire (lib-merge-parse.sh, _redact_prose), so talking
 # about pushing is not pushing.
@@ -316,13 +320,13 @@ _pg_origin_head() {
   bounded_run 3 git -C "$1" symbolic-ref -q --short refs/remotes/origin/HEAD
   if [ "$BR_RC" = "0" ] && [ -n "$BR_OUT" ]; then _pg_add_base "${BR_OUT#origin/}"; fi
 }
-# _pg_strip_remote <ref>: `refs/remotes/<remote>/<branch>` or `<remote>/<branch>`
-# → `<branch>`, using the repo's actual remote names (so a branch containing `/`
-# is not mangled). Sets PG_DST.
+# _pg_strip_remote <ref> [<dir>]: `refs/remotes/<remote>/<branch>` or
+# `<remote>/<branch>` → `<branch>`, using the actual remote names of the repo in
+# <dir> (so a branch containing `/` is not mangled). Sets PG_DST.
 _pg_strip_remote() {
   local ref="${1#refs/remotes/}" r
   PG_DST="$ref"
-  bounded_run 3 git remote
+  bounded_run 3 git -C "${2:-.}" remote
   [ "$BR_RC" = "0" ] || return 0
   for r in $BR_OUT; do
     case "$ref" in "$r"/*) PG_DST="${ref#"$r"/}"; return 0 ;; esac
@@ -330,28 +334,61 @@ _pg_strip_remote() {
   # No remote matched: fall back to dropping the first path component.
   case "$ref" in */*) PG_DST="${ref#*/}" ;; esac
 }
-# _pg_current_dest <mode>: resolve where a refspec-less push (mode=push, respects
-# push.default) or an explicit HEAD refspec (mode=head) would land. Sets PG_DST;
-# returns 1 (PG_ERR = why) when it cannot be trusted → deny recoverable.
+# _pg_current_dest <mode> [<push's own -C>]: resolve where a refspec-less push
+# (mode=push, respects push.default) or an explicit HEAD refspec (mode=head) would
+# land. Sets PG_DST; returns 1 (PG_ERR = why) when it cannot be trusted → deny
+# recoverable.
+#
+# The branch is read in the directory the push will RUN in. Without cd/-C that is
+# the hook's cwd. With them it is resolved, not refused, in exactly three shapes
+# (lib-merge-parse.sh: PC_CD_DIR / PC_CD_WORDS); every other shape denies as before:
+#   - the push carries its own `-C <dir>`            → <dir> (cd is irrelevant to it);
+#   - no `cd` word anywhere (the -C sat on ANOTHER git call) → the hook's cwd;
+#   - one leading `cd <dir> &&|;` and no other cd word       → <dir>.
+# <dir> must be a literal absolute path that exists — no expansion of any kind, no
+# `..` — or the shell's idea of it and ours could differ.
 _pg_current_dest() {
   PG_DST=""; PG_ERR=""
-  if [ "${PC_HAS_CD:-0}" = "1" ]; then
-    PG_ERR="cwd cannot be trusted after cd/-C — name the branch: git push origin <branch>"
+  local pg_dir="."
+  if [ "${PC_HAS_SWITCH:-0}" = "1" ]; then
+    PG_ERR="the command also runs 'git checkout'/'git switch', so the branch at push time is not the branch the gate can read now — name the branch: git push origin <branch>"
     return 1
   fi
+  if [ "${PC_GIT_REDIRECT:-0}" = "1" ]; then
+    PG_ERR="GIT_DIR/GIT_WORK_TREE/--git-dir/--work-tree point git at another repository — name the branch: git push origin <branch>"
+    return 1
+  fi
+  if [ "${PC_HAS_CD:-0}" = "1" ]; then
+    if [ -n "${2:-}" ]; then
+      case "$2" in /*) pg_dir="$2" ;; *) pg_dir="" ;; esac
+    elif [ "${PC_CD_WORDS:-1}" = "0" ]; then pg_dir="."
+    elif [ "${PC_CD_WORDS:-0}" = "1" ]; then pg_dir="${PC_CD_DIR:-}"
+    else pg_dir=""
+    fi
+    case "$pg_dir" in
+      .) ;;
+      *'$'* | *'`'* | *'*'* | *'?'* | *'['* | *'{'* | *'~'* | *..*) pg_dir="" ;;
+      /*) [ -d "$pg_dir" ] && [ -x "$pg_dir" ] || pg_dir="" ;;
+      *) pg_dir="" ;;
+    esac
+    if [ -z "$pg_dir" ]; then
+      PG_ERR="cwd cannot be trusted after this cd/-C — only a single leading 'cd /literal/absolute/dir &&' (or the push's own 'git -C /literal/absolute/dir') is followed. Name the branch: git push origin <branch>"
+      return 1
+    fi
+  fi
   if [ "$1" = "push" ]; then
-    bounded_run 3 git config --get push.default
+    bounded_run 3 git -C "$pg_dir" config --get push.default
     if [ "$BR_OUT" = "matching" ]; then
       PG_ERR="push.default=matching pushes EVERY matching branch, including the base — name the branch: git push origin <branch>"
       return 1
     fi
-    bounded_run 3 git rev-parse --symbolic-full-name '@{push}'
+    bounded_run 3 git -C "$pg_dir" rev-parse --symbolic-full-name '@{push}'
     if [ "$BR_RC" = "0" ] && [ -n "$BR_OUT" ]; then
-      _pg_strip_remote "$BR_OUT"
+      _pg_strip_remote "$BR_OUT" "$pg_dir"
       return 0
     fi
   fi
-  bounded_run 3 git rev-parse --abbrev-ref HEAD
+  bounded_run 3 git -C "$pg_dir" rev-parse --abbrev-ref HEAD
   if [ "$BR_RC" != "0" ] || [ -z "$BR_OUT" ] || [ "$BR_OUT" = "HEAD" ]; then
     PG_ERR="HEAD is detached or unreadable, so the destination cannot be resolved — name the branch explicitly: git push origin <branch>"
     return 1
@@ -395,10 +432,16 @@ if [ "$IS_PUSH" = "1" ]; then
 fi
 
 if [ "$IS_PUSH" = "1" ]; then
-  if [ "${PC_PARSE_ERR:-0}" = "1" ] \
-     || [ "${PC_PUSH_COUNT:-0}" != "${PC_RELATED_COUNT:-0}" ] \
+  if [ "${PC_PARSE_ERR:-0}" = "1" ]; then
+    # Its own message: the generic one below blames prose carrying $(…), which is
+    # not what happened here and sent operators rewording text that was never the
+    # cause (84 false denials : 1 true refusal, 2026-08-25..09-20).
+    emit_deny "push-gate: this command carries a 'git … push' but could not be tokenised, so the gate cannot tell where the push would land. The usual cause is an unbalanced quote as the gate's tokeniser sees it — an apostrophe in a comment, in a heredoc fed to an interpreter (python/bash/node <<EOF) or in a \$'…' string — or a heredoc body that itself contains a 'git … push'. Failing CLOSED — re-issue the push on its own, as a separate command."
+    exit 0
+  fi
+  if [ "${PC_PUSH_COUNT:-0}" != "${PC_RELATED_COUNT:-0}" ] \
      || [ "${PC_PUSH_COUNT:-0}" = "0" ]; then
-    emit_deny "push-gate: this command is push-related but is not a plain 'git push <remote> <refspec>' the gate can resolve (wrapped in if/while/\$()/backticks, the words appear elsewhere, or it could not be tokenised). Failing CLOSED — re-issue each push plainly on its own line. If the words are only PROSE: values of --body/-b, --body-file/-F, --title/-t, --subject, -m/--message and heredoc bodies are already exempt, so what tripped this is prose carrying \$(…) or backticks — put that text in a file and pass it with --body-file/-F."
+    emit_deny "push-gate: this command is push-related but is not a plain 'git push <remote> <refspec>' the gate can resolve (wrapped in if/while/\$()/backticks, or the words appear elsewhere). Failing CLOSED — re-issue each push plainly on its own line. If the words are only PROSE: values of --body/-b, --body-file/-F, --title/-t, --subject, -m/--message and heredoc bodies are already exempt, so what tripped this is prose carrying \$(…) or backticks — put that text in a file and pass it with --body-file/-F."
     exit 0
   fi
 
@@ -407,6 +450,7 @@ if [ "$IS_PUSH" = "1" ]; then
   _pg_add_base main
   _pg_add_base master
   _pg_origin_head .
+  case "${PC_CD_DIR:-}" in /*) [ -d "$PC_CD_DIR" ] && _pg_origin_head "$PC_CD_DIR" ;; esac
   if [ -n "${PC_C_PATHS:-}" ]; then
     while IFS= read -r pg_p; do [ -n "$pg_p" ] && _pg_origin_head "$pg_p"; done <<EOF_PATHS
 $PC_C_PATHS
@@ -414,13 +458,13 @@ EOF_PATHS
   fi
 
   # shellcheck disable=SC2034  # pg_remote is positional filler (the record's remote column)
-  while IFS=$'\x1f' read -r pg_flags pg_remote pg_refspecs; do
+  while IFS=$'\x1f' read -r pg_flags pg_remote pg_refspecs pg_cdir; do
     case ",$pg_flags," in
       *,all,*) _pg_deny_base "${PG_BASES%% *}" "--all/--mirror/--branches pushes every branch, including the base" ;;
     esac
     if [ -z "$pg_refspecs" ]; then
       # Bare `git push` / `git push origin` / `git push --force-with-lease`.
-      _pg_current_dest push || _pg_deny_recoverable "$PG_ERR"
+      _pg_current_dest push "$pg_cdir" || _pg_deny_recoverable "$PG_ERR"
       _pg_in_bases "$PG_DST" && _pg_deny_base "$PG_DST" "current branch's push destination"
       continue
     fi
@@ -432,7 +476,7 @@ EOF_PATHS
       esac
       case "$pg_dst" in
         HEAD | @)
-          _pg_current_dest head || _pg_deny_recoverable "$PG_ERR"
+          _pg_current_dest head "$pg_cdir" || _pg_deny_recoverable "$PG_ERR"
           pg_dst="$PG_DST" ;;
       esac
       pg_dst="${pg_dst#refs/heads/}"

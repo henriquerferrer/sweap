@@ -115,8 +115,12 @@ _mc_related_scan() {
 #
 #   2. VALUES OF PROSE-CARRYING FLAGS — `-m/--message`, `-b/--body`,
 #      `-F/--body-file`, `-t/--title/--subject`, `--notes` and their attached
-#      `--flag=value` forms — tokenised exactly as the precise parsers tokenise,
-#      so a quoted body is one token and vanishes whole.
+#      `--flag=value` forms — tokenised as the precise parsers tokenise, so a
+#      quoted body is one token and vanishes whole. (One known difference, in the
+#      DENY direction only: `_tokenise` batches through a single `xargs printf`,
+#      which rejects a string ending in a lone opening quote; parse_merge_command's
+#      inline `xargs -n1` accepts it. bash rejects such a command anyway unless
+#      the quote sits in a trailing comment.)
 #
 # THE FAIL-CLOSED PROPERTY IS PRESERVED. A value token is redacted ONLY when it
 # cannot become a command: it is dropped only if it contains no `$` and no
@@ -161,15 +165,28 @@ _redact_heredocs() {
     }' 2>/dev/null || printf '%s' "$1"
 }
 
+# The tokeniser — parse_merge_command's four steps (join `\`-newline, newline →
+# ` ; `, space-pad the operators, xargs), one token per line; returns non-zero
+# when xargs cannot balance the quotes. Same tokens, but built to be CHEAP: bash
+# 3.2's `${var//$'\n'/ ; }` and `xargs -n1` (one printf fork per token) measured
+# 8-20 s on the 9-19 KB heredoc commits agents really issue, against a 25 s hook
+# timeout — and a hook that times out does not block. awk does the joins and ONE
+# printf prints every token.
+_tokenise() {
+  ( set -o pipefail   # a missing awk/sed must fail the tokenise even if the caller forgot pipefail
+  printf '%s' "$1" | awk '
+    NR > 1 { if (sub(/\\$/, "", prev)) printf "%s ", prev; else printf "%s ; ", prev }
+    { prev = $0 }
+    END { printf "%s", prev }' 2>/dev/null \
+    | sed -E 's/(\|\||&&|;|\||&)/ \1 /g' | xargs printf '%s\n' 2>/dev/null )
+}
+
 # Drop the values of prose-carrying flags. Prints the redacted string; returns 1
 # (printing nothing) when the string could not be tokenised, so callers keep the
 # raw greedy result and stay fail-closed.
 _redact_prose_values() {
-  local raw="$1" out="" tok tokens
-  raw="${raw//\\$'\n'/ }"
-  raw="${raw//$'\n'/ ; }"
-  raw="$(printf '%s' "$raw" | sed -E 's/(\|\||&&|;|\||&)/ \1 /g')"
-  tokens="$(printf '%s' "$raw" | xargs -n1 printf '%s\n' 2>/dev/null)" || return 1
+  local out="" tok tokens
+  tokens="$(_tokenise "$1")" || return 1
 
   local expect_cmd=1 drop=0
   while IFS= read -r tok; do
@@ -362,15 +379,47 @@ EOF
 #                     `bash -c "git push origin main"`, `if …; then git push …; fi`
 #                     and `$(git push …)` still do (fail closed).
 #   PC_PUSH_COUNT   — precise count of command-position `git push` invocations.
-#   PC_PARSE_ERR    — 1 if the command could not be safely tokenised.
+#   PC_PARSE_ERR    — 1 if the command carries a `git … push` and could not be
+#                     safely tokenised (see WHEN THE RAW STRING … below).
 #   PC_HAS_CD       — 1 if a `cd`/`pushd`/`popd` command appears anywhere, or a
-#                     `git -C <path>` was consumed (cwd cannot be trusted).
+#                     `git -C <path>` was consumed (the hook's cwd is not
+#                     necessarily where the push runs).
+#   PC_CD_WORDS     — greedy count of the WORDS `cd`/`pushd`/`popd` anywhere in
+#                     the raw string, structure-agnostic (999999 = uncountable).
+#   PC_CD_DIR       — the argument of a LEADING `cd <dir>`: set only when `cd` is
+#                     the command's very first token (no wrapper, nothing before
+#                     it) and `<dir>` is followed directly by `&&` or `;`. Empty
+#                     otherwise. The gate resolves a refspec-less push in it only
+#                     when PC_CD_WORDS is exactly 1 — so a second cd the walker
+#                     cannot see (`if …; then cd …`, `{ cd …; }`, a heredoc or
+#                     comment line) keeps denying — and vets the path itself.
+#   PC_GIT_REDIRECT — 1 if the raw string mentions GIT_DIR/GIT_WORK_TREE or
+#                     --git-dir/--work-tree: the repository a push reads is then
+#                     not the one in its directory, so nothing can be resolved.
+#   PC_HAS_SWITCH   — 1 if a `git checkout`/`git switch` appears (in command
+#                     position, or to the same greedy scan that counts pushes):
+#                     the branch at push time is then not the branch the hook
+#                     can read now.
 #   PC_C_PATHS      — newline-separated list of `-C` values seen.
 #   PC_PUSHES       — one record per push, newline-separated:
-#                     `<flags>\x1f<remote>\x1f<refspec1> <refspec2>…` (US-separated,
-#                     since tab is IFS whitespace and an empty flags column would
-#                     collapse) where flags is a comma-joined subset of {all,mirror,branches,delete,tags,
-#                     prune,dryrun} (dry-run is informational only — still gated).
+#                     `<flags>\x1f<remote>\x1f<refspec1> <refspec2>…\x1f<-C path>`
+#                     (US-separated, since tab is IFS whitespace and an empty
+#                     flags column would collapse) where flags is a comma-joined
+#                     subset of {all,mirror,branches,delete,tags,prune,dryrun}
+#                     (dry-run is informational only — still gated) and the last
+#                     column is THAT push's own `-C` value (the last one wins, as
+#                     in git), empty when it has none.
+#
+# WHEN THE RAW STRING CANNOT BE TOKENISED (an apostrophe in a heredoc body, a
+# `\"` inside a double-quoted message — xargs knows neither), the parse is retried
+# ONCE on the text with heredoc bodies removed (`_redact_heredocs` — the text the
+# greedy scan already trusts; a heredoc fed to an interpreter is never removed)
+# and `\\` / `\"` neutralised. A command that tokenises raw never takes this
+# path, so it behaves exactly as it always has. The retry is accepted only if the
+# removed bodies carried no `git … push` (greedy count AND the looser per-line
+# scan both unchanged) — a script written by heredoc and then run stays denied.
+# If the retry fails too, the command is push-related only when one of those two
+# scans sees a `git … push`: the bare word `push` (JS `.push(`, prose) is not one.
 #
 # Value-taking push flags (separate token) are ONLY -o/--push-option,
 # --receive-pack, --exec, --repo. `--force-with-lease`, `--signed`,
@@ -398,12 +447,14 @@ _pc_related_scan() {
             next
           }
           if ($0=="push") c++
+          else if ($0=="checkout" || $0=="switch") k++
           s=0; skip=0
         } }
-      END { print c+0 }' 2>/dev/null)"
+      END { print c+0, k+0 }' 2>/dev/null)"
   fi
-  if printf '%s' "$n" | grep -qE '^[0-9]+$'; then
-    PC_RELATED_COUNT="$n"
+  if printf '%s' "$n" | grep -qE '^[0-9]+ [0-9]+$'; then
+    PC_RELATED_COUNT="${n% *}"
+    PC_SWITCH_COUNT="${n#* }"
   elif printf '%s' "$1" | grep -Eq 'git.*push'; then
     # Greedy counter unavailable (missing tr/awk) — do NOT fail open. Sentinel
     # count can never equal PC_PUSH_COUNT, so the gate denies (recoverable).
@@ -411,16 +462,46 @@ _pc_related_scan() {
   fi
 }
 
+# Looser than the greedy scan, and only consulted where the precise walker cannot
+# be: prints how many LINES carry the word `git` and, later on that line, the
+# word `push`. Words are [A-Za-z0-9_] runs, so the quoted `-C "/dir with space"`
+# that blinds the greedy scan is seen here. Prints nothing if awk is missing
+# — callers compare against "0" / each other, so that fails closed.
+_pc_loose_scan() {
+  printf '%s' "$1" | awk '
+    function scan(l,   n, w, i, g) {
+      gsub(/[^A-Za-z0-9_]+/, " ", l); n = split(l, w, " "); g = 0
+      for (i = 1; i <= n; i++) { if (w[i] == "git") g = 1; else if (g && w[i] == "push") { c++; break } }
+    }
+    { if (sub(/\\$/, " ")) { buf = buf $0; next } scan(buf $0); buf = "" }   # `\`-newline joins
+    END { if (buf != "") scan(buf); print c+0 }' 2>/dev/null
+}
+
+# The same word scan over the WHOLE string, line breaks ignored: prints 1 when the
+# word `git` is followed ANYWHERE later by the word `push`, else 0. For the one
+# place nothing else can vouch for the command (it would not tokenise, twice). A
+# per-line scan is not enough there: a newline inside a quoted option value, or a
+# python list split across lines, puts `git` and `push` on different lines while
+# the greedy scan is blinded by the same quoted value — and that was a real
+# `git push origin main` the old gate denied. Prints nothing if awk is missing;
+# the caller compares against "0", so that fails closed.
+_pc_anywhere_scan() {
+  printf '%s' "$1" | awk '
+    { gsub(/[^A-Za-z0-9_]+/, " "); n = split($0, w, " ")
+      for (i = 1; i <= n; i++) { if (w[i] == "git") g = 1; else if (g && w[i] == "push") c = 1 } }
+    END { print c+0 }' 2>/dev/null
+}
+
 # Flush the push invocation being walked (state in _pc_*).
 _pc_record() {
   [ "$_pc_in_push" = "1" ] || return 0
   PC_PUSH_COUNT=$((PC_PUSH_COUNT + 1))
-  PC_PUSHES="${PC_PUSHES}${PC_PUSHES:+$'\n'}${_pc_flags}"$'\x1f'"${_pc_remote}"$'\x1f'"${_pc_refspecs}"
+  PC_PUSHES="${PC_PUSHES}${PC_PUSHES:+$'\n'}${_pc_flags}"$'\x1f'"${_pc_remote}"$'\x1f'"${_pc_refspecs}"$'\x1f'"${_pc_cdir}"
 }
 
 _pc_reset() {
   _pc_in_git=0; _pc_in_push=0; _pc_git_skip=0; _pc_git_c=0; _pc_push_skip=0
-  _pc_dashdash=0; _pc_flags=""; _pc_remote=""; _pc_refspecs=""; _pc_npos=0
+  _pc_dashdash=0; _pc_flags=""; _pc_remote=""; _pc_refspecs=""; _pc_npos=0; _pc_cdir=""
 }
 
 parse_push_command() {
@@ -429,6 +510,11 @@ parse_push_command() {
   PC_PUSH_COUNT=0
   PC_PARSE_ERR=0
   PC_HAS_CD=0
+  PC_CD_WORDS=0
+  PC_CD_DIR=""
+  PC_GIT_REDIRECT=0
+  PC_HAS_SWITCH=0
+  PC_SWITCH_COUNT=0
   PC_C_PATHS=""
   PC_PUSHES=""
 
@@ -436,10 +522,10 @@ parse_push_command() {
   [ -n "$raw" ] || return 0
 
   _pc_related_scan "$raw"
+  local _pc_red _pc_n_raw="$PC_RELATED_COUNT"   # raw count, before any redaction — the fallback's yardstick
   # Same prose re-scan as parse_merge_command (see _redact_prose): a commit
   # message or PR body that talks about pushing is not a push.
   if [ "${PC_RELATED_COUNT:-0}" != "0" ] && [ "${PC_RELATED_COUNT:-0}" != "999999" ]; then
-    local _pc_red
     if _pc_red="$(_redact_prose "$raw")" && [ -n "$_pc_red" ]; then
       PC_RELATED_COUNT=0
       _pc_related_scan "$_pc_red"
@@ -453,29 +539,71 @@ parse_push_command() {
     return 0
   fi
 
-  # Precise parse — same pipeline as parse_merge_command.
-  raw="${raw//\\$'\n'/ }"
-  raw="${raw//$'\n'/ ; }"
-  raw="$(printf '%s' "$raw" | sed -E 's/(\|\||&&|;|\||&)/ \1 /g')"
+  # Precise parse — same pipeline as parse_merge_command, on the RAW string first.
   local tokens
-  if ! tokens="$(printf '%s' "$raw" | xargs -n1 printf '%s\n' 2>/dev/null)"; then
-    PC_PARSE_ERR=1
-    PC_PUSH_RELATED=1
-    return 0
+  if ! tokens="$(_tokenise "$raw")"; then
+    # Untokenisable. Retry once with heredoc bodies removed and `\\` / `\"`
+    # neutralised (sed scans left to right, so `\\"` is a backslash pair and then
+    # a real quote — xargs has no escapes inside "…", bash does). See the header.
+    local _pc_hd _pc_t2
+    _pc_hd="$(_redact_heredocs "$raw")"
+    _pc_t2="$(printf '%s' "$_pc_hd" | sed -E 's/\\[\\"]/_/g')"
+    if tokens="$(_tokenise "$_pc_t2")" && _pc_red="$(_redact_prose_values "$_pc_t2")" && [ -n "$_pc_red" ]; then
+      # The walker is about to read text with the heredoc bodies gone. If a body
+      # carried a `git … push` (a script being written, then run) that would hide
+      # it — keep failing closed.
+      _pc_related_scan "$_pc_hd"
+      if [ "$PC_RELATED_COUNT" != "$_pc_n_raw" ] || [ "$(_pc_loose_scan "$_pc_hd")" != "$(_pc_loose_scan "$raw")" ]; then
+        PC_PARSE_ERR=1
+        PC_PUSH_RELATED=1
+        return 0
+      fi
+      PC_RELATED_COUNT=0
+      _pc_related_scan "$_pc_red"
+    else
+      # Still untokenisable, so there is no precise parse to agree with. The bare
+      # word `push` that got us past the pre-filter is not a git push (JS
+      # `.push(`, prose); a `git` with a `push` ANYWHERE after it is, whatever
+      # the line breaks between them say.
+      if [ "$_pc_n_raw" = "0" ] && [ "$(_pc_anywhere_scan "$raw")" = "0" ]; then
+        return 0
+      fi
+      PC_PARSE_ERR=1
+      PC_PUSH_RELATED=1
+      return 0
+    fi
   fi
+  [ "${PC_SWITCH_COUNT:-0}" != "0" ] && PC_HAS_SWITCH=1
+  case "$raw" in
+    *GIT_DIR* | *GIT_WORK_TREE* | *--git-dir* | *--work-tree*) PC_GIT_REDIRECT=1 ;;
+  esac
+  PC_CD_WORDS="$(printf '%s' "$raw" | tr -c 'A-Za-z0-9_' '\n' | grep -cxE 'cd|pushd|popd')"
+  printf '%s' "$PC_CD_WORDS" | grep -qE '^[0-9]+$' || PC_CD_WORDS=999999
 
-  local expect_cmd=1 tok
+  local expect_cmd=1 tok _pc_tokn=0 _pc_in_cd=0 _pc_cd_arg=""
   _pc_reset
   while IFS= read -r tok; do
     [ -n "$tok" ] || continue
+    _pc_tokn=$((_pc_tokn + 1))
 
     case "$tok" in
       ";" | "&&" | "||" | "|" | "&" | "|&")
+        # The leading `cd <dir>` is kept only when `&&` / `;` follows <dir> directly.
+        if [ "$_pc_in_cd" = "2" ]; then
+          case "$tok" in "&&" | ";") PC_CD_DIR="$_pc_cd_arg" ;; esac
+        fi
+        _pc_in_cd=0
         _pc_record
         _pc_reset
         expect_cmd=1
         continue ;;
     esac
+
+    if [ "$_pc_in_cd" != "0" ]; then
+      # 1 = expecting <dir>; 2 = have it; 3 = extra args / a redirection — not kept.
+      if [ "$_pc_in_cd" = "1" ]; then _pc_cd_arg="$tok"; _pc_in_cd=2; else _pc_in_cd=3; fi
+      continue
+    fi
 
     if [ "$_pc_in_push" = "1" ]; then
       case "$tok" in *">"* | *"<"*) continue ;; esac     # redirections
@@ -501,18 +629,22 @@ parse_push_command() {
     if [ "$_pc_in_git" = "1" ]; then
       # git global options before the subcommand.
       if [ "$_pc_git_c" = "1" ]; then
-        _pc_git_c=0; PC_HAS_CD=1
+        _pc_git_c=0; PC_HAS_CD=1; _pc_cdir="$tok"
         PC_C_PATHS="${PC_C_PATHS}${PC_C_PATHS:+$'\n'}$tok"
         continue
       fi
       if [ "$_pc_git_skip" = "1" ]; then _pc_git_skip=0; continue; fi
       case "$tok" in
         -C) _pc_git_c=1; continue ;;
-        -C?*) PC_HAS_CD=1; PC_C_PATHS="${PC_C_PATHS}${PC_C_PATHS:+$'\n'}${tok#-C}"; continue ;;
+        -C?*) PC_HAS_CD=1; _pc_cdir="${tok#-C}"; PC_C_PATHS="${PC_C_PATHS}${PC_C_PATHS:+$'\n'}${tok#-C}"; continue ;;
         -c | --git-dir | --work-tree | --namespace | --exec-path | --super-prefix) _pc_git_skip=1; continue ;;
         -*) continue ;;
       esac
-      if [ "$tok" = "push" ]; then _pc_in_push=1; else _pc_in_git=0; fi
+      case "$tok" in
+        push) _pc_in_push=1 ;;
+        checkout | switch) PC_HAS_SWITCH=1; _pc_in_git=0 ;;
+        *) _pc_in_git=0 ;;
+      esac
       continue
     fi
 
@@ -525,7 +657,9 @@ parse_push_command() {
       expect_cmd=0
       case "$tok" in
         git) _pc_in_git=1 ;;
-        cd | pushd | popd) PC_HAS_CD=1 ;;
+        cd | pushd | popd)
+          PC_HAS_CD=1
+          [ "$tok" = "cd" ] && [ "$_pc_tokn" = "1" ] && _pc_in_cd=1 ;;
       esac
       continue
     fi
