@@ -3,9 +3,9 @@
 # roadmap-lint.sh — the mechanical spec gate on roadmap item files.
 #
 # One gate, two call sites: /roadmap runs it on every new/changed item file
-# before the milestone PR opens; the dispatching session (serial loop or
-# coordinator) runs it on an item before dispatch. Fail = the item is not
-# runnable — fix mechanically or escalate; never dispatch past a failing lint.
+# before the milestone PR opens; the dispatching session runs it on an item
+# before dispatch. Fail = the item is not runnable — fix mechanically or
+# escalate; never dispatch past a failing lint.
 #
 # Usage: roadmap-lint.sh <item-file> [items-dir]
 #   items-dir defaults to the item file's own directory (where item-level
@@ -55,7 +55,7 @@ case "$status" in
   *)  fail "invalid status: $status (todo|attended|blocked|deferred|done|dropped)" ;;
 esac
 if [ "$status" = "deferred" ] && [ -z "$(get premise)" ]; then
-  fail "deferred item missing premise: (the machine-checkable predicate it waits on)"
+  fail "deferred item missing premise: (why it is parked, and what would un-park it)"
 fi
 if [ "$status" = "blocked" ] && [ -z "$(get blocked)" ]; then
   fail "blocked item missing blocked: (the question awaiting an ANSWER)"

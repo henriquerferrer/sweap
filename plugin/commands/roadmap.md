@@ -107,7 +107,11 @@ review is asked for:
    or carried by the time you get here. Do NOT drain or reschedule
    them here — `/roadmap` stays a pure direction-loop command; execution
    scheduling is `/milestone`'s job.
-   Likewise surface the **idea inbox** (`<backlog.dir>ideas/*.md`, if any) as
+   Likewise surface every **`status: deferred`** item with its `premise:` — parked
+   work only a human un-parks (playbook "Deferred items"): flip it to `todo` with a
+   real spec, re-spec it, or drop it; never archive a follow-up an audit record
+   names.
+   And the **idea inbox** (`<backlog.dir>ideas/*.md`, if any) as
    read-only context — ideas captured from the board awaiting triage. Fold the
    relevant ones into the brainstorm; do not copy them into items verbatim.
    And the **discovered inbox** (`<backlog.dir>discovered/*.md`): every

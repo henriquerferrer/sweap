@@ -24,7 +24,6 @@ review.focus:     # project-specific things the PR reviewer must check, in this 
 # ui.contract:    docs/ui/surface-contract.md  # uncomment for UI-heavy projects — see ui-design skill §2
 notify:           push
 turns.default:    160
-parallel:         1                        # concurrent roadmap items: default 1 = serial; 2+ opts into coordinator mode (cap 4) — see playbook "Parallel runs"
 ```
 
 ## Standing preferences — treat as already answered, do not re-ask

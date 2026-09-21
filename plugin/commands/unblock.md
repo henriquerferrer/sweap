@@ -85,7 +85,7 @@ a *task* the human performs, not a question; that one is `/handoff`.
    always.
 
 5. **Report what it released.** After the merge, name the items that just became
-   unblocked and are now on the frontier. If a run is in flight its coordinator
+   unblocked and are now on the frontier. If a run is in flight it
    recomputes the frontier after every merge and will pick them up; if not,
    offer to run `/milestone`.
 

@@ -43,5 +43,5 @@ by the sweep rule (playbook, End-of-run hygiene): the next gated PR any session
 opens carries them. If you capture from the board and then stop working, run
 `/idea` (or any command that opens a PR) to get them onto `origin`.
 It never edits or deletes anything and never touches items, the board, or the
-pipeline, so it is safe to leave running during an autonomous coordinator run.
+pipeline, so it is safe to leave running during an autonomous run.
 Stop it with Ctrl-C.

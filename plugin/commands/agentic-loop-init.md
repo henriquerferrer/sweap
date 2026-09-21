@@ -48,7 +48,7 @@ This mechanically, idempotently:
    secret whose expiry would block every PR.
 4. **Runtime gitignore rules:** ensures the project's `.gitignore` excludes
    sweap's runtime files — `session-main-redcheck.sh`'s marker file
-   (`.claude/main-red-*.flag`), the coordinator's parallel-runs board
+   (`.claude/main-red-*.flag`), a legacy run-journal file
    (`.claude/sweap-board.md`), the run file `/milestone` writes at kickoff
    (`.claude/sweap-run.md`) and the merge driver's state dir
    (`.claude/sweap-merge/`) — appending each line only if missing, creating

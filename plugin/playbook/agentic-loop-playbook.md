@@ -59,11 +59,6 @@ overrides only the keys that differ from the baked defaults. The keys:
   URL the acceptance pass opens (never production) and the ONE command allowed
   to create test data. Undeclared, `/walkthrough` opens nothing and seeds
   nothing by itself — the human drives.
-- **`parallel`** — max concurrent roadmap items. Default **`1`**, the serial
-  loop. `2` or more opts into coordinator mode, which is opt-in for a stated
-  reason rather than the standard run shape (see **Parallel runs** for the
-  measurements that demoted it, and the conditions that would restore it); hard
-  cap **4** — clamp anything higher to 4 and say so.
 
 References to `ROADMAP.md`, the milestone prefix `F`, and `just …` recipe names
 below are the baked defaults; a project that overrides them reads its own values
@@ -119,8 +114,6 @@ hazard.
   sessions capturing the same title from two branches never collide. **The one
   thing a discovered note is not is an item file on a feature branch** — see
   "Discovered work" under the per-feature loop for why.
-- **`.claude/sweap-board.md`** (gitignored) stays the *ephemeral* layer —
-  in-flight claims and merge order only (see Parallel runs).
 - **`.claude/sweap-run.md`** (gitignored) is the other ephemeral file: which
   milestone `/milestone` resolved for THIS run, and the shape it resolved to.
   It exists because that resolution is the one fact no item file records —
@@ -142,10 +135,9 @@ trivial (this flatness is a format contract, not a style preference):
     status: todo             # todo | attended | blocked | deferred | done (dropped: archive only)
     depends_on: []           # item IDs (F1.1) and/or bare milestone tags (F2)
     review-dimensions: []    # from the review.dimensions config set
-    lane:                    # optional; same-lane items NEVER co-dispatch
     followup_of:             # optional milestone tag — marks an audit-debt item
     harm:                    # optional — security | data-loss | wrong-data | outage: why a follow-up outranks features (owes a ## Harm section)
-    premise:                 # REQUIRED when deferred — machine-checkable predicate
+    premise:                 # REQUIRED when deferred — why it is parked, what would un-park it
     blocked:                 # REQUIRED when blocked — the question awaiting "> ANSWER:"
     carried:                 # optional int — milestone boundaries this question has survived
     handoff:                 # REQUIRED when attended — the task the HUMAN performs
@@ -162,7 +154,7 @@ trivial (this flatness is a format contract, not a style preference):
     - <observable behavior a test asserts, and the LAYER that asserts it>
 
     ## Notes
-    <optional: "> ANSWER:" threads, UNBLOCKED/CARRIED annotations, links>
+    <optional: "> ANSWER:" threads, CARRIED annotations, links>
 
 **Authoring `## Acceptance` — each criterion names its LAYER.** The heading is
 `## Acceptance`; `roadmap-lint.sh` matches it as a prefix, so
@@ -189,15 +181,6 @@ written as a route test is gated exactly as hard as one written as a browser
 spec. Naming the layer is about writing the cheapest test that can actually fail
 for its own subject, never about which tests the gate runs.
 
-**Authoring `lane:`** — make a lane as narrow as the real file overlap: two
-items share one only if they literally touch the same files. An over-broad lane
-serializes genuinely disjoint work — consumer A put FM.3 (which edits
-`document-http.ts` and routes) in `lane: documents-storage` alongside FM.1/4/5
-(which edit `patient-documents.tsx`), and all four then ran strictly serially
-for no reason. The lane only bites in coordinator mode, so this is guidance for
-opt-in runs; but it is written when the item is, long before anyone knows which
-mode will run it.
-
 **The four states, and who owns each.** Status is the ownership axis, which is
 why these are mutually exclusive values rather than flags: `todo` means
 *agent-dispatchable*, by construction, and everything downstream (the frontier,
@@ -209,7 +192,7 @@ exactly that.
 | `todo` | agent | nothing | — | yes, when unblocked | no |
 | `attended` | **human** | the human doing it | `handoff:` | never | yes — *a planned hand-off* |
 | `blocked` | agent, **stuck** | a human's answer | `blocked:` | never | yes — *a failure signal* |
-| `deferred` | nobody | work that doesn't exist yet | `premise:` | never | no |
+| `deferred` | nobody | a human's decision to un-park it | `premise:` | never | no |
 
 The line between the two that page the human: **`blocked:` holds a QUESTION,
 `handoff:` holds a TASK.** If the human's next move is to answer, the item is
@@ -234,8 +217,8 @@ both lint-enforced (same principle, different reader). `blocked`,
 frontmatter (plus `blocked:`/`premise:` where the status requires it), NOT a
 `## Spec`/`## Acceptance`; a deferred or blocked item earns its full spec when
 it is promoted to `todo`. `/roadmap` runs it on every new/changed item
-file before the milestone PR opens; the dispatching session (serial loop or
-coordinator) runs it again before dispatch. A todo item failing lint is not
+file before the milestone PR opens; the dispatching session runs it again
+before dispatch. A todo item failing lint is not
 runnable: fix it if the fix is mechanical, else escalate (status: blocked
 with the question). Evidence: vague delegation is the dominant
 parallel-dispatch failure mode; a self-contained spec naming surface,
@@ -769,9 +752,9 @@ may ADD dimensions it judges necessary; it may not remove tagged ones.
   `gh pr create`. **For `gh pr merge` this is no longer instruction-only:** the
   `pre-merge-gate` `PreToolUse` hook mechanically denies `--admin`/`--repo`/`-R`
   on merges (and enforces greenness — see the Merge-gate section). The standing
-  instruction still governs `gh pr create` (not hooked). Coordinator mode
-  additionally uses `git rebase` and `git push --force-with-lease` on item
-  branches as routine loop verbs.
+  instruction still governs `gh pr create` (not hooked). `git rebase` and
+  `git push --force-with-lease` on an item's own branch are routine loop verbs
+  (a BEHIND branch is updated that way).
 
 ## Attended items (planned human hand-offs)
 
@@ -826,8 +809,7 @@ can, checks the *Done when* condition, and — only on the human's explicit
 confirmation — flips `status: done` through a normal gated PR. An unattended run
 never flips it. A hand-off that is started but cannot finish yet (waiting on a
 third party) stays `attended` with a `> **STARTED (YYYY-MM-DD):** <what's
-pending>` note under `## Notes`, the same convention deferred items use for
-`> **UNBLOCKED:**`. One that stops mattering is archived with a
+pending>` note under `## Notes`. One that stops mattering is archived with a
 `dropped_reason:` like any other item.
 
 **An open hand-off keeps its milestone incomplete**, so the milestone-audit is
@@ -930,98 +912,30 @@ long it waited, and then either:
 **Never**: relabel a blocked item `attended` to get a run-stop — a hand-off is
 authored, never transitioned into, and `audit-gate.sh --check` enforces it.
 
-## Deferred items (parked behind a future dependency)
+## Deferred items (parked)
 
-A `[deferred]` item is a *good idea that cannot be built yet* because it depends
-on work that doesn't exist. It is distinct from `[blocked]`:
+A `[deferred]` item is parked: nobody is working on it and nothing is stuck.
 
 - `[blocked]` = active work is **stuck** and needs a human answer to continue
   *now*. It sits on the "needs-me-now" queue and pings the human.
 - `[attended]` = a **planned hand-off**: the human's own work, waiting on them
-  to do it. Also on the needs-me-now queue, but as a task rather than a failure
-  (see **Attended items**).
-- `[deferred]` = **parked**, nobody is working on it, nothing is stuck. The agent
-  never auto-picks a `[deferred]` item (it is invisible to the top-of-backlog
-  picker exactly like a `Later milestone`). It keeps the "needs-me-now" list
-  honest — only genuine `[blocked]` items and hand-offs pull the human's
-  attention.
+  to do it (see **Attended items**).
+- `[deferred]` = **parked**. It never pulls the human's attention and an agent
+  never picks it, never promotes it and never drops it.
 
-**Why deferred instead of leaving it `[todo]`.** A `[todo]` item that can't be
-built (its deps aren't `[done]`) is clutter: the picker either trips on it every
-run and escalates, or a human has to remember it isn't really ready. `[deferred]`
-encodes "not ready, don't look" once, mechanically.
+Every deferred item carries a `premise:` — one line saying why it is parked and
+what would un-park it (*"parked 2026-09-20 — no harm class"*, *"waits on F4's
+billing surface; re-decide when F4 lands"*). Two things park an item: the harm
+bar (`/milestone`'s triage step, and the one parked-findings item an audit
+files), and a human at `/roadmap` setting aside a good idea whose time has not
+come. Work that merely waits on a dependency does not need this status — a
+`todo` item with an unsatisfied `depends_on` is already off the frontier.
 
-**Premise (required on every deferred item).** Each deferred item carries a
-`premise:` frontmatter key — the assumption it is waiting on, written wherever possible as a
-**machine-checkable predicate**, not prose. Good: *"a `billing_events` table
-exists with the expected columns"*, *"the target milestone's spec AC-3 still
-reads X"*. This is the small authoring discipline that buys the autonomy below — a
-checkable premise is one no human ever has to adjudicate.
-
-**Dependency granularity — item-level vs. milestone-level.** The unblock scan is
-*item-level*: it fires when a `depends_on` entry that names an **item** (a
-dotted ID like `F4.3`, using the configured milestone prefix) turns
-`status: done` in its file. A dependency on a **whole milestone** — a bare
-`F4`, which has no single file to read a status from — is **not**
-auto-scannable and must not be treated as done by text-match (nor as
-vacuously done because the milestone has no item files yet). A bare-milestone
-dependency is unblocked when that milestone **completes** — item files for
-that milestone exist and every one is `status: done` — which coincides with
-the milestone-audit and the next `/roadmap`, a human-in-the-loop boundary. So
-milestone-level deferrals **surface at the milestone boundary** (the
-`/milestone` pre-flight backstop and the next roadmap pass), not via the
-automated end-of-run item scan. Rule of thumb: once the target item files
-exist, rewrite `depends_on` to item granularity so the scan can fire; a
-bare-milestone dep is a deliberate "resurface when that milestone completes"
-marker, not an auto-promote trigger.
-
-**Lifecycle — an item is *unblocked* when every `depends_on` item is `status: done`.**
-An item with an EMPTY `depends_on` is never unblocked: it was parked by a decision
-(the harm bar — see `/milestone`'s triage step), not behind a dependency, and only a
-human un-parks it. A parked follow-up is also never archived (path 3 does not apply):
-the audit record that filed it names the file, and the gate fails a record whose
-file is gone. Unblocked ≠ ready; it **never auto-promotes**. On unblock the agent evaluates the
-premise and takes exactly one path:
-
-1. **Premise machine-checkable AND verifiably holds** → auto-promote to `status: todo`.
-   No human touch. This is the common case (the dependency landed roughly as
-   planned) and it must be *verified*, not guessed — the failure mode of a wrong
-   promote is a stale feature built against a dead assumption that passes every
-   gate (gates verify correctness, not intent) and merges invisibly. Any doubt
-   about whether the premise is *truly* mechanically verifiable → treat as
-   not-checkable and escalate (path 2/3). Bias toward escalation: a needless
-   escalation costs one notification; a wrong auto-promote ships silently.
-2. **Premise not machine-checkable, or the check fails but the item still makes
-   sense** → **escalate for re-spec.** Keep it `status: deferred`, annotate it
-   `> **UNBLOCKED (YYYY-MM-DD):** <what shipped vs. the premise>` under its
-   `## Notes`, and list it in the end-of-run summary. The re-spec itself flows
-   into the next `/roadmap` conversation — no new standalone touchpoint.
-3. **No longer makes sense** → **propose drop.** Move the file to
-   `roadmap/archive/` with `status: dropped` and a one-line `dropped_reason:`.
-   This is a *reversible*
-   soft-delete (it stays in git history and the archive dir), so it does NOT
-   block on the human's confirmation — they veto async if they disagree. (Drop is
-   cheap and reversible; promote is expensive and invisible — gate each to its
-   cost of being wrong.)
-
-**When the check runs (it is stateless — just "are this item's `depends_on` all
-done?", recomputed from the item files, so missing it once costs nothing):**
-
-- **Primary — end of every run.** Any run that merges a PR scans for
-  newly-unblocked deferred items and applies the lifecycle above, surfacing
-  paths 2/3 in the end-of-run summary. The dependency landing *is* a merge in that
-  run, so the merging agent is best placed to notice.
-- **Backstop — `/milestone` pre-flight.** `/milestone` re-runs the same scan when
-  it reads the backlog, catching anything unblocked *outside* an autonomous run
-  (e.g. a hand-merged dependency).
-
-Un-checkable premises are not a hole in this design — they are its **sorting
-function.** A premise that can't be mechanically verified *is* a judgment about
-what shipped, i.e. a taste call, i.e. the "which problems matter" work that stays
-human. Checkable premises auto-resolve; un-checkable ones route to the human
-*because* they are direction calls. Human load compresses toward a floor of
-roadmap authoring + genuine-divergence calls, and that floor is deliberate: it is
-where product direction lives, which no gate can verify.
+**Only a human un-parks**, at `/roadmap`, which lists the deferred items next to
+the inboxes: flip it to `todo` (it then needs a real spec — the lint gate is
+todo-only), re-spec it, or drop it to `roadmap/archive/` with a
+`dropped_reason:`. One exception to the drop: a follow-up an audit record names
+is never archived — the gate fails a record whose file is gone.
 
 ## Milestone brainstorm (before a milestone starts)
 
@@ -1481,46 +1395,19 @@ parallelism (next section) recovers CI dead time on genuinely independent items
 is opt-in for that reason; a serially-dependent milestone gains nothing from it
 and simply runs the serial loop.
 
-## Parallel runs (coordinator mode — opt-in)
+## One item at a time (serial by design)
 
-**The default is `parallel: 1`.** Coordinator mode is opt-in and wants a stated
-reason; it is not the standard run shape.
+A run works ONE roadmap item at a time. sweap shipped a coordinator mode
+(`parallel: 2+`) and removed it on measurement: across ~99 consecutive consumer A
+merges only ~17% had two items genuinely in flight together — the rest were
+dependency-chained — which is +9.4% at width 2 (Amdahl), bought with board
+upkeep, a re-verifying merge queue that RAISES total CI minutes, and workers
+forced CI-gated by one shared local services stack. A `parallel:` key or a
+`lane:` key in an older project is ignored.
 
-That is measured, not argued. Across ~99 consecutive merged-PR transitions in
-Consumer A only **17 had two roadmap items genuinely in flight together (~17%)** —
-the rest were lane-locked or dependency-chained (F11.1 → … → F11.7 is a strict
-7-deep chain). Amdahl at p = 0.17: **+9.4% at K = 2**, ceiling **+20.7% at
-K = ∞**. This section used to promise "~1.5–2x on an independent frontier", and
-1.5x at K = 2 needs p ≥ 0.667 — two thirds of the frontier independent. 17% is
-already the generous reading: it counts a PR idling in CI while another opens,
-not only true co-dispatch. There was no contention to manage either — CI e2e is
-11–14 min (~110 merges/day of serial capacity) against ~1 PR/hour arriving,
-utilization ~0.2, where Uber built SubmitQueue for 1,000 changes/day and
-GitHub's merge queue serves 2,500 PRs/month across 500 engineers. Worse, at
-K ≥ 2 the always-verify queue *increases* total CI minutes (every queued PR
-rebases and re-runs the full e2e on the combined state) and the CI-gated rule
-below makes each worker slower. Board upkeep, frontier recomputation and
-mandatory instrumentation were ceremony bought for a single-digit gain.
-
-**Re-enable on numbers, not intuition:** set `parallel: 2` when a run's
-instrumentation shows **≥2/3 of the frontier genuinely independent** AND PR
-arrival approaching **~4/hour**. Both conditions, not either.
-
-**When opted in** (2–4; hard cap 4): thin coordinator, fat gates — workers in
-isolated worktrees, each slot held until the PR *merges*, FIFO merges that
-rebase and re-verify green, `.claude/sweap-board.md` (gitignored) as the
-coordinator's externalized memory. Three rules carry the risk: never co-dispatch
-items sharing a `lane:`, two `migration`-tagged items, or anything plausibly
-touching the same surface; and at K ≥ 2 workers run CI-gated, because one shared
-local services stack produces spurious failures. Everything else —
-mechanics, evidence base, locked decisions — is in
-`docs/superpowers/specs/2026-07-18-parallel-roadmap-runs-design.md` in the sweap
-plugin repo. Read it there; it is not restated here, deliberately.
-
-**Not coordinator machinery, and unaffected by `parallel:`** — worktree-per-PR,
-`post-merge-cleanup.sh`, and the pre-merge gate's compare-API freshness check.
-That last is a *correctness* control, not a concurrency one: `main` moves under
-an in-flight branch at width 1 too, and a Free-plan repo never reports BEHIND.
+Worktree-per-PR, `post-merge-cleanup.sh` and the pre-merge gate's compare-API
+freshness check were never concurrency machinery and stay: `main` moves under an
+in-flight branch at width 1 too, and a Free-plan repo never reports BEHIND.
 
 ## The three loops (what autonomy replaces, and what it can't)
 

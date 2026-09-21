@@ -68,26 +68,6 @@ Then pick the run shape:
   command and stop.
 - **Neither** → nothing to run; say so and stop.
 
-Deferred-item backstop (see the playbook's "Deferred items" section). Before
-resolving the milestone, scan `backlog.dir` for newly-unblocked
-**`status: deferred`** item files — these may have unblocked outside an
-autonomous run (e.g. a hand-merged dependency) and the end-of-run scan never
-fired. (A frontmatter scan — no header matching needed.) An item with an empty
-`depends_on` is never a candidate: it was parked by a decision, not behind a
-dependency, and only a human un-parks it. Otherwise an item counts as unblocked when
-either: (a) every **item-level** `depends_on` entry (a dotted ID like `F4.3`
-or `DS3.4`, any configured prefix) has its file at `status: done`; or (b) a
-**milestone-level** entry (a bare tag like `F#` or `DS#`) has *completed* —
-item files for that milestone exist and every one that is not a follow-up
-(`followup_of:` — its debt, not a member) is `status: done` (this
-pre-flight is the designated surfacing point for milestone-level deps, which
-the item scan cannot catch). For each unblocked
-item, apply the lifecycle: if its `premise:` is machine-checkable and verifiably
-holds, promote it to `status: todo` (it may then be this run's work); otherwise list
-it for the human to re-decide (re-spec or drop) — do not promote on a stale or
-uncheckable premise. Report any you found. The scan is stateless (just re-reads
-current statuses), so running it here every time is safe and idempotent.
-
 Discovered-items triage (see the playbook's "Backlog format" and "Discovered
 work — the three-lane rule"). Before the audit-debt scan, read the discovered
 inbox — `<backlog.dir>discovered/*.md` (the `loadDiscovered` /
@@ -162,9 +142,9 @@ debt set `D`: every item file with `followup_of:` set — for ANY configured
 prefix — that is `status: todo` AND unblocked (all `depends_on` satisfied;
 blocked and deferred items are excluded — same rule as the frontier picker).
 A frontmatter scan; no header matching. These are auto-folded into this run's scope **ahead of**
-the named milestone's items (debt-first). Report the list of items in `D`. Like
-the deferred scan, this is stateless — it just re-reads current statuses — so
-running it here every time is safe and idempotent. (An item in `D` that turns
+the named milestone's items (debt-first). Report the list of items in `D`. This is
+stateless — it just re-reads current statuses — so running it here every time is
+safe and idempotent. (An item in `D` that turns
 out to need a direction call on pickup escalates to `[blocked]` and is left for
 the human, exactly like any other item — the stop clause in the printed goal
 below still lets the run finish.)
@@ -198,7 +178,7 @@ Then **walk the most-gating one immediately** — do not print a goal first, and
 do not offer "later" as an equal option. Run `/handoff <id>` inline, here, in
 this session: brief the human, take the steps, and close it on their
 confirmation exactly as that command specifies. Then re-resolve from the top
-(the deferred, debt and hand-off scans are all stateless, so re-running them is
+(the debt and hand-off scans are all stateless, so re-running them is
 free) and print the goal that now applies.
 
 **Why this is not a fork any more.** A hand-off is an item *of* the milestone,
@@ -298,16 +278,6 @@ hand. Check whether `services.up` is declared in the `## sweap config` block in
 the merge gate requires CI e2e green, so CI is the authoritative test gate. Say
 which mode you ended up in. Never block the run on Docker, or on the absence of
 `services.up` — the loop is identical either way.
-
-Parallel width. Read `parallel:` from the `## sweap config` block (default 1;
-clamp values above 4 to 4 and say so). At **1** — the default — the run is the
-serial loop and there is nothing to announce. At 2 or more it operates in
-**coordinator mode** per the playbook's "Parallel runs" section — frontier
-scheduling, worktree-isolated workers, the FIFO always-verify merge queue, and
-the `.claude/sweap-board.md` board file. That mode is opt-in against measured
-evidence that it bought ~+9% here, so when it is on, say so explicitly and say
-why the project declared it. The printed goal line is IDENTICAL either way —
-the mode changes how the run executes, not its definition of done.
 
 Before any dispatch (either mode, serial included), run the spec gate on the
 item: `sweap-roadmap-lint <backlog.dir>/<ID>.md` (a bare command — the sweap

@@ -54,8 +54,8 @@ touch any other status. A `[blocked]` item is a *question* awaiting a
    long-lead work that should have been started on day one.
 
 6. **Report what it released.** After the merge, name the items that just
-   became unblocked and are now on the frontier. If a run is in flight, its
-   coordinator recomputes the frontier after every merge and will pick them up
+   became unblocked and are now on the frontier. If a run is in flight, it
+   recomputes the frontier after every merge and will pick them up
    with nothing further needed; if not, offer to run `/milestone`.
 
 **What this command never does:** create an attended item, change any other
