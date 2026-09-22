@@ -30,9 +30,16 @@
 #   ci-lane.sh --files <path>...     classify an explicit list (NUL-safe via
 #                                    --files0 on stdin: `ci-lane.sh --files0 < list`)
 #   ci-lane.sh --base <ref>          classify `git diff --name-only <ref>...HEAD`
-# Prints exactly one word on stdout: `roadmap-only` or `code`. Exit 0 on a
-# classification, 2 on usage. Reads `backlog.dir` from CLAUDE.md's
-# `## sweap config` block (default `roadmap/`), like audit-gate.sh does.
+#   ci-lane.sh --tested-tree <before-sha>
+#                                    PUSH EVENTS ONLY, and the one ONLINE mode:
+#                                    prints `tested` when this exact tree already
+#                                    passed e2e on the pull request that produced
+#                                    it, else `code` (see the block below)
+# Prints exactly one word on stdout: `roadmap-only`, `code`, or — from
+# --tested-tree alone — `tested`. Exit 0 on a classification, 2 on usage. Reads
+# `backlog.dir` from CLAUDE.md's `## sweap config` block (default `roadmap/`),
+# like audit-gate.sh does. --files / --files0 / --base stay OFFLINE, and they are
+# what pre-merge-gate.sh calls: a PR can never be classified `tested`.
 set -uo pipefail
 
 BACKLOG_DIR="$(sed -n 's/^backlog\.dir:[[:space:]]*\([^[:space:]#]*\).*/\1/p' CLAUDE.md 2>/dev/null | head -1)"
@@ -49,8 +56,65 @@ BACKLOG_DIR="${BACKLOG_DIR#./}"
 [ -n "$BACKLOG_DIR" ] || BACKLOG_DIR="roadmap/"
 
 mode="${1:-}"
-[ -n "$mode" ] || { echo "usage: ci-lane.sh --files <path>... | --files0 | --base <ref>" >&2; exit 2; }
+[ -n "$mode" ] || { echo "usage: ci-lane.sh --files <path>... | --files0 | --base <ref> | --tested-tree <before-sha>" >&2; exit 2; }
 shift
+
+# --- --tested-tree: did THIS tree already pass e2e? -----------------------------
+# After a squash merge the push-to-main run re-tests a tree the PR run has just
+# passed: on consumer A 160 of 160 merges had tree(merge commit) == tree(PR head), the
+# push run caught 0 regressions, and its 16 reds were all flakes or CPU contention
+# — which left main red and made `sweap-merge rerun` refuse the NEXT PR. This mode
+# lets that run skip e2e, and only e2e, when every condition below holds. ANY
+# doubt — a missing tool, an API error, a timeout, an unmet condition — prints
+# `code` and says why on stderr, so the suite runs. It needs GH_TOKEN with
+# `pull-requests: read` and `checks: read`; without them it is simply never
+# `tested`.
+if [ "$mode" = "--tested-tree" ]; then
+  before="${1:-}"
+  [ -n "$before" ] || { echo "usage: ci-lane.sh --tested-tree <before-sha>" >&2; exit 2; }
+  no() { printf 'tested-tree: no — %s\n' "$1" >&2; printf 'code\n'; exit 0; }
+  is_sha() { case "$1" in *[!0-9a-f]*|"") return 1 ;; esac; [ "${#1}" -eq 40 ]; }
+  command -v gh >/dev/null 2>&1 || no "gh is not on PATH"
+  # The first network call in a job ci-status needs: a hung API must cost 20s and a
+  # full e2e run, never a cancelled `changes` job and a red main.
+  command -v timeout >/dev/null 2>&1 || no "timeout(1) is not on PATH"
+  repo="${GITHUB_REPOSITORY:-}";  [ -n "$repo" ]   || no "GITHUB_REPOSITORY is unset"
+  branch="${GITHUB_REF_NAME:-}";  [ -n "$branch" ] || no "GITHUB_REF_NAME is unset"
+  is_sha "$before" || no "before-sha is not a commit id"
+  api() { timeout 20 gh api "$@" 2>/dev/null; }
+
+  sha="$(git rev-parse HEAD 2>/dev/null)";          is_sha "$sha"  || no "cannot resolve HEAD"
+  tree="$(git rev-parse 'HEAD^{tree}' 2>/dev/null)"; is_sha "$tree" || no "cannot resolve HEAD's tree"
+  # One first-parent step on top of what main was: a squash, a merge commit or a
+  # one-commit fast-forward. A multi-commit push is a human's and is never `tested`.
+  [ "$(git rev-parse HEAD^ 2>/dev/null)" = "$before" ] || no "the push is not one commit on top of $before"
+  # A workflow edit must run the full pipeline it edits (the push-event config is
+  # the one thing the PR run did not exercise).
+  changed="$(git diff --name-only "$before" HEAD 2>/dev/null)" || no "cannot diff $before..HEAD"
+  case $'\n'"$changed" in *$'\n'.github/*) no "the push touches .github/" ;; esac
+
+  # 1. HEAD is the merge commit of exactly one MERGED pull request into this branch.
+  head="$(api "repos/$repo/commits/$sha/pulls" --jq "[.[] | select(.merge_commit_sha == \"$sha\" and .merged_at != null and .base.ref == \"$branch\")] | if length == 1 then .[0].head.sha else \"\" end")" \
+    || no "could not look up the pull request for $sha (API error, timeout, or the token lacks pull-requests: read)"
+  is_sha "$head" || no "$sha is not the merge commit of exactly one merged pull request into $branch"
+  # 2. What landed is, byte for byte, what that PR's head held.
+  htree="$(api "repos/$repo/git/commits/$head" --jq .tree.sha)" || no "could not read the PR head's tree"
+  [ "$htree" = "$tree" ] || no "tree differs from PR head $head (the merge changed content)"
+  # 3. main's previous tip is an ANCESTOR of that head, so the merge ref the PR run
+  #    checked out was a no-op merge: what it tested IS this tree. Tree equality
+  #    alone is not enough — a revert on main between the PR run and the merge
+  #    yields the same tree from a run that tested a different one.
+  behind="$(api "repos/$repo/compare/$before...$head" --jq .behind_by)" || no "could not compare $before...$head"
+  [ "$behind" = "0" ] || no "PR head $head was behind main (behind_by=${behind:-?}) — its run tested a different merge"
+  # 4. e2e is green on that head. Rerun copies keep their original timestamps, so
+  #    "newest" is the highest id; and no surviving row may be red.
+  verdict="$(api "repos/$repo/commits/$head/check-runs?check_name=e2e&filter=latest&per_page=100" --jq '.check_runs | if length == 0 then "none" elif any(.[]; .conclusion == "failure" or .conclusion == "timed_out") then "red" else (max_by(.id) | if .status == "completed" and .conclusion == "success" then "green" else "not-green" end) end')" \
+    || no "could not read check-runs on $head (API error, timeout, or the token lacks checks: read)"
+  [ "$verdict" = "green" ] || no "e2e on PR head $head is ${verdict:-unreadable}, not a completed success"
+
+  printf 'tested-tree: yes — this tree passed e2e on PR head %s\n' "$head" >&2
+  printf 'tested\n'; exit 0
+fi
 
 # classify <path>: 0 = may skip e2e, 1 = code. Patterns are STRING matches
 # (`*` also matches `/`), the same convention as audit-gate.sh's --files arm.
@@ -81,7 +145,7 @@ case "$mode" in
     git merge-base "$ref" HEAD >/dev/null 2>&1 || { lane=code; emit; }
     while IFS= read -r -d '' p; do [ -n "$p" ] || continue; n=$((n + 1)); classify "$p" || { lane=code; emit; }; done \
       < <(git diff --name-only -z "${ref}...HEAD" 2>/dev/null) ;;
-  *) echo "usage: ci-lane.sh --files <path>... | --files0 | --base <ref>" >&2; exit 2 ;;
+  *) echo "usage: ci-lane.sh --files <path>... | --files0 | --base <ref> | --tested-tree <before-sha>" >&2; exit 2 ;;
 esac
 # An empty change set is not "only roadmap files" — it is unknown, so code.
 [ "$n" -gt 0 ] || lane=code

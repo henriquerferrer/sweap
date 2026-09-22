@@ -1,8 +1,10 @@
 # <project> — agent instructions
 
 <!-- sweap:begin -->
-**Read the sweap playbook before any feature work:** it defines the operating
-model, autonomy rules, and how to resume interrupted work. Specs live in
+**Read the sweap playbook's Run core (its first section, down to the
+`run-core:end` marker) before any feature work:** the hard rules, the per-item
+loop, the merge path and how to resume. The rest of the playbook is reference —
+read a section when its situation arrives. Specs live in
 `docs/superpowers/specs/`, plans in `docs/superpowers/plans/`. Backlog:
 `ROADMAP.md` (index) + `roadmap/` (one file per item).
 
@@ -10,7 +12,7 @@ model, autonomy rules, and how to resume interrupted work. Specs live in
 ```
 verify.typecheck: <your typecheck cmd>     # e.g. pnpm check-types / tsc --noEmit / cargo check
 verify.lint:      <your lint cmd>
-verify.e2e:       <your e2e cmd>           # authoritative merge gate — must run the FULL suite (unit+integration+e2e), e.g. `just ci-local`
+verify.e2e:       <your e2e cmd>           # what CI runs as the authoritative merge gate: the FULL suite (unit+integration+e2e). Locally, run only the part your change touches.
 backlog.file:     ROADMAP.md
 backlog.dir:      roadmap/                  # one file per item — see playbook "Backlog format"
 backlog.prefix:   F                        # one or more comma-separated prefixes, e.g. `F` or `F, DS`

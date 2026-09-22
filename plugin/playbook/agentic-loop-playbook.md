@@ -1,11 +1,198 @@
 # Agentic Loop Playbook
 
 Handoff document for any Claude Code agent (or the human partner) picking up a
-project that runs this pipeline. Read this first, then `docs/superpowers/plans/`
-and `docs/superpowers/specs/` for per-feature history. This is doctrine: the
+project that runs this pipeline. **Read the Run core below — it ends at the
+`run-core:end` marker — and stop there.** Everything after it is reference, read
+by heading when its situation arrives; `docs/superpowers/plans/` and
+`docs/superpowers/specs/` hold per-feature history. This is doctrine: the
 mechanisms below are project-independent; everything project-specific is declared
 in the `## sweap config` block of the project's `CLAUDE.md` (see **How this
 project is configured**).
+
+## Run core (read this; the rest is reference)
+
+**Who reads what.** Whoever drives an item reads THIS section, in full, and
+nothing else up front — a run session, and equally any agent it delegates a
+range of items to (hand that agent this section; never rewrite it for it). Every
+other section is reference: read it when its situation arrives, by heading —
+`sed -n '/^## Blocked items/,/^## /p' <this file>` — using the table that closes
+this section. Commands (`/milestone-audit`, `/unblock`, `/handoff`,
+`/walkthrough`) name the sections they need.
+
+### Hard rules
+
+- Tests are the spec: never edit a failing test to pass; never skip or
+  quarantine a test without flagging it.
+- Never touch production or real user data; no irreversible action without
+  explicit human approval.
+- Every merge requires CI's verify gates green plus a fresh-context review with
+  confirmed findings addressed. Merging a green, reviewed PR is pre-authorized —
+  never ask, and never weaken or bypass a gate to get there.
+- The merge path is `sweap-merge watch <n>`. Never `gh pr merge`, never
+  `--admin`, never a bare `gh run rerun`.
+- Never commit in the primary checkout and never push to the default branch:
+  work happens in the item's worktree and reaches it only through the item's PR.
+- A PR that touches `.github/` is a human's to merge (the driver refuses it).
+  If the work needs one, escalate; do not route around it.
+- When blocked: write the question down, notify, move on. A stalled item must
+  never stall the loop; a guess must never resolve ambiguity.
+- Work you discover is filed, not built — as a discovered note, never an item
+  file on your branch, never an index edit.
+- Never create an `[attended]` item and never transition one into it: work an
+  agent cannot finish is `[blocked]` with the question.
+- Never spawn a background CPU load generator (the marker-and-verify recipe is
+  under "Hard rules for unattended runs").
+- Report honestly: failing output verbatim, skipped steps named.
+
+### Start, or resume
+
+1. `.claude/sweap-run.md` — the run's goal and scope. A `stalled:` line means the
+   orchestrator's turn died on an API error: the run is NOT over; verify the
+   in-flight item from git and `sweap-merge status`, then continue.
+2. `git worktree list`, open PRs, and `docs/superpowers/plans/` for a plan with
+   unchecked steps — an interrupted item is resumed before anything new starts.
+3. The default branch's CI: a red tip is fixed first (`sweap-merge rerun`
+   refuses a PR while the same workflow is red on the base).
+
+**What to pick.** Only `status: todo` items whose every `depends_on` entry is
+satisfied (a named item is `done`; a named milestone has every non-follow-up
+item `done`). Order: follow-ups first (`followup_of:` set), then milestone order
+as the index lists it, then numeric item order (F1.9 before F1.10). `attended`
+is the human's, `blocked` waits on an answer, `deferred` is parked — an agent
+never picks, promotes or drops any of the three. Run `sweap-roadmap-lint <file>`
+on an item before dispatching it; a failing item is not runnable.
+
+### The per-item loop
+
+1. **Plan.** Pin the data model, access boundaries and permissions, and the
+   acceptance criteria — each naming the layer that asserts it. Spec to
+   `docs/superpowers/specs/`, plan to `docs/superpowers/plans/`. Check the item's
+   premises against the code first: a stale premise is common, and building on
+   one is the expensive mistake.
+2. **Implement with TDD.** Write the acceptance tests first, each at the layer
+   its criterion named; never modify a test to make it pass. **Verify locally
+   with typecheck, lint, the formatter, and the tests and specs the change
+   touched — not the full `verify.e2e` suite.** CI runs that on the PR, and CI is
+   the gate. A local full run is for a sweep, a refactor, a test-harness change or
+   a flake fix, and only while no CI job is running on this machine.
+3. **Adversarial review.** A fresh-context reviewer sees only the diff and the
+   plan. A re-review is a NEW dispatch with the new diff, never a message to the
+   reviewer still alive. Reviewers read the local worktree, so **keep fixes local
+   until every reviewer has approved, then push once** — each push to an open PR
+   cancels and restarts a full e2e run.
+4. **Conditional dimensions**, from the item's `review-dimensions:` —
+   `security`: a dedicated security reviewer whose confirmed findings block the
+   PR; `ui`: the implementer runs the ui-design skill and its hard gates must
+   pass; `migration`: see "Review dimensions". All before the PR merges.
+5. **Merge** with `sweap-merge watch <n>` (below), verify, clean up, next item.
+
+**Discovered work.** Anything you notice that is not the item: file it and go
+back. `sweap-note discovered "<title>" gap|direction "<item id or PR #n>"
+"<what is wrong, and what done looks like>" "$(git branch --show-current)"`.
+`gap` = the spec promised it; `direction` = it never did (when unsure,
+`direction`). File everything you see and do not argue its importance — the next
+`/milestone` triages gaps against the harm bar, `/roadmap` decides directions.
+A status flip travels only in its own item's PR; the index changes only at
+`/roadmap`.
+
+### Merge and wait
+
+Run `sweap-merge watch <n>` with Bash `run_in_background: true`. It ends the turn
+while it waits; its ONE terminal word is the result:
+
+| word | what you do |
+|---|---|
+| `merged` | verify and clean up (below) |
+| `failed` | a red check, a gate deny or a refused merge — a FINDING first, not a retry |
+| `superseded` | the head moved — re-arm `watch` |
+| `behind` | the base moved — rebase the branch, push, re-arm |
+| `timed_out` | a finding: say which check never finished |
+| `undecidable` / `attended` | escalate: a human decides |
+| `held-by:<owner>` | another live watcher owns this PR — do not start a second |
+
+- If you believe a red is a flake: `sweap-merge rerun <n> --reason "<why>"`,
+  ONCE per head and workflow. It refuses a run that is not a completed
+  `failure` (so not a cancelled one) and refuses while the same workflow is red
+  on the base. A second red on the same head is a finding.
+- A notice that the background command "was stopped" is not a verdict: re-run
+  `sweap-merge watch <n>`.
+- After `merged`: confirm the item file on the default branch reads
+  `status: done` (self-reported state is not trusted; a missed flip is fixed
+  through the next gated PR, never by committing to main), then `git worktree
+  list` / `git branch` / `git branch -r` — the cleanup hook removes merged
+  worktrees and branches, you verify none linger.
+- Before opening any PR, sweep both inboxes into it: an untracked file under
+  `roadmap/ideas/` or `roadmap/discovered/` dies with its worktree.
+  `sweap-stranded` lists backlog files sitting on branches nothing will land.
+
+**Escalating.** Set the item `status: blocked`, put the question verbatim in
+`blocked:`, notify, take the next item. Never `attended`, never a guess.
+
+### The worker brief
+
+Hand this to every implementer you dispatch, by reference — "read the playbook
+between `worker-brief:begin` and `worker-brief:end`" — then append the item file
+in full, the worktree and branch, the project's verify and format commands, its
+skills, and who opens the PR. Add below it; never delete a line of it.
+
+<!-- worker-brief:begin -->
+- Work only in the worktree and branch you were given. Never commit in the
+  primary checkout, never push to the default branch, never edit `.github/`.
+- Check the item's premises against the code before building on them; report a
+  stale one instead of working around it.
+- TDD: acceptance tests first, each at the layer its criterion names. Never edit
+  a test to make it pass. Paste the RED and the GREEN output in your report.
+- Verify with typecheck, lint, the formatter, and the tests and specs you
+  touched. Do NOT run the full e2e suite: CI runs it on the PR and CI is the
+  gate; a local full run shares this machine with the CI runners and makes both
+  slower and flakier. The exceptions are a sweep, a refactor, a test-harness
+  change or a flake fix — and then only while no CI job is running.
+- Flip the item's `status:` in its own file, on this branch.
+- Anything you notice that is not this item: `sweap-note discovered …`, then go
+  back to the item. Never build it, never write an item file for it.
+- Stop at ambiguity: report the question; do not guess.
+- Report: what changed, RED/GREEN, what you verified and what you did not, notes
+  filed, anything you are unsure of.
+<!-- worker-brief:end -->
+
+If you delegate a RANGE of items to one agent, it drives each item exactly as
+above and reads this Run core itself. Never run gates in a worktree whose
+implementer is still working.
+
+### Ending the run
+
+When the goal ends — met, stopped, or out of turns — append to
+`.claude/sweap-run.md`, as flat keys and inline lists, nothing else:
+
+```
+ended: <ISO-8601 UTC>
+reason: frontier-empty | awaiting-human | turns-exhausted | goal-met
+needs: [<ids a human must act on — only when reason is awaiting-human>]
+why_not_agent: [<id>=identity|money|terms|taste|authority, ...]
+```
+
+`needs:` is ids, never prose; `why_not_agent:` says why a person is required
+rather than another turn — if you cannot name why, do it yourself. Do not write
+the commands the human should run; the board derives them. Then notify (when
+`notify: push`): merged PRs, each blocked item with `/unblock <id>`, each open
+hand-off with `/handoff <id>`. Delete the run file on `goal-met`,
+`frontier-empty` or `turns-exhausted`; keep it on `awaiting-human`.
+
+### When this happens, read that
+
+| situation | section |
+|---|---|
+| an item carries `review-dimensions:` | Review dimensions |
+| a question only a human can answer | Blocked items |
+| an `attended` item, or work only a human can do | Attended items |
+| a `deferred` item | Deferred items |
+| the milestone's last item merged | `/milestone-audit` runs it; Milestone audit → Findings triage, Audit evidence and the audit record |
+| a follow-up carries `followup_of: <this milestone>` | it is the NEXT run's debt, not this run's work |
+| a PR changes only backlog files or docs | Roadmap-only CI lane |
+| no local services | Environment parity |
+| why a merge or cleanup rule exists, the allowlist | End-of-run hygiene |
+| the backlog's file format, the four statuses | Backlog format (file-per-item) |
+<!-- run-core:end -->
 
 ## How this project is configured
 
@@ -16,10 +203,13 @@ overrides only the keys that differ from the baked defaults. The keys:
 - **`verify.typecheck`** — the typecheck command (project-specific; no default —
   e.g. `just typecheck`).
 - **`verify.lint`** — the lint command (project-specific; e.g. `just lint`).
-- **`verify.e2e`** — the end-to-end test command. **This is the authoritative
-  merge gate** (project-specific; e.g. `just e2e`). It must run the project's
-  full automated test suite (unit + integration + e2e) — there is no separate
-  unit-test key; passing `verify.e2e` is what certifies unit tests passed too.
+- **`verify.e2e`** — the end-to-end test command (project-specific; e.g.
+  `just e2e`). **CI runs it in full on every PR, and that run is the
+  authoritative merge gate** — the project's whole automated suite (unit +
+  integration + e2e); there is no separate unit-test key. **Locally you run the
+  part of it your change touches**, never the whole suite: on consumer A a local
+  full run cost a median 23 min per item (43% of an implementer's time) and,
+  sharing one machine with the CI runners, made CI's own e2e slower and flakier.
 - **`backlog.file`** — the backlog **index** file (milestone list + the
   later-milestones sketch; never per-item status). Default **`ROADMAP.md`**.
 - **`backlog.dir`** — the per-item backlog directory, one file per item — see
@@ -175,8 +365,8 @@ The line to draw is what the criterion is ABOUT, not where the code lives:
   request-ordering race** is asserted in the browser. These are claims about what
   a person encounters, and only a real page can settle them.
 
-`verify.e2e` remains **the authoritative gate** and that is unchanged — it runs
-the project's FULL automated suite (unit + integration + e2e), so a criterion
+`verify.e2e` **in CI** remains the authoritative gate and that is unchanged — it
+runs the project's FULL automated suite (unit + integration + e2e), so a criterion
 written as a route test is gated exactly as hard as one written as a browser
 spec. Naming the layer is about writing the cheapest test that can actually fail
 for its own subject, never about which tests the gate runs.
@@ -255,34 +445,27 @@ with `DS.2.1` items) are supported.
 ## Operating model — the per-feature loop
 
 One feature = one session. Target 10–25 turns per feature; consistently >30 means
-the item is scoped too big — split it.
+the item is scoped too big — split it. **The five steps are in the Run core**
+(plan → implement with TDD → adversarial review → conditional dimensions →
+merge); this section holds the reasons behind them.
 
-1. **Brainstorm + plan** (plan mode): pin down the data model, access-control
-   boundaries, permissions per role, and the acceptance criteria — each naming
-   the layer that asserts it (see **Authoring `## Acceptance`**). Write the spec
-   to `docs/superpowers/specs/`, the plan to `docs/superpowers/plans/`.
-2. **Implement with TDD:** write the acceptance tests first — they are the spec.
-   Each goes at the layer its criterion named: a rule check against the route
-   handler or lib function, a journey / a11y scan / focus or geometry assertion /
-   ordering race in the browser.
-   **Never modify tests to make them pass**; fix the root cause. Iterate until the
-   verify gates (`verify.typecheck`, `verify.lint`, `verify.e2e`) are all green —
-   locally when the project's services are available, else verified by CI on the
-   PR (see Environment parity).
-3. **Adversarial review:** dispatch a fresh-context review agent that sees only
-   the diff + the plan. Fix confirmed findings. **A re-review is a NEW
-   dispatch** with the new diff, never a message to the reviewer that is still
-   alive: a re-messaged reviewer's context drifts and every round finds a new
-   class of remark (consumer A DV.9, 2026-09-07: one reviewer re-messaged five
-   times, seven rounds, the last three about comment wording, ~600k tokens;
-   the CI reviewer then approved the PR on its first pass). Non-blocking
-   remarks belong under the reviewer's `Advisory` section and never flip the
-   verdict.
-4. **Conditional review dimensions** (from the item file's `review-dimensions`
-   frontmatter — see below): run each required extra reviewer before the PR.
-5. **Merge with `sweap-merge watch <n>`** (the merge driver — it waits, gates,
-   merges and runs the post-merge hooks; it ends the turn while it waits),
-   clean up (see End-of-run hygiene), next item.
+- **Step 2, local verification.** The verify gates must be green before a PR
+  merges, and it is CI that proves it: locally you run typecheck, lint, the
+  formatter and what you touched. Where the project's services are not
+  available at all, CI on the PR is the only verification (see Environment
+  parity).
+- **Step 3, a re-review is a NEW dispatch** with the new diff, never a message
+  to the reviewer that is still alive: a re-messaged reviewer's context drifts
+  and every round finds a new class of remark (consumer A DV.9, 2026-09-07: one
+  reviewer re-messaged five times, seven rounds, the last three about comment
+  wording, ~600k tokens; the CI reviewer then approved the PR on its first
+  pass). Non-blocking remarks belong under the reviewer's `Advisory` section and
+  never flip the verdict.
+- **Step 3, fixes stay local until every reviewer approves.** consumer A, last 40
+  PRs: 13 of the 20 cancelled CI runs came from review fixes pushed to an
+  already-open PR, each restarting a ~16-minute e2e run (398 runner-minutes),
+  and on a single-machine runner fleet the overlap also slowed the run that
+  finally counted (21.4 min vs 15.4).
 
 **Discovered work — the three-lane rule.** Work you notice mid-item that is
 *not* the item goes in exactly one of three places, chosen by what kind of
@@ -368,8 +551,9 @@ passing in CI, regardless of where it was written.
 
 - **Local (services available):** if `services.up` is declared, `/milestone` runs
   it (starting the daemon if the command is daemon/Docker-based), then the local
-  gates are a fast pre-check before pushing — seconds of feedback instead of
-  waiting on CI. If `services.up` is *not* declared, the loop runs in CI-gated
+  gates are a fast pre-check before pushing — typecheck, lint, and the specs and
+  tests the change touched: seconds of feedback instead of waiting on CI, never
+  the full suite (CI runs that). If `services.up` is *not* declared, the loop runs in CI-gated
   mode: the gates that need no services run locally and everything else is
   verified by CI on the PR.
 - **Web / cloud (no local services):** skip local services entirely. Run the
@@ -1025,32 +1209,13 @@ implement.
 
 **Auto-launch (pre-authorized in the goal).** A milestone `/goal` run carries a
 final clause so the audit fires once, automatically, at the milestone boundary —
-no cron, no standing agent. Standard template:
-
-> *First, every outstanding audit follow-up item in the backlog is [done] (the
-> `/milestone` run drains them debt-first — see the bucket-2 note above); then
-> every unblocked <milestone> item in the backlog is [done] per the definition
-> of done; and when the last item merges, run `/milestone-audit` with
-> `{milestone: "<milestone>", range: "<base>..<head>"}` for that range,
-> triage the confirmed findings (below), and post a summary before stopping.
-> Stop when the only [todo] items left are audit follow-ups carrying
-> followup_of: <milestone> (those are the next run's debt, not this run's
-> work), or when NOTHING IS RUNNABLE — every remaining [todo] has an
-> unsatisfied dependency on a [blocked], [attended] or [deferred] item, so the
-> frontier is empty and no agent may pick anything up. Or after N turns. When
-> you stop, record it (see /milestone's "Record the end of the run").*
-
-(The follow-up clause is load-bearing: the frontier this run stops on excludes
-`followup_of: <milestone>` items its own audit created — they are the next
-run's debt. A correct audit ends by CREATING work: bucket-2 triage writes
-`followup_of:` todo items, so a run that audits well can never literally reach
-"only blocked or attended remain" — consumer A's F11 run hit exactly that and had to
-escalate the ambiguity. Those items are the NEXT run's debt (the frontier drains
-them debt-first), not this one's.)
-
-(Both stop conditions have a drain: `/unblock <id>` for a question, `/handoff
-<id>` for a task. Name them in the stop message — "3 blocked, 1 hand-off" without
-the next move is what let consumer A carry five questions across whole milestones.)
+no cron, no standing agent. **`/milestone` prints the goal text and is its only
+owner** — a copy kept here drifted from it. Two things about that text are
+load-bearing: the stop clause excludes `followup_of: <milestone>` items, because
+a correct audit ends by CREATING work and a run that audits well could otherwise
+never stop (consumer A's F11 run hit exactly that); and both stop conditions have a
+drain the stop message must name — `/unblock <id>` for a question, `/handoff
+<id>` for a task.
 
 (A milestone with an **open hand-off** cannot complete, so its audit is not yet
 due and this template does not apply — `/milestone` prints its
@@ -1458,24 +1623,10 @@ in-flight branch at width 1 too, and a Free-plan repo never reports BEHIND.
 
 ## Hard rules for unattended runs
 
-- Tests are the spec: never edit a failing test to pass; never skip/quarantine
-  tests without flagging it.
-- Never touch production or real user data; no irreversible actions without
-  explicit human approval.
-- Every merge requires: the verify gates (`verify.typecheck`, `verify.lint`,
-  `verify.e2e`) green, plus a fresh-context review with confirmed findings
-  addressed.
-- When blocked: write the question down, notify, move on. A stalled item must
-  never stall the loop; a guess must never resolve ambiguity.
-- **Work you discover is filed, not built, and filed as a discovered note —
-  never as an item file on your branch, never as an index edit.** (The
-  three-lane rule under the per-feature loop. Notes are gate-exempt and
-  collision-free; item files on a feature branch are neither.)
-- **Never create an `[attended]` item, and never transition one into it.** Work
-  an agent cannot finish is `[blocked]` with the question — never re-labelled as
-  the human's own work. Hand-offs are authored with the human present, in
-  `/roadmap`. (Mechanically enforced by `audit-gate.sh --check`; the rule is
-  here so the mechanism never has to fire.)
+**The rules are in the Run core, at the top of this file** — they moved there so
+that an agent that reads only the start of the playbook has them. What stays
+here is the one recipe too long for the core.
+
 - **Never spawn background CPU load generators.** If a test genuinely needs
   load, put a unique marker in the command (`yes > /dev/null # sweap-load-<id>`),
   kill by that marker, and VERIFY zero survivors — `pgrep -f <pat>` matches the
@@ -1485,7 +1636,6 @@ in-flight branch at width 1 too, and a Free-plan repo never reports BEHIND.
   stray `yes`, where one PR's checks took 7m44s and failed vs 2m4s and passed
   after the kill. A run that leaks them poisons every later timing measurement
   and every CI run on the machine.
-- Report honestly: failing output verbatim, skipped steps named.
 
 ## Standing preferences (pre-answered skill checkpoints)
 

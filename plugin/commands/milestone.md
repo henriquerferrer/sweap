@@ -469,8 +469,9 @@ earned only when the frontier is empty — the same computation the run already
 uses to pick its next item, now also used to decide when there is no next item.
 
 Everything else (TDD, the review dimensions, end-of-run hygiene, escalation, and
-the audit auto-launch/triage) is inherited from CLAUDE.md and the playbook, which
-the run reads at start — the goal only states the end condition.
+the audit auto-launch/triage) is inherited from CLAUDE.md and the playbook's Run
+core, which the run reads at start (other sections by heading, when their
+situation arrives) — the goal only states the end condition.
 
 The whole ritual for the user is just: `claude --permission-mode auto` →
 `/milestone` → paste the printed goal. If `services.up` is declared, services

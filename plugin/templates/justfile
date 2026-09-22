@@ -41,9 +41,10 @@ e2e *args:
 
 # Meta recipes for agent ergonomics — keep these names; CI and the playbook
 # depend on them. `ci-local` is the full gate: CLAUDE.md's sweap config sets
-# `verify.e2e` (the authoritative merge-gate command) to something that spans
-# the whole gate, not just the `e2e` recipe — e.g. `just ci-local`, or
-# `just test && just e2e`.
+# `verify.e2e` (the command CI runs as the authoritative merge gate) to something
+# that spans the whole gate, not just the `e2e` recipe — e.g. `just ci-local`, or
+# `just test && just e2e`. Agents do NOT run it locally per item: they run what
+# their change touched, and CI runs this.
 ci-local:
     just lint
     just typecheck

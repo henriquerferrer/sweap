@@ -95,8 +95,9 @@ script reported (these are the fill-ins the script cannot do for you):
      to a personal repo — the scaffold's rewrite-on-drift is what covers those
      files instead.
    - Fill in the `verify.typecheck` / `verify.lint` / `verify.e2e` commands in
-     the `## sweap config` block (`verify.e2e` must run the full automated test
-     suite — unit + integration + e2e — it is the authoritative merge gate).
+     the `## sweap config` block (`verify.e2e` is what CI runs in full — unit +
+     integration + e2e — as the authoritative merge gate; locally, agents run only
+     the part a change touches).
    - Fill in every `# <fill in for your stack>` stub in `justfile` (recipe
      bodies for `lint`, `typecheck`, `test`, `e2e`, and optionally
      `services-up`/`services-down`). Leave the `merge` / `merge-status`
