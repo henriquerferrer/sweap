@@ -54,6 +54,18 @@ case "$MODE" in
 esac
 shift
 
+# Both modes run from the repo root. A session launched from a subdirectory used
+# to make the gate VACUOUS: CLAUDE.md not found, backlog dir empty, no debt,
+# exit 0 (found 2026-09-23 while pricing merge mode). No toplevel, no verdict.
+_top="$(git rev-parse --show-toplevel 2>/dev/null)" || { echo "FAIL: audit-gate: $PWD is not inside a git work tree — no verdict, fail closed"; exit 1; }
+cd "$_top" || { echo "FAIL: audit-gate: cannot enter $_top — fail closed"; exit 1; }
+# The verdict must not depend on the local git configuration: in the 2026-09-23
+# refutation a `git replace` graft, a `log.follow = true` and the default
+# `core.quotePath` each changed what this script concluded from the same
+# history. Replace refs are ignored for the whole run; the two settings are
+# pinned at the call sites that read them.
+export GIT_NO_REPLACE_OBJECTS=1
+
 fails=0
 fail() { echo "FAIL: $1"; fails=1; }
 
@@ -322,7 +334,7 @@ hg_status_at() { # hg_status_at <ref> <path> -> the frontmatter `status:` in tha
 }
 flip_is_backlog_only() { # flip_is_backlog_only <sha> ; 0 = it changed only BACKLOG_DIR paths
   local sha="$1" paths p n=0
-  paths="$(git show --name-only --format= --no-renames "$sha" 2>/dev/null)" || return 1
+  paths="$(git -c core.quotePath=off show --name-only --format= --no-renames "$sha" 2>/dev/null)" || return 1
   # Heredoc, not a pipe: a `while read` on the right of a pipeline runs in a
   # subshell and `n` would come back 0 no matter what the commit touched.
   while IFS= read -r p; do
@@ -466,10 +478,22 @@ validate_record() { # validate_record <milestone> <file> ; 0 = valid
       # are DEBT OF the milestone, not members of it, so their later completion
       # must not retroactively fail the record.
       #
-      # The git calls below are LEFT ALONE on purpose: `-S` over a directory
-      # plus --name-only is not the same question as `-S` per path (see the
-      # report), so batching them would trade a provable check for a plausible
-      # one. Only the spawn overhead around them is gone.
+      # The pickaxe stays PER PATH, on purpose, and a 2026-09-23 attempt to
+      # batch it is why this comment is long. A directory-wide
+      # `git log --name-only -S -- <backlog dir>` lists, per commit, exactly the
+      # paths whose match count changed (diffcore-pickaxe without --pickaxe-all),
+      # and on linear history the last commit a path appears under IS its oldest
+      # per-path hit — 41 of 41 on consumer A. But git's default history
+      # simplification is decided PER PATHSPEC: a merge that is TREESAME to one
+      # parent for roadmap/F1.1.md is followed along that parent only, while for
+      # `-- roadmap/` the same merge is TREESAME to neither parent and BOTH sides
+      # are walked. So a branch that flipped F1.1 done, merged with F1.1 put back
+      # to todo, and a mainline flip AFTER the audit: per path the flip is the
+      # mainline commit (outside the range, record fails, correctly); directory-
+      # wide the branch-side flip is older, reachable, and the record validates.
+      # Fail-open on the one shape this check exists for; the mirror shape fails
+      # closed on a record that was valid. Reproduced before shipping; the memo
+      # records it. What IS batched, exactly: the ancestry test below.
       # The declared carve-out (see "the open hand-off carve-out" above). Every id
       # named here is validated on its own terms whether or not it is done yet: a
       # declaration that names a file that does not exist, or an item that was not
@@ -491,24 +515,36 @@ validate_record() { # validate_record <milestone> <file> ; 0 = valid
         fi
       done
       set +f
-      local done_ids
+      local done_ids reach id flip
       done_ids="$(printf '%s' "$ITEMS" | awk -F'\t' -v m="$m" '$1 == "0" && $2 == m && $4 == "done" { print $3 }')"
-      while IFS= read -r id; do
-        [ -n "$id" ] || continue
-        f="${BACKLOG_DIR}${id}.md"
-        flip="$(git log --format=%H -S'status: done' -- "$f" 2>/dev/null | tail -1)"
-        if [ -z "$flip" ]; then
-          fail "record $rec: cannot locate the commit that completed $id (uncommitted flip?) — fail closed"; ok=0
-        elif ! git merge-base --is-ancestor "$flip" "$head" 2>/dev/null; then
+      if [ -n "$done_ids" ]; then
+        # ONE `git rev-list <range_head>` per record in place of one
+        # `git merge-base --is-ancestor <flip> <range_head>` per done item: a
+        # commit is an ancestor of range_head (range_head included) exactly when
+        # it is in that list, and a 40-hex sha can only match a whole line of it.
+        # A rev-list that printed nothing puts every flip outside — closed.
+        reach="$(git rev-list "$head" 2>/dev/null)"
+        while IFS= read -r id; do
+          [ -n "$id" ] || continue
+          f="${BACKLOG_DIR}${id}.md"
+          # `-c log.follow=false`: a user's `log.follow = true` changed this
+          # answer in the 2026-09-23 refutation; `--literal-pathspecs`: a path,
+          # never a pattern.
+          flip="$(git -c log.follow=false --literal-pathspecs log --format=%H -S'status: done' -- "$f" 2>/dev/null | tail -1)"
+          if [ -z "$flip" ]; then
+            fail "record $rec: cannot locate the commit that completed $id (uncommitted flip?) — fail closed"; ok=0
+            continue
+          fi
+          case "$reach" in *"$flip"*) continue ;; esac
           # Unreachable — unless this is a hand-off the record DECLARED was still
           # open when the audit ran, which really was `attended` at range_head, and
           # whose flip added no surface. All three, or the failure stands.
           handoff_open_at_audit "$id" "$head" "$flip" "$open_ids" && continue
           fail "record $rec: $id completed outside the audited range (flip $flip not reachable from range_head)"; ok=0
-        fi
-      done <<DONE_ITEMS_EOF
+        done <<DONE_ITEMS_EOF
 $done_ids
 DONE_ITEMS_EOF
+      fi
     fi
   fi
 
@@ -619,7 +655,12 @@ DONE_ITEMS_EOF
   # headers; a disposition line is `disposition: fix_pr #N | followup <id> |
   # blocked <id>`. Count and validate per block via awk block-splitting.
   if [ "$blocks" -gt 0 ]; then
-    local n=0
+    # A record names the same follow-up under several blocks (consumer A F12: 51
+    # disposition lines over 25 distinct ids), and every check on a referenced
+    # file — existence, followup_of, status, roadmap-lint — is a function of the
+    # file, so each (kind, id) pair is judged once. 26 of consumer A's 91 lint runs
+    # per gate call were repeats.
+    local n=0 checked=""
     while [ "$n" -lt "$blocks" ]; do
       n=$((n + 1))
       dispo="$(printf '%s\n' "$body" | awk -v want="$n" '/^### /{b++} b==want && /^disposition:[[:space:]]/{ sub(/^disposition:[[:space:]]*/,""); print }')"
@@ -631,6 +672,8 @@ DONE_ITEMS_EOF
         "followup "*|"blocked "*)
           reftype="${dispo%% *}"; ref="${dispo#* }"
           reffile="${BACKLOG_DIR}${ref}.md"
+          case "|$checked|" in *"|$reftype $ref|"*) continue ;; esac
+          checked="${checked:+$checked|}$reftype $ref"
           if [ ! -f "$reffile" ]; then
             fail "record $rec: disposition references $ref but ${reffile} does not exist"; ok=0
           else

@@ -20,6 +20,11 @@ GATE="$HERE/pre-merge-gate.sh"
 BACKSTOP="$HERE/post-merge-redcheck.sh"
 
 WORK="$(mktemp -d)"
+# The gate's cwd is always inside a repository in production (`gh pr merge`
+# resolves the repo from it), and since 0.32.0 audit-gate.sh fails CLOSED
+# outside a work tree instead of finding no items and no debt. So the mock
+# session directory is a repository.
+git -C "$WORK" init -q
 trap 'rm -rf "$WORK"' EXIT
 
 # --- stub `gh` ------------------------------------------------------------------
@@ -74,6 +79,13 @@ case "$mode" in
     printf '{"statusCheckRollup":[
       {"__typename":"CheckRun","name":"lint","status":"COMPLETED","conclusion":"SUCCESS"},
       {"__typename":"CheckRun","name":"e2e","status":"COMPLETED","conclusion":"SUCCESS"},
+      {"__typename":"CheckRun","name":"review","status":"COMPLETED","conclusion":"SUCCESS"}
+    ],"mergeStateStatus":"CLEAN","baseRefName":"main","headRefOid":"deadbeef","mergeCommit":{"oid":"deadbeef"},"files":%s}\n' "$files" ;;
+  greenaudit)  # green including a present, successful audit-gate check (presence-check shape)
+    printf '{"statusCheckRollup":[
+      {"__typename":"CheckRun","name":"lint","status":"COMPLETED","conclusion":"SUCCESS"},
+      {"__typename":"CheckRun","name":"e2e","status":"COMPLETED","conclusion":"SUCCESS"},
+      {"__typename":"CheckRun","name":"audit-gate","status":"COMPLETED","conclusion":"SUCCESS"},
       {"__typename":"CheckRun","name":"review","status":"COMPLETED","conclusion":"SUCCESS"}
     ],"mergeStateStatus":"CLEAN","baseRefName":"main","headRefOid":"deadbeef","mergeCommit":{"oid":"deadbeef"},"files":%s}\n' "$files" ;;
   skipped)
@@ -209,7 +221,7 @@ else bad "a6) e2e skipped + no files -> deny" "got: $out"; fi
 # (a7-a9) ci-status PRESENCE: required iff the repo's own workflows declare the job.
 # A ci.yml that never triggers reports nothing; audit-gate+review alone would read
 # all-green. The gate must notice the aggregator is MISSING, not merely non-red.
-DECL="$WORK/decl"; mkdir -p "$DECL/.github/workflows"
+DECL="$WORK/decl"; mkdir -p "$DECL/.github/workflows"; git -C "$DECL" init -q   # its own repo: the declaration is read from the repo root
 printf 'jobs:\n  lint:\n    runs-on: x\n  ci-status:\n    needs: [lint]\n' > "$DECL/.github/workflows/ci.yml"
 out="$(run_gate green 'gh pr merge 42 --squash' "$DECL")"
 if is_deny "$out" && reason "$out" | grep -q "no 'ci-status' check"; then ok "a7) repo declares ci-status, rollup lacks it -> deny (absence != pass)"
@@ -220,6 +232,27 @@ else ok "a8) repo declares ci-status, rollup has it green -> allow"; fi
 out="$(run_gate green 'gh pr merge 42 --squash')"
 if is_deny "$out"; then bad "a9) repo without a ci-status job stays unaffected" "got deny: $(reason "$out")"
 else ok "a9) no ci-status declared -> presence not required (no regression)"; fi
+
+# (a10-a12) audit-gate PRESENCE (0.32.0): required iff the repo's own workflows
+# declare an `audit-gate:` job. An audit-gate.yml that never triggered reports
+# nothing; every other check green must not read as "audit state verified".
+DECLA="$WORK/decl-audit"; mkdir -p "$DECLA/.github/workflows"; git -C "$DECLA" init -q
+printf 'jobs:\n  audit-gate:\n    runs-on: x\n' > "$DECLA/.github/workflows/audit-gate.yml"
+out="$(run_gate greenfull 'gh pr merge 42 --squash' "$DECLA")"
+if is_deny "$out" && reason "$out" | grep -q "no 'audit-gate' check"; then ok "a10) repo declares audit-gate, rollup lacks it -> deny (absence != pass)"
+else bad "a10) declared audit-gate absent -> deny" "got: $out"; fi
+out="$(run_gate greenaudit 'gh pr merge 42 --squash' "$DECLA")"
+if is_deny "$out"; then bad "a11) declared + present green -> allow" "got deny: $(reason "$out")"
+else ok "a11) repo declares audit-gate, rollup has it green -> allow"; fi
+out="$(run_gate greenfull 'gh pr merge 42 --squash')"
+if is_deny "$out"; then bad "a12) repo without an audit-gate job stays unaffected" "got deny: $(reason "$out")"
+else ok "a12) no audit-gate declared -> presence not required (no regression)"; fi
+# (a13) the declaration is read from the REPOSITORY ROOT: a session in a
+# subdirectory used to make both presence checks silently not apply.
+mkdir -p "$DECLA/apps/web"
+out="$(run_gate greenfull 'gh pr merge 42 --squash' "$DECLA/apps/web")"
+if is_deny "$out" && reason "$out" | grep -q "no 'audit-gate' check"; then ok "a13) declared audit-gate, session cwd in a subdirectory -> still deny"
+else bad "a13) presence check from a subdirectory" "got: $out"; fi
 
 # (a7) a gate check that may never skip (audit-gate) reports SKIPPED -> DENY
 out="$(run_gate gateskipped 'gh pr merge 42 --squash')"

@@ -89,9 +89,13 @@ anchor="$(git -C "$primary" rev-parse --verify -q 'HEAD^{commit}^' 2>/dev/null)"
 [ -n "$anchor" ] && export SWEAP_MAIN_REF="$anchor"
 
 # Bounded: audit-gate's per-item `git log -S` pickaxe scales with roadmap size ×
-# history, and this hook has a 25 s harness timeout. A timed-out backstop must
+# history, and this hook has a 30 s harness timeout (hooks.json; sweap-merge allows the same 30 s). A timed-out backstop must
 # stay SILENT rather than fire a false alarm — CI remains the real control.
-TIMEOUT="${SWEAP_AUDITCHECK_TIMEOUT:-20}"
+# 28 s, under the 30 s the merge driver allows a post-merge hook (sweap-merge.sh,
+# sm_post_merge). A full --check is 7 s idle on consumer A and ~3-4x that on a Mac
+# whose CI runners are busy, so 20 s went quiet under exactly the load that
+# makes a backstop worth having (2026-09-23 memo).
+TIMEOUT="${SWEAP_AUDITCHECK_TIMEOUT:-28}"
 tmp="$(mktemp 2>/dev/null)" || exit 0
 ( cd "$primary" && bash "$GATE" --check ) >"$tmp" 2>&1 &
 gpid=$!
@@ -119,7 +123,12 @@ rm -f "$tmp"
 # nothing, and that the next session still sees.
 #
 # rc=0 (a clean run) is required: on a watchdog kill `out` is partial, and a
-# timed-out backstop stays quiet by design.
+# timed-out backstop raises no alarm — but it SAYS it timed out (one stderr
+# line, exit 0), because a silent backstop is indistinguishable from a clean one.
+if [ "$rc" = "143" ]; then
+  printf 'post-merge-auditcheck: audit-gate.sh --check did not finish within %ss (the machine is loaded?) — nothing verified; run it yourself: bash %s --check\n' "$TIMEOUT" "$GATE" >&2
+  exit 0
+fi
 if [ "$rc" = "0" ]; then
   deferred="$(printf '%s\n' "$out" | grep '^DEFERRED:' || true)"
   [ -n "$deferred" ] || exit 0

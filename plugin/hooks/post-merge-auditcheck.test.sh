@@ -156,5 +156,20 @@ else
   fail=$((fail+1)); printf '  FAIL  %s\n' "alarm writes a durable .claude/ marker"
 fi
 
+
+# T12: a --check that outruns the watchdog is not a silent backstop: one stderr
+# line naming the timeout, exit 0 (never an alarm on partial output). The hook
+# resolves the gate beside itself, so a copy of the hook next to a gate that
+# sleeps is the fixture; the 1 s watchdog comes from SWEAP_AUDITCHECK_TIMEOUT.
+SLOW="$WORK/slow"; mkdir -p "$SLOW"
+cp "$HOOK" "$SLOW/post-merge-auditcheck.sh"
+cp "$HERE/lib-merge-parse.sh" "$SLOW/"     # the hook sources its command parser beside itself
+printf '#!/usr/bin/env bash\nsleep 5\nexit 0\n' > "$SLOW/audit-gate.sh"
+R="$(new_repo t12)"
+OUT="$(printf '{"tool_name":"Bash","tool_input":{"command":"gh pr merge 7 --squash"},"cwd":"%s"}' "$R" \
+      | SWEAP_AUDITCHECK_TIMEOUT=1 bash "$SLOW/post-merge-auditcheck.sh" 2>&1)"; RC=$?
+check "T12: watchdog kill => exit 0, not an alarm" 0
+check_out "T12: and it says the check did not finish" "did not finish within 1s"
+
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" = 0 ]

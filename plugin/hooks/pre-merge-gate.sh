@@ -626,11 +626,33 @@ verify_pr() {
   # the code lane) — accepted residual. Greenness needs no extra check here:
   # a present ci-status that is not SUCCESS was already denied as an offender
   # or as a skipped contract check.
-  if grep -qsE '^[[:space:]]{2}ci-status:' .github/workflows/*.yml .github/workflows/*.yaml 2>/dev/null; then
+  # The workflow files are read from the REPOSITORY ROOT, not from the cwd the
+  # session happens to be in: from a subdirectory the relative glob matched
+  # nothing and both presence checks silently did not apply (2026-09-23 review).
+  local wf_root
+  wf_root="$(git rev-parse --show-toplevel 2>/dev/null)" || wf_root="."
+  if grep -qsE '^[[:space:]]{2}ci-status:' "$wf_root"/.github/workflows/*.yml "$wf_root"/.github/workflows/*.yaml 2>/dev/null; then
     if ! printf '%s' "$json" | jq -e '
       any((.statusCheckRollup // [])[]; (.name // .context // "") == "ci-status")
     ' >/dev/null 2>&1; then
       emit_deny "merge-gate: PR #$pr has no 'ci-status' check on its head, but this repo's CI declares one. A check that has not been reported is not a passing check — the gate needs every expected check PRESENT and succeeded, never merely 'nothing pending'. Wait for CI to register on this head (or re-run the CI workflow), then re-run the merge."
+      return 1
+    fi
+  fi
+  # audit-gate PRESENCE (2026-09-23), the same shape and the same reasoning.
+  # The skipped-check rule above catches an audit-gate check that reported
+  # SKIPPED, but an audit-gate.yml that never triggered on this head reports
+  # nothing at all, and the rollup then reads all-green with the one check that
+  # validates the audit state simply absent — at which point merge mode's local
+  # validation (a routing decision over the BASE's state, by its own header)
+  # was the only validator left. Found while pricing that local step. Required
+  # only when the repo's own workflows declare an `audit-gate:` job (the managed
+  # template does); a repo without it is unaffected.
+  if grep -qsE '^[[:space:]]{2}audit-gate:' "$wf_root"/.github/workflows/*.yml "$wf_root"/.github/workflows/*.yaml 2>/dev/null; then
+    if ! printf '%s' "$json" | jq -e '
+      any((.statusCheckRollup // [])[]; (.name // .context // "") == "audit-gate")
+    ' >/dev/null 2>&1; then
+      emit_deny "merge-gate: PR #$pr has no 'audit-gate' check on its head, but this repo's CI declares one. The audit gate is the check that validates the audit records on the PR's own tree; a head it never reported on is not verified, whatever the other checks say. Wait for CI to register on this head (or re-run the audit-gate workflow), then re-run the merge."
       return 1
     fi
   fi
@@ -790,10 +812,22 @@ verify_pr() {
 # on PR #388 with the Mac at load 13 (the two self-hosted CI runners plus an e2e
 # run), when the gh calls took ~9 s of the 10 and the audit gate was handed the
 # 1-second remainder and killed. The audit step is deterministic and offline
-# (20 ms on that PR); the only thing a small cap buys is a false deny on a loaded
-# machine, which is the normal state of a box that also hosts its own CI. The
-# hook's fast path (any command that is not a merge or a push) never reaches
-# this, so the larger timeout costs an ordinary Bash call nothing.
+# but NOT small for a PR that touches item files: 7.4 s idle on consumer A
+# (2026-09-23, 264 done items, five audit records), the same as a full
+# --check, because merge mode validates every record on the primary checkout
+# — on that repo 91 roadmap-lint runs over the follow-ups the records declare
+# plus a path-limited pickaxe and a merge-base per done item they cover (~51
+# each). It grows with every audited milestone's follow-ups, not with history
+# depth (one pickaxe is ~30 ms). A code-only PR exits in 4 ms. So the cap must
+# hold ~3x the idle figure plus two loaded gh calls; the only thing a small
+# cap buys is a false deny on a loaded machine, which is the normal state of
+# a box that also hosts its own CI. The hook's fast path (any command that is
+# not a merge or a push) never reaches this, so the larger timeout costs an
+# ordinary Bash call nothing. 0.32.0 trimmed the step where semantics allow
+# (one rev-list per record instead of a merge-base per done item; each
+# follow-up judged once) after a validity cache AND a batched pickaxe were both
+# refuted as fail-open — docs/research/2026-09-23-audit-gate-merge-mode-cost.md;
+# the remaining lever is a maintainer decision recorded there.
 GATE_TOTAL_BUDGET="${MERGE_GATE_TOTAL_BUDGET:-50}"
 GATE_PER_PR_CAP="${MERGE_GATE_GH_TIMEOUT:-40}"
 gate_deadline=$(( $(date +%s) + GATE_TOTAL_BUDGET ))

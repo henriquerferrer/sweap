@@ -1165,5 +1165,122 @@ else
 fi
 chmod 644 "$R/roadmap/F1.2.md"
 
+
+# --- 0.32.0: one pickaxe for the backlog, each disposition ref judged once, ---
+# --- the repo root fail-closed, hermetic git ------------------------------------
+# The per-item `git log -S` + `merge-base` pair became one directory-wide pickaxe
+# joined against one rev-list per record (2026-09-23 memo). These pin the three
+# histories where a directory-wide -S could plausibly differ from per-path.
+
+# T70: co-edit — one commit flips F1.2 to done AND edits F1.1's body. The pickaxe
+# lists a path only when ITS match count changed, so F1.1's flip stays its
+# original commit (inside the range) and the record validates; the same commit
+# placed after range_head must fail F1.2 only.
+R="$(new_repo t70)"
+base="$(head_sha "$R")"
+mk_item "$R" F1.1 'done'; mk_item "$R" F1.2 todo; commit_all "$R" "F1.1 done, F1.2 todo"
+rh="$(head_sha "$R")"
+mk_item "$R" F1.2 'done'; printf '\nbody edit\n' >> "$R/roadmap/F1.1.md"; commit_all "$R" "flip F1.2 + co-edit F1.1"
+mk_record "$R" F1 "$base" "$(head_sha "$R")" 0 0 0 "" 'finders_reporting: 3'
+commit_all "$R" rec
+run_gate "$R" --check
+check "T70a: co-edit commit inside the range => valid" 0
+mk_record "$R" F1 "$base" "$rh" 0 0 0 "" 'finders_reporting: 3'
+commit_all "$R" "rec with range_head before the co-edit"
+run_gate "$R" --check
+check "T70b: range_head before the co-edit => F1.2 outside, invalid" 1
+check_out "T70b: names F1.2, not the co-edited F1.1" "FAIL: record .*F1\.2 completed outside"
+if printf '%s\n' "$OUT" | grep -q 'F1\.1 completed outside'; then fail=$((fail+1)); printf '  FAIL  T70b: F1.1 wrongly attributed to the co-edit commit\n'; else pass=$((pass+1)); printf '  PASS  T70b: F1.1 keeps its own flip commit\n'; fi
+
+# T71: flip-unflip-flip — the OLDEST flip is the one that must be in range
+# (per-path semantics: `git log -S | tail -1`). Record range_head at the first
+# flip => valid even though a later re-flip is outside it.
+R="$(new_repo t71)"
+base="$(head_sha "$R")"
+mk_item "$R" F1.1 'done'; commit_all "$R" "flip"
+rh="$(head_sha "$R")"
+mk_item "$R" F1.1 todo; commit_all "$R" "unflip"
+mk_item "$R" F1.1 'done'; commit_all "$R" "flip again"
+mk_record "$R" F1 "$base" "$rh" 0 0 0 "" 'finders_reporting: 3'
+commit_all "$R" rec
+run_gate "$R" --check
+check "T71: oldest flip inside the range => valid (re-flip later is not the flip)" 0
+
+# T72: a record that names the same follow-up under two blocks is judged once
+# per (kind, id) and still validates; a `blocked` ref whose status is not blocked
+# still fails even when the same id passed as a `followup` ref.
+R="$(new_repo t72)"
+base="$(head_sha "$R")"
+mk_item "$R" F1.1 'done'; commit_all "$R"
+mk_todo_followup "$R" F1.9 F1
+mk_record "$R" F1 "$base" "$(head_sha "$R")" 2 0 2 $'### one\ndisposition: followup F1.9\n\n### two\ndisposition: followup F1.9\n' 'finders_reporting: 3'
+commit_all "$R" rec
+run_gate "$R" --check
+check "T72a: the same follow-up under two blocks => valid, judged once" 0
+mk_record "$R" F1 "$base" "$(head_sha "$R")" 2 0 2 $'### one\ndisposition: followup F1.9\n\n### two\ndisposition: blocked F1.9\n' 'finders_reporting: 3'
+commit_all "$R" "rec2"
+run_gate "$R" --check
+check "T72b: followup F1.9 passes but blocked F1.9 (status todo) still fails" 1
+check_out "T72b: the blocked-status failure is named" "disposition says blocked but its status is not"
+
+# T73: the repo root. From a subdirectory the gate used to find no CLAUDE.md, no
+# items, no debt — exit 0, vacuous. Now it runs from the toplevel and gives the
+# same verdict; outside a work tree it fails closed.
+R="$(new_repo t73)"
+base="$(head_sha "$R")"
+mk_item "$R" F1.1 'done'; commit_all "$R"
+mk_record "$R" F1 "$base" "0000000000000000000000000000000000000000" 0 0 0
+commit_all "$R" "invalid record"
+mkdir -p "$R/apps/web"
+OUT="$( (cd "$R/apps/web" && bash "$GATE" --files roadmap/F2.1.md) 2>&1)"; RC=$?
+check "T73a: run from a subdirectory => same deny as from the root" 1
+check_out "T73a: the debt is named" "FAIL: audit debt .*F1"
+NOGIT="$WORK/nogit"; mkdir -p "$NOGIT"
+OUT="$( (cd "$NOGIT" && bash "$GATE" --files roadmap/F2.1.md) 2>&1)"; RC=$?
+check "T73b: outside a git work tree => fail closed, not exit 0" 1
+check_out "T73b: says why" "not inside a git work tree"
+
+# T74: hermetic git — a `git replace` graft that would un-ancestor range_base
+# from range_head must not change the verdict (replace refs are ignored for the
+# whole run), and `log.follow = true` in the repo config must not either.
+R="$(new_repo t74)"
+base="$(head_sha "$R")"
+mk_item "$R" F1.1 'done'; commit_all "$R"
+mk_record "$R" F1 "$base" "$(head_sha "$R")" 0 0 0 "" 'finders_reporting: 3'
+commit_all "$R" rec
+run_gate "$R" --check
+check "T74a: baseline valid" 0
+orphan="$(git -C "$R" commit-tree -m orphan "$(git -C "$R" rev-parse 'HEAD^{tree}')")"
+git -C "$R" replace --graft "$(git -C "$R" rev-parse HEAD~1)" "$orphan" >/dev/null 2>&1
+git -C "$R" config log.follow true
+run_gate "$R" --check
+check "T74b: a replace graft and log.follow=true change nothing" 0
+
+
+# T75: the pickaxe is PER PATH and must stay so. A branch flips F1.1 done, the
+# merge puts F1.1 back to todo (TREESAME to the mainline parent for that path,
+# so per-path history follows the mainline only), and the mainline flips F1.1
+# done AFTER the audit's range_head. The item completed outside the range and
+# the record must fail. A directory-wide `-S -- roadmap/` walks the branch side
+# (the merge is not TREESAME on the directory), attributes the older branch flip,
+# and validates the record — the fail-open a 2026-09-23 review caught before it
+# shipped. This test is the fence.
+R="$(new_repo t75)"
+base="$(head_sha "$R")"
+mk_item "$R" F1.1 todo; mk_item "$R" F1.2 todo; commit_all "$R" "items todo"
+git -C "$R" checkout -q -b side
+mk_item "$R" F1.1 'done'; commit_all "$R" "side: F1.1 done"
+mk_item "$R" F1.2 'done'; commit_all "$R" "side: F1.2 done"
+git -C "$R" checkout -q -
+git -C "$R" -c user.email=t@t -c user.name=t merge -q --no-ff --no-commit side >/dev/null 2>&1
+mk_item "$R" F1.1 todo; commit_all "$R" "merge side, F1.1 kept todo"
+mh="$(head_sha "$R")"
+mk_item "$R" F1.1 'done'; commit_all "$R" "main: F1.1 done after the merge"
+mk_record "$R" F1 "$base" "$mh" 0 0 0 "" 'finders_reporting: 3'
+commit_all "$R" rec
+run_gate "$R" --check
+check "T75: a merge TREESAME on the item path but not on the directory => per-path flip is the later mainline commit, record invalid" 1
+check_out "T75: names F1.1 as completed outside the range" "FAIL: record .*F1\.1 completed outside"
+
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" = 0 ]
