@@ -54,7 +54,11 @@ Resolve the run:
 - **Hand-offs `H`** = the outstanding human hand-offs from the hand-off scan
   below.
 - **Turns** = the second argument if given; otherwise `turns.default` from the
-  `## sweap config` block (default `160`).
+  `## sweap config` block (default `160`). A turn is a session turn — a
+  workflow launch, a workflow's return, a check-in — not an item: the items run
+  inside the `sweap:run` workflow, in the background, while the session's turn
+  is over. The bound is a backstop against a session that relaunches a stopped
+  workflow over and over; the run itself ends on the frontier.
 
 Then pick the run shape:
 - **`M` exists** → scope = `D` then `M` (debt-first): drain every item in `D`,
@@ -330,6 +334,13 @@ needs: [<ids you are waiting on a human for, if reason is awaiting-human>]
 why_not_agent: [<id>=identity|money|terms|taste|authority, ...]
 ```
 
+A run that stopped because the workflow stopped on a cause the session could
+not clear (a usage wall, an API death, a red default branch after its rerun)
+has no reason of its own here: it is `awaiting-human` only when an open item
+is what the person must act on (name it), and otherwise the run is not over —
+leave the file without `ended:`, say in chat what stopped it, and the next
+launch continues it (the board derives the state from the items either way).
+
 **Record only what you legitimately know.** `needs:` is the ids; `why_not_agent:`
 is the one judgment no tool can derive — *why a person is required rather than
 another turn*. Do NOT write the commands the human should run: the board derives
@@ -378,22 +389,30 @@ write the record and print nothing.
 
 Then **print** the exact goal line, filled in, for the user to paste — do NOT
 try to set `/goal` yourself (only the user can invoke it). Pick the template by
-run shape from "Resolve the run" above.
+run shape from "Resolve the run" above. **Print it as ONE line**, however the
+template is wrapped here: a multi-line paste reaches the session as pasted
+text, not as a command (consumer A, 2026-09-23: the session read the pasted goal
+as prose and no goal was ever set), and a single line pasted after `/goal `
+is the command. Print nothing else to paste.
 
-**Print the driver next to it.** The goal says when the run is done; the
-`/sweap:run` workflow is how the session drives the items (playbook, "Who
-holds the loop"). Print the invocation with `D` as its batch, in drain order:
-
-```
-/sweap:run {"ids": ["<D, in drain order>"]}
-```
-
-The session runs it, records the run when it returns, runs `/milestone-audit`
-if that completed the milestone, and relaunches it after a usage-limit reset,
-a red base branch made green, or a human answer — completed items replay from
-the journal, so a relaunch costs nothing for what already merged. A bare
-`/sweap:run` (no ids) drains the frontier in pick order instead; use it for a
-debt-only run.
+**The goal names the driver, so one paste is the whole kickoff.** The goal's
+text is the first turn's directive — whether the built-in `/goal` engages or
+the line lands as a plain prompt, the session reads the same words — so the
+sentence that launches the `sweap:run` workflow lives INSIDE the goal, never
+next to it. Printing the launch as a second paste is what produced "should I
+run the goal or the other one?" on consumer A (2026-09-23): the human ran a bare
+`/sweap:run` first, which threw away the drain order this command computed
+(the run started on FP.2, not the CI flake DV.48) and drained the whole
+frontier (F14 and F15 items behind F13's), then pasted the goal, which launched
+nothing. The sentence is written as the human's explicit ask because the
+Workflow tool launches only on one; it names the workflow exactly
+(`sweap:run`, plugin-scoped — the bare name is not found); it passes args as
+an object (a model has passed a JSON string before, which the workflow now
+parses, but the object form needs no parsing); and it carries both the batch
+`D` in drain order and the milestone, so ONE launch drains the debt first and
+then the milestone's items — a batch-only launch returns after the debt and
+relies on the session remembering to launch again, which is where a run
+forgets.
 
 **Non-negotiable for any milestone run (regardless of prefix):** the goal line
 MUST carry the "…and the `<MILESTONE>` milestone-audit has run and been
@@ -423,8 +442,17 @@ milestone) has run and been triaged. Stop when the only [todo] items left are
 audit follow-ups carrying followup_of: <MILESTONE> (those are the next run's
 debt, not this run's work), or when NOTHING IS RUNNABLE — every remaining [todo]
 has an unsatisfied dependency on a [blocked], [attended] or [deferred] item, so
-the frontier is empty and no agent may pick anything up. Or after <TURNS> turns.
-When you stop, record it (see "Record the end of the run" below).
+the frontier is empty and no agent may pick anything up — or when the run
+workflow stopped on a cause you cannot clear (say which). Or after <TURNS>
+turns. How: I am asking you to drive every item with the sweap:run workflow and
+never by hand — launch it now with Workflow({name: "sweap:run", args: {"ids":
+[<D, in drain order>], "milestone": "<MILESTONE>"}}), args as an object; while
+it runs, end your turn and wait for its result, never poll it. When it returns
+drained AND every <MILESTONE> item is [done], run /milestone-audit <MILESTONE>
+and triage; drained with items left open is a stop, not a completion. When it
+returns stopped, clear the cause if you can (a red default branch: rerun its
+failed job once) and relaunch it fresh with the same args. When you stop,
+record it (see "Record the end of the run" below).
 ```
 
 That stop condition names the follow-ups deliberately. A correct audit ends by CREATING work: bucket-2 triage writes
@@ -449,8 +477,15 @@ per its definition of done. Hand-offs <IDS> are the human's and remain open, so
 <MILESTONE> cannot complete and its milestone-audit is NOT due this run — do not
 attempt it. Stop when NOTHING IS RUNNABLE — every remaining [todo] has an
 unsatisfied dependency on a [blocked], [attended] or [deferred] item, so the
-frontier is empty — or after <TURNS> turns. When you stop, record it (see
-"Record the end of the run" below).
+frontier is empty — or when the run workflow stopped on a cause you cannot
+clear (say which) — or after <TURNS> turns. How: I am asking you to drive every
+item with the sweap:run workflow and never by hand — launch it now with
+Workflow({name: "sweap:run", args: {"ids": [<D, in drain order>], "milestone":
+"<MILESTONE>"}}), args as an object; while it runs, end your turn and wait for
+its result, never poll it.
+When it returns stopped, clear the cause if you can (a red default branch:
+rerun its failed job once) and relaunch it fresh with the same args. When you
+stop, record it (see "Record the end of the run" below).
 ```
 
 **Debt-only** (no runnable `M`, but `D` is non-empty):
@@ -459,7 +494,13 @@ frontier is empty — or after <TURNS> turns. When you stop, record it (see
 /goal Every outstanding audit follow-up item in the backlog is [done] per its
 definition of done. Stop when NOTHING IS RUNNABLE — every remaining [todo] has
 an unsatisfied dependency on a [blocked], [attended] or [deferred] item, so the
-frontier is empty — or after <TURNS> turns. When you stop, record it (see
+frontier is empty — or when the run workflow stopped on a cause you cannot
+clear (say which) — or after <TURNS> turns. How: I am asking you to drive every
+item with the sweap:run workflow and never by hand — launch it now with
+Workflow({name: "sweap:run", args: {"ids": [<D, in drain order>]}}), args as an
+object; while it runs, end your turn and wait for its result, never poll it. When it returns stopped,
+clear the cause if you can (a red default branch: rerun its failed job once)
+and relaunch it fresh with the same args. When you stop, record it (see
 "Record the end of the run" below).
 ```
 
@@ -489,7 +530,17 @@ core, which the run reads at start (other sections by heading, when their
 situation arrives) — the goal only states the end condition.
 
 The whole ritual for the user is just: `claude --permission-mode auto` →
-`/milestone` → paste the printed goal. If `services.up` is declared, services
-come up automatically above — the user never runs it themselves. When the
-milestone has hand-offs, one question comes first (do them now or later), and
-answering "now" replaces the paste step with a `/handoff` walk-through.
+`/milestone` → paste the printed goal, one line, nothing else. Then `/goal`
+with no argument shows the condition when it took; "No goal set" means the line
+landed as a prompt (the run still starts — the driver sentence is read either
+way — but nothing re-drives the session after a turn that ends idle). Two
+things end a 24/7 run that no sweap control can catch: a per-model credit wall
+on the SESSION model (consumer A 2026-09-03: "You've reached your Fable limit"
+ended the turn and nothing moved for eight hours; the session's own model
+should be one the subscription's automatic continue covers), and a
+`.claude/settings*.json` that sets `autoContinueAtUsageLimit` — on by
+default in user settings, and a project file that sets it turns it OFF. If
+`services.up` is declared, services come up automatically above — the user
+never runs it themselves. When the milestone has hand-offs, one question comes
+first (do them now or later), and answering "now" replaces the paste step with
+a `/handoff` walk-through.

@@ -94,12 +94,56 @@ test("the fix loop is bounded and hands every prior round to the next fixer", ()
   assert.match(SRC, /Earlier fix rounds on this PR/);
 });
 
-test("scope is recomputed before every item and reads the frontier from sweap-frontier", () => {
+test("scope is recomputed before every item and reads the frontier from sweap-frontier; the script picks, the agent does not", () => {
   const loopBody = SRC.slice(SRC.indexOf("while (count < MAX_ITEMS)"));
-  assert.match(loopBody, /scopePrompt\(IDS\)/);
+  assert.match(loopBody, /scopePrompt\(\)/, "the batch is not in the prompt: the agent cannot know which item the script will pick (attempted is script state)");
   assert.match(SRC, /Run \\`sweap-frontier\\`/);
+  assert.match(SRC, /do not filter, reorder or judge the items/);
+  assert.ok(!/const scopePrompt = [^\n]*lint/.test(SRC), "Scope no longer lints 'the first item you return' — it could not know which one that is; the implementer's step 1 lints");
+  assert.match(loopBody, /pickOrder\(scoped\.value\.frontier, IDS, MILESTONE\)\.find\(\(i\) => !attempted\.has\(i\.id\)\)/);
   assert.match(SRC, /attempted\.has\(i\.id\)/, "an item that failed without a PR must not be picked again forever");
+  assert.match(SRC, /skipped: IDS \? IDS\.filter\(\(id\) => !attempted\.has\(id\)\) : \[\]/, "skipped is derived from what was never picked, not accumulated from a per-scope 'not runnable yet' list (an item runnable only after a dependency merged used to be reported both merged and skipped)");
+  assert.ok(!/replay from the journal/.test(SRC), "a relaunch is fresh: a journal resume would replay the first launch's Resume result and hand the next implementer stale worktree/PR state");
 });
+
+// The pick-order helpers are pure; evaluate them out of the source.
+const helpers = () => {
+  const one = (name) => { const m = SRC.match(new RegExp(`const ${name} = [^\\n]*\\n`)); assert.ok(m, `${name} not found`); return m[0]; };
+  const block = SRC.match(/const pickOrder = [\s\S]*?\n\}\n/);
+  assert.ok(block, "pickOrder not found");
+  return new Function(`${one("milestoneOf")}${one("allowedFor")}${block[0]}; return { milestoneOf, allowedFor, pickOrder }`)();
+};
+
+test("allowedFor: this milestone's items and OTHER milestones' follow-ups; never this milestone's follow-ups, never a deeper id that merely shares the prefix", () => {
+  const { milestoneOf, allowedFor } = helpers();
+  assert.equal(milestoneOf("DS.2.1"), "DS.2");
+  assert.equal(milestoneOf("F13.4"), "F13");
+  const t = (id, followupOf, M) => allowedFor({ id, followupOf }, M);
+  assert.equal(t("F13.1", null, "F13"), true);
+  assert.equal(t("F14.1", null, "F13"), false, "consumer A 2026-09-23: a bare launch listed F14.1 and five F15 items for an F13 run");
+  assert.equal(t("FP.2", "F12", "F13"), true, "debt of an earlier milestone is drained first");
+  assert.equal(t("DV.48", "DV", "F13"), true, "a follow-up family keyed by followup_of alone (no milestone prefix) is still debt");
+  assert.equal(t("F13.28", "F13", "F13"), false, "a follow-up OF this milestone is the next run's debt; the goal stops on it");
+  assert.equal(t("DS.2.1", null, "DS"), false, "startsWith would admit milestone DS.2 into a DS run");
+  assert.equal(t("DS.1", null, "DS"), true);
+  assert.equal(t("F14.1", null, null), true, "no milestone: the whole frontier, as before");
+});
+
+test("pickOrder: the batch first in batch order, then the milestone frontier; ids alone stay a batch; nothing alone stays the frontier", () => {
+  const { pickOrder } = helpers();
+  const frontier = [
+    { id: "FP.2", followupOf: "F12" }, { id: "FP.7", followupOf: "F12" }, { id: "DV.48", followupOf: "DV" },
+    { id: "F13.1" }, { id: "F14.1", followupOf: null },
+  ];
+  const ids = (r) => r.map((i) => i.id);
+  assert.deepEqual(ids(pickOrder(frontier, ["DV.48", "FP.7", "FP.2", "FP.99"], "F13")), ["DV.48", "FP.7", "FP.2", "F13.1"], "the kickoff's drain order wins over the frontier's, and a batch id the frontier does not list is simply absent this scope");
+  assert.deepEqual(ids(pickOrder(frontier, ["DV.48", "FP.7"], null)), ["DV.48", "FP.7"], "ids without a milestone: the batch and nothing else");
+  assert.deepEqual(ids(pickOrder(frontier, null, "F13")), ["FP.2", "FP.7", "DV.48", "F13.1"]);
+  assert.deepEqual(ids(pickOrder(frontier, null, null)), ["FP.2", "FP.7", "DV.48", "F13.1", "F14.1"]);
+  assert.deepEqual(ids(pickOrder(null, ["FP.2"], "F13")), []);
+  assert.equal(pickOrder([{ id: "F13.1" }], null, "F13")[0].followupOf, null, "an omitted followupOf reads as null, never as 'some other milestone'");
+});
+
 
 test("the implementer brief binds to the playbook by its markers and never merges", () => {
   assert.match(SRC, /<!-- run-core:end -->/);
@@ -125,4 +169,22 @@ test("bin/sweap-frontier is executable and execs the board's frontier subcommand
   const p = join(HERE, "..", "bin", "sweap-frontier");
   assert.ok(statSync(p).mode & 0o111, "a bin/ wrapper nobody can execute is a launch line that fails");
   assert.match(readFileSync(p, "utf8"), /sweap-board\.mjs" frontier/);
+});
+
+test("args: an object, a JSON string (parsed), a comma list, or nothing; a JSON-looking string that does not parse stops the run", () => {
+  const block = SRC.match(/const parseArgs = [\s\S]*?\n\}\n/);
+  assert.ok(block, "parseArgs not found");
+  const parseArgs = new Function(`${block[0]}; return parseArgs`)();
+  assert.deepEqual(parseArgs({ ids: ["A"], milestone: "F13" }), { ids: ["A"], milestone: "F13" });
+  assert.deepEqual(parseArgs('{"ids": ["DV.48", "FP.2"], "milestone": "F13"}'), { ids: ["DV.48", "FP.2"], milestone: "F13" }, "a model launching from a goal sentence has passed a JSON string before (consumer A 2026-09-02); it must not become garbage ids");
+  assert.deepEqual(parseArgs("DV.48, FP.2"), { ids: ["DV.48", "FP.2"] });
+  assert.deepEqual(parseArgs(["DV.48", "FP.2"]), { ids: ["DV.48", "FP.2"] }, "a bare array is a batch (the workflow-authoring reference passes args that way), never a silent whole-frontier run");
+  assert.deepEqual(parseArgs('["DV.48"]'), { ids: ["DV.48"] });
+  assert.match(SRC, /const RAW_IDS = typeof ARGS\.ids === 'string' \? ARGS\.ids\.split/, "{ids: 'DV.48, FP.2'} is a batch too");
+  assert.match(SRC, /if \(scoped\.value\.command_missing\) \{ stopped = /, "a missing sweap-frontier stops the run; an empty frontier for that reason must never read as drained (the goal would audit on nothing)");
+  assert.deepEqual(parseArgs(undefined), {});
+  assert.deepEqual(parseArgs("  "), {});
+  assert.equal(parseArgs('{"ids": [').bad_args, '{"ids": [');
+  assert.match(SRC, /if \(ARGS\.bad_args\) return \{[^\n]*stopped: `args was a string that is not valid JSON/);
+  assert.match(SRC, /const MILESTONE = typeof ARGS\.milestone === 'string'/);
 });

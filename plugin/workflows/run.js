@@ -1,7 +1,7 @@
 export const meta = {
   name: 'run',
   description: 'Drive runnable backlog items to the default branch one at a time: a fresh implementer per item, a small watcher for the merge wait, a fresh fixer per red',
-  whenToUse: 'The run session invokes it instead of driving the per-item loop itself. Pass {ids: [...]} to drain a batch in a given order, {max_items: n} to bound the batch, or nothing to drain the frontier in the playbook\'s pick order (follow-ups first, then numeric). It stops at a usage limit, an API death, a red base branch, or an empty frontier, and returns what merged, what needs a human, and where it stopped. The session then runs /milestone-audit when a milestone completed and records .claude/sweap-run.md.',
+  whenToUse: 'The run session invokes it instead of driving the per-item loop itself. Pass {ids: [...]} to drain a batch in a given order, {milestone: "F13"} to go on to that milestone\'s items (and any other milestone\'s follow-ups) once the batch is drained, {max_items: n} to bound the run, or nothing to drain the whole frontier in the playbook\'s pick order (follow-ups first, then numeric). It stops at a usage limit, an API death, a red base branch, or when nothing it may pick is runnable, and returns what merged, what needs a human, and where it stopped. The session then runs /milestone-audit when a milestone completed and records .claude/sweap-run.md.',
   phases: [
     { title: 'Resume', detail: 'what an interrupted run left behind: worktrees, open PRs, armed watches, plans with unchecked steps' },
     { title: 'Scope', detail: 'sweap-frontier before every item — a merge changes what is runnable' },
@@ -24,12 +24,37 @@ export const meta = {
 // worktree destroy each other's databases — lane lessons 1 and 9).
 
 // ---------------------------------------------------------------------------
-// Arguments. Either an object or nothing; a bare string is a comma list of ids.
-const ARGS = (typeof args === 'string')
-  ? { ids: args.split(/[,\s]+/).filter(Boolean) }
-  : (args && typeof args === 'object' ? args : {})
-const IDS = Array.isArray(ARGS.ids) && ARGS.ids.length ? ARGS.ids.map(String) : null
+// Arguments. An object, nothing, or a string: a JSON string is parsed (a model
+// launching from a goal sentence has passed its args as a string before —
+// consumer A 2026-09-02, milestone-audit; without this a '{"ids": [...]}' string
+// would split into garbage ids and the run would end with nothing done), any
+// other string is a comma list of ids. A string that looks like JSON but does
+// not parse stops the run before the Resume stage, with the text.
+const parseArgs = (a) => {
+  if (Array.isArray(a)) return { ids: a }
+  if (a && typeof a === 'object') return a
+  if (typeof a !== 'string') return {}
+  const t = a.trim()
+  if (!t) return {}
+  if (t.startsWith('{') || t.startsWith('[')) { try { return parseArgs(JSON.parse(t)) } catch (e) { return { bad_args: t } } }
+  return { ids: t.split(/[,\s]+/).filter(Boolean) }
+}
+const ARGS = parseArgs(args)
+// A bare array (the workflow-authoring reference's own example passes args as
+// one) and an ids string ("DV.48, FP.2") are both batches, never a silent bare
+// run of the whole frontier.
+const RAW_IDS = typeof ARGS.ids === 'string' ? ARGS.ids.split(/[,\s]+/).filter(Boolean) : ARGS.ids
+const IDS = Array.isArray(RAW_IDS) && RAW_IDS.length ? RAW_IDS.map(String) : null
 const MAX_ITEMS = Number.isFinite(Number(ARGS.max_items)) && Number(ARGS.max_items) > 0 ? Number(ARGS.max_items) : Infinity
+// The milestone the run is for. The frontier is backlog-wide (every runnable
+// todo item, whatever its milestone): on consumer A on 2026-09-23 a bare launch
+// listed F14.1 and five F15 items behind the F13 items, and the run's goal
+// named F13. With a milestone, the run picks the batch first, then only that
+// milestone's items and the follow-ups of OTHER milestones (the debt the goal
+// drains first); a follow-up OF this milestone is the next run's debt (it can
+// only exist once this milestone's audit ran) and is never picked FROM THE
+// FRONTIER — the batch is trusted as the kickoff computed it.
+const MILESTONE = typeof ARGS.milestone === 'string' && ARGS.milestone ? ARGS.milestone : null
 // The implementer's model is named, never inherited: a workflow agent otherwise
 // runs on the SESSION model, and the session that launches this is usually on
 // the strongest tier for planning. Implementation grind is Opus per the
@@ -38,6 +63,24 @@ const MODEL = typeof ARGS.model === 'string' && ARGS.model ? ARGS.model : 'opus'
 const SMALL_MODEL = typeof ARGS.small_model === 'string' && ARGS.small_model ? ARGS.small_model : 'sonnet'
 const MAX_FIX_ROUNDS = 3
 const PLUGIN_NAME = 'sweap'
+
+// ---------------------------------------------------------------------------
+// Pick order, computed HERE from the frontier the Scope agent returns — the
+// script decides, the agent only runs the command. The Scope agent used to be
+// asked to apply the batch order and to lint "the first item you return", and
+// it could not know which item the script would pick: an item that failed
+// without a PR stays first in the frontier but is already in `attempted`.
+// milestoneOf mirrors sweap-board.lib.mjs (the script cannot import): the id
+// minus its last dot-segment, so `DS.2.1` is milestone `DS.2`, not `DS`.
+const milestoneOf = (id) => String(id).replace(/\.[^.]*$/, '')
+const allowedFor = (item, milestone) => !milestone ? true : (item.followupOf ? item.followupOf !== milestone : milestoneOf(item.id) === milestone)
+const pickOrder = (frontier, ids, milestone) => {
+  const listed = (frontier || []).filter((i) => i && i.id).map((i) => ({ ...i, followupOf: i.followupOf || null }))
+  const byId = new Map(listed.map((i) => [i.id, i]))
+  const batch = ids ? ids.map((id) => byId.get(id)).filter(Boolean) : []
+  const rest = (ids && !milestone) ? [] : listed.filter((i) => !(ids && ids.includes(i.id)) && allowedFor(i, milestone))
+  return batch.concat(rest)
+}
 
 // ---------------------------------------------------------------------------
 // Schemas — the workflow reads fields, never prose.
@@ -61,10 +104,11 @@ const SCOPE = {
   type: 'object',
   required: ['frontier'],
   properties: {
-    frontier: { type: 'array', items: { type: 'object', required: ['id'], properties: {
-      id: { type: 'string' }, followupOf: { type: ['string', 'null'] }, reviewDimensions: { type: 'array', items: { type: 'string' } },
-      answeredQuestion: { type: ['string', 'null'] }, lint: { type: 'string', description: 'pass, or the lint failure text' } } } },
-    malformed: { type: 'array', items: { type: 'string' } },
+    frontier: { type: 'array', items: { type: 'object', required: ['id', 'followupOf'], properties: {
+      id: { type: 'string' }, followupOf: { type: ['string', 'null'], description: 'the followupOf value as printed, null when absent' }, reviewDimensions: { type: 'array', items: { type: 'string' } },
+      answeredQuestion: { type: ['string', 'null'] } } } },
+    malformed: { type: 'array', items: { type: 'string' }, description: 'the malformed list as printed (item files whose id and filename disagree)' },
+    command_missing: { type: 'boolean', description: 'true when sweap-frontier is not on PATH or did not run; the frontier is then empty for that reason, not because nothing is runnable' },
   },
 }
 
@@ -166,20 +210,20 @@ You are the RESUME stage of an unattended run. Report what an earlier run left b
 - \`gh run list --branch <default branch> --limit 3 --json conclusion,name,status\` — base_red is true when the newest completed run of any workflow on the default branch is red or cancelled.
 Map each worktree, PR and plan to the backlog item id it belongs to (the branch name carries the id in lower case with the dot as a dash, e.g. fix/du25-... is DU.25). Return the JSON only.`
 
-const scopePrompt = (ids) => `You are the SCOPE stage of an unattended run. Run \`sweap-frontier\` from the primary checkout (the sweap plugin's bin/ is on PATH; if the command is missing, say so in \`malformed\` and return an empty frontier). It prints the runnable todo items in drain order as JSON. ${ids ? `The run was given this batch, in this order: ${ids.join(', ')}. Return only those of them that the frontier lists as runnable, in the batch's order, and name in \`malformed\` any batch id the frontier does not list (with why, if the item file says: done, blocked, deferred, attended, or a dependency unmet).` : 'Return the frontier as printed, in its order.'} For the FIRST item you return, also run \`sweap-roadmap-lint <backlog dir>/<id>.md\` and put \`pass\` or its failure text in that item's \`lint\`. Do not read the item files beyond that; do not judge the items. Return the JSON only.`
+const scopePrompt = () => `You are the SCOPE stage of an unattended run. Run \`sweap-frontier\` from the primary checkout (the sweap plugin's bin/ is on PATH; if the command is missing or fails, set \`command_missing\` true and return an empty frontier). It prints the runnable todo items in drain order as JSON. Return the frontier as printed, in its order, with each item's followupOf (null when it has none), and the malformed list as printed. Do not read the item files; do not filter, reorder or judge the items — the run decides what to pick. Return the JSON only.`
 
 const implementPrompt = (item, resume, prior) => `${READ_FIRST} Then read the playbook between \`<!-- worker-brief:begin -->\` and \`<!-- worker-brief:end -->\`: that brief binds you.
 
 You are the IMPLEMENTER for backlog item ${item.id}, and only that item. You drive it from its item file to an OPEN pull request, then you exit. You do not merge, you do not watch CI, you never run \`sweap-merge\` (a separate watcher does, after you return), never \`gh pr merge\`, never touch \`.github/\`, never commit in the primary checkout, never push to the default branch.
 
-Item file: \`<backlog dir>/${item.id}.md\` — the item file IS the spec (Surface, Interfaces, Out of scope, Acceptance).${item.answeredQuestion ? ` It still carries a \`blocked:\` key: that is the ANSWERED question /unblock left in place, and the answer is in the file. The item is runnable; do not escalate it as blocked.` : ''}${item.lint && item.lint !== 'pass' ? ` The spec gate says: ${item.lint} — if it is mechanical, fix it in your branch; if it is a real ambiguity, this item is blocked (below).` : ''}
+Item file: \`<backlog dir>/${item.id}.md\` — the item file IS the spec (Surface, Interfaces, Out of scope, Acceptance).${item.answeredQuestion ? ` It still carries a \`blocked:\` key: that is the ANSWERED question /unblock left in place, and the answer is in the file. The item is runnable; do not escalate it as blocked.` : ''}
 
 Resume state from the start of the run (change nothing you were not told to): ${JSON.stringify(resume)}
 If a worktree or an open PR already exists for ${item.id}, RESUME it — read its plan, its diff and its uncommitted files before writing a line, and continue from where it stopped. Never create a second worktree for the same item. If the worktree's test database was dropped, recreate it the way CLAUDE.md says; never discard uncommitted work.
 
 ${prior.length ? `Earlier items in this run reported (read for premises that changed under you — a merged item's claims rot within hours, so re-derive any line numbers or surfaces it moved from the code, never from the item file):\n${prior.map((p) => `- ${p.id}: ${p.summary}`).join('\n')}\n` : ''}
 Order of work:
-1. Pre-flight in the primary checkout: \`git fetch origin && git pull --ff-only\`; \`sweap-roadmap-lint <backlog dir>/${item.id}.md\` must pass.
+1. Pre-flight in the primary checkout: \`git fetch origin && git pull --ff-only\`; \`sweap-roadmap-lint <backlog dir>/${item.id}.md\` must pass — if it fails on something mechanical, fix it in your branch; if it fails on a real ambiguity, this item is blocked (below).
 2. Premises. Grep every file the item names and COUNT every number it states before building on it — every item in the last run had at least one stale premise. Implement what the item is FOR; record each discrepancy under the item's \`## Notes\`; never bend code to a stale premise. An acceptance clause no correct fix can satisfy makes the item blocked (below), not a hack.
 3. Worktree (unless resuming): branch \`<fix|feat|test|refactor|chore|docs>/<id lower-cased, dot to dash>-<short-slug>\` from \`origin/<default branch>\`, at the worktree path CLAUDE.md or the playbook names for this project; then the project's install step (CLAUDE.md names it).
 4. Plan to \`docs/superpowers/plans/\`, spec to \`docs/superpowers/specs/\`. TDD as the brief says; paste RED and GREEN. Verify with typecheck, lint, the formatter, the unit tests the change touches BY NAME (the e2e command may not run them) and the e2e specs you touched — not the full e2e suite (the brief names the only exceptions, and none applies while a CI job runs on this machine). Flip the item's \`status:\` to \`done\` in its own file on this branch.
@@ -207,29 +251,33 @@ If after this round the same root cause has been tried three distinct ways acros
 
 // ---------------------------------------------------------------------------
 // The loop.
-const merged = [], blocked = [], needsHuman = [], skipped = [], failed = []
+const merged = [], blocked = [], needsHuman = [], failed = [], malformed = []
 const attempted = new Set()
 const priorReports = []
 let stopped = null
+if (ARGS.bad_args) return { merged, blocked, needs_human: needsHuman, skipped: [], failed, stopped: `args was a string that is not valid JSON — pass an object: ${ARGS.bad_args.slice(0, 200)}` }
 
 phase('Resume')
 const resumed = await call(resumePrompt(), { label: 'resume', phase: 'Resume', schema: RESUME, model: SMALL_MODEL, effort: 'low', agentType: 'general-purpose' })
-if (!resumed.ok) return { merged, blocked, needs_human: needsHuman, skipped, failed, stopped: resumed.why }
+if (!resumed.ok) return { merged, blocked, needs_human: needsHuman, skipped: IDS || [], failed, stopped: resumed.why }
 const resume = resumed.value
 if (resume.base_red) {
   // Every PR's rerun is refused while the base is red on the same workflow, and
   // redcheck does not see a push-event red; nothing below can make progress.
-  return { merged, blocked, needs_human: needsHuman, skipped, failed, stopped: 'the default branch tip is red: rerun its failed job first (a flaky main stalls every PR)', resume }
+  return { merged, blocked, needs_human: needsHuman, skipped: IDS || [], failed, stopped: 'the default branch tip is red: rerun its failed job first (a flaky main stalls every PR)', resume }
 }
 log(`resume: ${resume.worktrees.length} worktree(s), ${resume.open_prs.length} open PR(s), ${resume.watches.length} armed watch(es)`)
 
 let count = 0
 while (count < MAX_ITEMS) {
-  const scoped = await call(scopePrompt(IDS), { label: `scope #${count + 1}`, phase: 'Scope', schema: SCOPE, model: SMALL_MODEL, effort: 'low', agentType: 'general-purpose' })
+  const scoped = await call(scopePrompt(), { label: `scope #${count + 1}`, phase: 'Scope', schema: SCOPE, model: SMALL_MODEL, effort: 'low', agentType: 'general-purpose' })
   if (!scoped.ok) { stopped = scoped.why; break }
-  for (const m of (scoped.value.malformed || [])) if (!skipped.includes(m)) skipped.push(m)
-  const item = (scoped.value.frontier || []).find((i) => i && i.id && !attempted.has(i.id))
-  if (!item) { log(IDS ? 'batch exhausted' : 'frontier empty'); break }
+  // An empty frontier because the command did not run is not "drained": the
+  // goal would send the session to the milestone audit on nothing.
+  if (scoped.value.command_missing) { stopped = 'sweap-frontier is not on PATH or failed (is the sweap plugin enabled for this project?)'; break }
+  for (const m of (scoped.value.malformed || [])) if (!malformed.includes(m)) malformed.push(m)
+  const item = pickOrder(scoped.value.frontier, IDS, MILESTONE).find((i) => !attempted.has(i.id))
+  if (!item) { log(MILESTONE ? `nothing runnable for ${MILESTONE}${IDS ? ' or in the batch' : ''}` : (IDS ? 'batch exhausted' : 'frontier empty')); break }
   attempted.add(item.id)
   log(`item ${item.id} (${count + 1}${Number.isFinite(MAX_ITEMS) ? `/${MAX_ITEMS}` : ''})`)
 
@@ -286,9 +334,17 @@ return {
   merged,
   blocked,
   needs_human: needsHuman,
-  skipped,
+  // Batch ids the run never attempted: not runnable at any scope it ran (done,
+  // blocked, deferred, attended, a dependency unmet, unknown to the frontier)
+  // — or, when `stopped` is set, simply not reached before the stop.
+  skipped: IDS ? IDS.filter((id) => !attempted.has(id)) : [],
+  malformed,
   failed,
   stopped,
   attempted: [...attempted],
-  next: stopped ? 'relaunch this workflow after the cause is cleared (a usage limit: after the reset; a red base: after its job is green); completed items replay from the journal' : (IDS ? 'batch drained' : 'frontier drained'),
+  // A relaunch is a FRESH launch, not a journal resume: the frontier is live,
+  // so merged items are not picked again, and the Resume stage must run live
+  // to see what the stop left behind (a resumed run would replay the first
+  // launch's Resume result and hand the next implementer stale state).
+  next: stopped ? 'relaunch this workflow fresh, with the same arguments, after the cause is cleared (a usage limit: after the reset; a red base: after its job is green)' : (MILESTONE ? `batch and ${MILESTONE} frontier drained` : (IDS ? 'batch drained' : 'frontier drained')),
 }

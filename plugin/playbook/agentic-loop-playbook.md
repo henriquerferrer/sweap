@@ -86,20 +86,28 @@ on an item before dispatching it; a failing item is not runnable.
    pass; `migration`: see "Review dimensions". All before the PR merges.
 5. **Merge** with `sweap-merge watch <n>` (below), verify, clean up, next item.
 
-**Who holds the loop.** A run session drives items with the `/sweap:run`
-workflow (pass `{ids: [...]}` for a batch in a given order, `{max_items: n}`
-to bound it, or nothing to drain the frontier in pick order). The workflow
-holds the loop in a script: before every item it recomputes the frontier
-(`sweap-frontier`), dispatches ONE fresh implementer that exits when its PR is
-open, hands the CI wait to the small `merge-watcher` agent, and dispatches a
-fresh fixer per red with every earlier round in hand. Nothing waits on CI
-while holding implementation context. Never hold the loop in a long-lived
-agent instead: the consumer A F13 run's hand-written "lane runner" agents grew to
-806k of context waiting in 600-second Bash calls, and their expired caches were
-half the run's cost. When the workflow returns, the session records the run
-(below), runs `/milestone-audit` if a milestone completed, and relaunches the
-workflow after a usage-limit reset or a red base branch is fixed — completed
-items replay from the journal.
+**Who holds the loop.** A run session drives items with the `sweap:run`
+workflow, launched from the goal's own driver sentence
+(`Workflow({name: "sweap:run", args: {...}})`, args as an object): `ids` is
+the batch in the kickoff's drain order, `milestone` makes the run go on to
+that milestone's items — and the follow-ups of other milestones — once the
+batch is drained, `max_items` bounds it, and nothing at all drains the whole
+frontier in pick order (the frontier is backlog-wide, so a bare launch for an
+F13 run drains F14's runnable items too). The workflow holds the loop in a
+script: before every item it recomputes the frontier (`sweap-frontier`),
+dispatches ONE fresh implementer that exits when its PR is open, hands the CI
+wait to the small `merge-watcher` agent, and dispatches a fresh fixer per red
+with every earlier round in hand. Nothing waits on CI while holding
+implementation context. Never hold the loop in a long-lived agent instead: the
+Consumer A F13 run's hand-written "lane runner" agents grew to 806k of context
+waiting in 600-second Bash calls, and their expired caches were half the run's
+cost. While the workflow runs, end the turn and wait for its result; never
+poll it. When it returns, the session records the run (below), runs
+`/milestone-audit` if a milestone completed, and after a stop it clears the
+cause if it can (a red default branch: rerun its failed job once) and
+relaunches the workflow FRESH with the same args — the frontier is live, so
+merged items are not picked again, and the Resume stage must run live to see
+what the stop left behind.
 
 **Discovered work.** Anything you notice that is not the item: file it and go
 back. `sweap-note discovered "<title>" gap|direction "<item id or PR #n>"
@@ -284,7 +292,10 @@ overrides only the keys that differ from the baked defaults. The keys:
 - **`notify`** — end-of-run notification channel: **`push`** or **`none`**.
   Default **`push`**.
 - **`turns.default`** — the default turn budget for an autonomous run. Default
-  **`160`**.
+  **`160`**. A turn is a session turn (a workflow launch, its return, a
+  check-in), not an item — the items run inside the workflow — so the bound is
+  a backstop against a session relaunching a stopped workflow forever, not a
+  measure of work.
 - **`test.url`** / **`test.seed`** — optional, read only by `/walkthrough`: the
   URL the acceptance pass opens (never production) and the ONE command allowed
   to create test data. Undeclared, `/walkthrough` opens nothing and seeds
@@ -613,9 +624,10 @@ requirement, and it holds in both environments.
 - **`/milestone [milestone] [turns]`** — if `services.up` is declared, brings up
   local test services itself (starting the daemon if needed; falls back to
   CI-gated mode when services are unavailable), then prints the ready-to-paste
-  `/goal` for an autonomous run. Defaults to the next runnable milestone and
-  `turns.default` turns. You never run `services.up` by hand; the paste step
-  exists only because a human must invoke `/goal`. Ritual:
+  `/goal` for an autonomous run — one line, and the goal names the driver, so
+  that one paste is the whole kickoff. Defaults to the next runnable milestone
+  and `turns.default` turns. You never run `services.up` by hand; the paste
+  step exists only because a human must invoke `/goal`. Ritual:
   `claude --permission-mode auto` → `/milestone` → paste. When the run's scope
   contains unblocked hand-offs, the pre-flight asks whether to do them first and
   prints `/handoff` commands instead — see **Attended items**.
@@ -1641,7 +1653,7 @@ in-flight branch at width 1 too, and a Free-plan repo never reports BEHIND.
 | Mechanism | What it does | Who initiates |
 |---|---|---|
 | Agent tool / background agents | Spawn subagents (research, review, parallel features in worktrees) within a session | Claude |
-| Workflow (multi-agent orchestration) | Deterministic fan-out: parallel finders + adversarial verifiers; use for audits/reviews, not feature code | Claude (user opt-in, e.g. "ultracode") |
+| Workflow (multi-agent orchestration) | Deterministic fan-out: parallel finders + adversarial verifiers; use for audits/reviews, not feature code | Claude, on the user's explicit ask — the goal's driver sentence is that ask for `sweap:run` |
 | `/goal` (built-in) | Sets a stop condition checked by an evaluator model after every turn; Claude keeps chaining turns until the condition is demonstrably met. Preferred driver for roadmap execution: `/goal <condition, incl. verification commands shown in transcript> or stop after N turns`. **User-only — Claude cannot invoke `/goal`; a human pastes it** | User sets once; Claude sustains |
 | `/loop` + self-scheduled wakeups | Time-paced recurring iteration; better for polling/monitoring (CI, deploys) than for goal-directed backlog work | User starts once; Claude sustains |
 | Cron jobs / scheduled cloud agents (`/schedule`) | Sessions that start on a schedule (nightly deps bump, backlog grooming, post-merge audit) — a scheduled kickoff runs `/milestone` non-interactively; a cloud routine cannot merge while CI runs on self-hosted runners that are off | Claude can create; runs unattended |
@@ -1652,7 +1664,7 @@ in-flight branch at width 1 too, and a Free-plan repo never reports BEHIND.
 | `/handoff <id>` | Walks one `[attended]` hand-off with the human, then flips it to done through a gated PR on their explicit confirmation | User runs; interactive only |
 | `sweap-merge watch <n>` (`sweap-merge status`) | Background merge driver for one PR: waits on the base branch's expected checks pinned to the head, runs the merge gate, merges, runs the post-merge hooks; exits with one terminal word. Run via Bash `run_in_background: true`; Monitor optional. A bare command because the plugin's `bin/` is on the Bash tool's PATH — `$CLAUDE_PLUGIN_ROOT` is unset in a model-issued Bash call. Allowlist `Bash(sweap-merge:*)` | Claude (the session that owns the PR) |
 | `/unblock <id>` | Walks one `[blocked]` question with the human — prepares the fork, never answers it — then closes it through a gated PR (`todo` + authored spec, or `done`) | User runs; interactive only |
-| `/sweap:run` (workflow) | The per-item loop held in a script: frontier before every item (`sweap-frontier`), one fresh implementer per item, the `merge-watcher` agent for the CI wait, a fresh fixer per red; strictly serial. Pauses at a 5-hour limit (twice per run, interactive subscription session only), stops at a weekly wall, a dead agent or a red base; a relaunch replays completed items | The run session (a human launches or relaunches) |
+| `sweap:run` (workflow) | The per-item loop held in a script: frontier before every item (`sweap-frontier`), one fresh implementer per item, the `merge-watcher` agent for the CI wait, a fresh fixer per red; strictly serial; `{ids, milestone}` scope it to the kickoff's batch and then one milestone. Pauses at a 5-hour limit (twice per run, interactive subscription session only), stops at a weekly wall, a dead agent or a red base; a relaunch is a fresh launch with the same args (the frontier is live) | The run session, from the goal's driver sentence; a human only pastes the goal |
 
 ## Model policy
 

@@ -902,6 +902,18 @@ test("verifyEnd: 'turns-exhausted' stays confirmed WITH work left — that is wh
   assert.match(v.detail, /1 item\(s\) still runnable/);
 });
 
+test("verifyEnd: runnable means runnable for THIS run — another milestone's items do not contradict goal-met or frontier-empty; this milestone's items and other milestones' follow-ups do", () => {
+  const f13 = runFile({ milestone: "F13" });
+  const other = [mk("F14.1", "todo"), mk("F15.2", "todo"), mk("F13.9", "todo", [], { followupOf: "F13" })];
+  for (const reason of ["goal-met", "frontier-empty"]) {
+    assert.equal(verifyEnd(runFile({ milestone: "F13", reason }), { frontier: other, items: [] }).verdict, "confirmed", `${reason}: F14/F15 items and F13's own follow-ups are out of scope`);
+    assert.equal(verifyEnd(runFile({ milestone: "F13", reason }), { frontier: [...other, mk("F13.4", "todo")], items: [] }).verdict, "contradicted", `${reason}: an F13 item`);
+    assert.equal(verifyEnd(runFile({ milestone: "F13", reason }), { frontier: [...other, mk("FP.2", "todo", [], { followupOf: "F12" })], items: [] }).verdict, "contradicted", `${reason}: an earlier milestone's follow-up is this run's debt`);
+  }
+  assert.equal(verifyEnd({ ...f13, milestone: null, reason: "goal-met", ended: f13.ended }, { frontier: other, items: [] }).verdict, "contradicted", "no milestone on the run file: the whole frontier counts, as before");
+  assert.equal(verifyEnd(runFile({ milestone: "DS", reason: "goal-met" }), { frontier: [mk("DS.2.1", "todo")], items: [] }).verdict, "confirmed", "DS.2.1 belongs to DS.2, not DS");
+});
+
 test("verifyEnd: 'goal-met' with runnable work left is contradicted; an unknown reason is unverifiable, not confirmed", () => {
   assert.equal(verifyEnd(runFile({ reason: "goal-met" }), { frontier: [], items: [] }).verdict, "confirmed");
   assert.equal(verifyEnd(runFile({ reason: "goal-met" }), { frontier: [mk("F2.1", "todo")], items: [] }).verdict, "contradicted");

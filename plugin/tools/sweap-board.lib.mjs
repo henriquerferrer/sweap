@@ -218,10 +218,18 @@ export function resumePlan(items, needs = [], { whyNotAgent = {}, lintWhyNotAgen
 // the run ended well, check that the condition it names actually holds. The
 // three outcomes are deliberate — a claim that CONTRADICTS the backlog is worse
 // than no claim at all, because it reads authoritative.
-export function verifyEnd(runFile, { frontier = [], items = [] } = {}) {
+export function verifyEnd(runFile, { frontier: whole = [], items = [] } = {}) {
   if (!runFile || !runFile.ended) return null;
   const byId = new Map(items.map((i) => [i.id, i]));
   const open = (id) => byId.has(id) && byId.get(id).status !== "done";
+  // "Runnable" means runnable FOR THIS RUN. The frontier is backlog-wide, and a
+  // milestone run's goal names one milestone plus the debt of the others (the
+  // sweap:run workflow's {milestone} scope, 0.33.0): an F14 item runnable at
+  // the end of an F13 run does not contradict "the goal is met" — an F13 item
+  // or an F12 follow-up does. A follow-up OF the run's milestone is the next
+  // run's debt and is out of scope by the goal's own stop clause.
+  const inScope = (i) => !runFile.milestone ? true : (i.followupOf ? i.followupOf !== runFile.milestone : milestoneOf(i.id) === runFile.milestone);
+  const frontier = whole.filter(inScope);
   const runnable = frontier.length;
   const reason = runFile.reason || "(none given)";
   const disagree = (detail) => ({ reason, verdict: "contradicted", detail, runnable });
