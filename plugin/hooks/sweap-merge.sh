@@ -965,7 +965,10 @@ sm_run_gate() {   # returns 0 on allow; on deny/absent/timeout/unparseable sets 
   tmp="$(mktemp 2>/dev/null)" || { GATE_REASON="mktemp failed"; return 1; }
   printf '%s\n' "$payload" >"$tmp"
   SM_STDIN_FILE="$tmp"
-  sm_run_hook 25 "$SM_PRIMARY" "$gate"
+  # 60 s: the gate's own total budget is 50 s (pre-merge-gate.sh, GATE_TOTAL_BUDGET),
+  # and this must be the outer bound — a gate killed by the driver would be a
+  # closed gate anyway (rc != 0 below), never an open one.
+  sm_run_hook 60 "$SM_PRIMARY" "$gate"
   SM_STDIN_FILE=""
   rm -f "$tmp"
   if [ "$BR_RC" != "0" ]; then GATE_REASON="gate did not complete (rc=$BR_RC, fail closed)"; return 1; fi

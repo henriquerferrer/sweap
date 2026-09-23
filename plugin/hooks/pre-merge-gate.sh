@@ -765,7 +765,10 @@ verify_pr() {
     [ "$remaining" -lt 1 ] && remaining=1
     bounded_run "$remaining" bash "$(dirname "${BASH_SOURCE[0]}")/audit-gate.sh" --files "${fpaths[@]}"
     if [ "$BR_RC" != "0" ]; then
-      emit_deny "merge-gate: audit gate refused PR #$pr: ${BR_OUT:-audit-gate timed out or errored — fails CLOSED; re-run the merge} (see plugin/hooks/audit-gate.sh; run 'audit-gate.sh --check' for the full debt state)"
+      # An empty BR_OUT with a non-zero rc is the watchdog, not a FAIL line: say
+      # how much of the budget the audit step was given, because "timed out" with
+      # the number hidden sent a session hunting for audit debt that did not exist.
+      emit_deny "merge-gate: audit gate refused PR #$pr: ${BR_OUT:-audit-gate timed out or errored after the gh calls left it ${remaining}s of the ${budget}s per-PR budget (rc=$BR_RC) — fails CLOSED; re-run the merge, and if the Mac is loaded by CI wait for it or raise MERGE_GATE_GH_TIMEOUT} (see plugin/hooks/audit-gate.sh; run 'audit-gate.sh --check' for the full debt state)"
       return 1
     fi
   fi
@@ -774,12 +777,25 @@ verify_pr() {
 }
 
 # Verify EVERY batched PR; deny on the first that is not green. A GLOBAL wall-clock
-# budget bounds the whole batch well under the harness hook timeout (25 s in
-# settings.json) so a slow-gh batch can never run long enough to be killed and
-# fail open — if the budget runs out mid-batch we deny (recoverable): merge one PR
-# per call. Each PR gets min(per-PR cap, remaining budget).
-GATE_TOTAL_BUDGET="${MERGE_GATE_TOTAL_BUDGET:-18}"
-GATE_PER_PR_CAP="${MERGE_GATE_GH_TIMEOUT:-10}"
+# budget bounds the whole batch well under the harness hook timeout (60 s in
+# hooks.json, and the same 60 s where sweap-merge runs this gate itself) so a
+# slow-gh batch can never run long enough to be killed and fail open — if the
+# budget runs out mid-batch we deny (recoverable): merge one PR per call. Each
+# PR gets min(per-PR cap, remaining budget).
+#
+# Why 50/40 and not the 18/10 they were until 0.31.1. A single PR's verification
+# is two gh calls (the rollup view, the compare) and then the local audit gate,
+# each charged against the SAME per-PR deadline in that order. Measured on
+# Consumer A 2026-09-23: 1.9 s end to end on an idle Mac — and two denials in a row
+# on PR #388 with the Mac at load 13 (the two self-hosted CI runners plus an e2e
+# run), when the gh calls took ~9 s of the 10 and the audit gate was handed the
+# 1-second remainder and killed. The audit step is deterministic and offline
+# (20 ms on that PR); the only thing a small cap buys is a false deny on a loaded
+# machine, which is the normal state of a box that also hosts its own CI. The
+# hook's fast path (any command that is not a merge or a push) never reaches
+# this, so the larger timeout costs an ordinary Bash call nothing.
+GATE_TOTAL_BUDGET="${MERGE_GATE_TOTAL_BUDGET:-50}"
+GATE_PER_PR_CAP="${MERGE_GATE_GH_TIMEOUT:-40}"
 gate_deadline=$(( $(date +%s) + GATE_TOTAL_BUDGET ))
 # shellcheck disable=SC2086  # MC_PRS is a space-separated list of bare integers
 for pr in $MC_PRS; do
