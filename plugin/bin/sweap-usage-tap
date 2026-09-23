@@ -1,0 +1,26 @@
+#!/bin/sh
+# sweap-usage-tap — bare-name entry point for tools/sweap-usage-tap.mjs: the
+# subscription-meter recorder (`install` prints the statusLine setting;
+# `report` prints the readings). Same resolution mechanism as bin/sweap-merge
+# (read its header). Note the status line itself does NOT run with the plugin's
+# bin/ on PATH — that PATH is the Bash tool's — which is why `install` copies
+# the script to a stable path under ~/.claude and the setting names that copy.
+set -u
+
+self=$0
+case $self in
+  */*) ;;
+  *) self=$(command -v -- "$self") || exit 127 ;;
+esac
+n=0
+while [ -L "$self" ] && [ "$n" -lt 40 ]; do
+  link=$(readlink "$self") || break
+  case $link in
+    /*) self=$link ;;
+    *) self=$(dirname "$self")/$link ;;
+  esac
+  n=$((n + 1))
+done
+root=$(CDPATH='' cd -P -- "$(dirname "$self")/.." && pwd -P) || exit 1
+
+exec node "$root/tools/sweap-usage-tap.mjs" "$@"

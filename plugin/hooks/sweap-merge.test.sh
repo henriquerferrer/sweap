@@ -557,6 +557,20 @@ newcase s-action-required
 write_runs "$(run 101 "$CI" completed action_required)" "$(run 102 "$AG" completed success)" "$(run 103 "$CR" completed success)"
 drive tick "$PR"; expect "§6 completed/action_required (0 check runs) => attended" attended "needs approval"
 
+# A run GitHub reports as `pending` or `requested` is queued — behind a
+# `concurrency:` group or a saturated self-hosted fleet — not awaiting a human.
+# On consumer A every `attended` the driver ever emitted (10 of 145 state files, PRs
+# #236 … #385) was this shape, and every one of those PRs then merged untouched;
+# a genuine approval hold reports `waiting` or `action_required`. `attended` is
+# terminal, so mislabelling the fleet's most common state halted unattended
+# lanes on it (consumer A roadmap/discovered/…-750948.md, lane lessons 10 and 17).
+newcase s-pending-status
+write_runs "$(run 101 "$CI" pending null)" "$(run 102 "$AG" completed success)" "$(run 103 "$CR" completed success)"
+drive tick "$PR"; expect "§6 status pending (queued behind concurrency/fleet) => pending, never attended" pending pending
+newcase s-requested-status
+write_runs "$(run 101 "$CI" requested null)" "$(run 102 "$AG" completed success)" "$(run 103 "$CR" completed success)"
+drive tick "$PR"; expect "§6 status requested => pending, never attended" pending requested
+
 newcase s-green
 drive tick "$PR"; expect "§6 all success + behind 0 => green -> merged" merged
 check "§6 merged exits 0" [ "$RC" = 0 ]

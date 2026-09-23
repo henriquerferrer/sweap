@@ -858,8 +858,9 @@ def prfilter:
   | select((((.pull_requests // []) | length) == 0) or any((.pull_requests // [])[]; (.number|tostring) == $pr));
 def classify:
   if .status == "completed" and .conclusion == "success" then {s:"green", r:"success"}
-  elif .status == "queued" or .status == "in_progress" then {s:"pending", r:"\(.status)"}
-  elif .status == "waiting" or .status == "action_required" or .status == "requested" or .status == "pending"
+  elif .status == "queued" or .status == "in_progress" or .status == "pending" or .status == "requested"
+       then {s:"pending", r:"\(.status)"}
+  elif .status == "waiting" or .status == "action_required"
        or (.status == "completed" and .conclusion == "action_required") then {s:"attended", r:"needs approval"}
   elif .conclusion == "startup_failure" then {s:"failed", r:"startup_failure"}
   elif .status == "completed" and (.conclusion == "failure" or .conclusion == "cancelled" or .conclusion == "timed_out"

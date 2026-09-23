@@ -9,7 +9,7 @@ import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildState, readConfig, writeIdea } from "./sweap-board.lib.mjs";
+import { buildState, readConfig, writeIdea, loadItems, deriveBacklog } from "./sweap-board.lib.mjs";
 import { renderPage } from "./sweap-board.page.mjs";
 
 const run = (cmd, cwd, opts = {}) => (args) => new Promise((resolve) => {
@@ -137,8 +137,36 @@ function openBrowser(url) {
   execFile(cmd, [url], () => {});
 }
 
+// `frontier`: the runnable todo items in drain order, as JSON on stdout — the
+// same derivation the board renders (deriveBacklog: status todo, every
+// depends_on satisfied, follow-ups first, then numeric order). It exists so
+// the `/sweap:run` workflow picks items from the item files, deterministically,
+// instead of from a model's reading of the "What to pick" rule; the workflow
+// re-runs it before every item because a merge changes what is runnable.
+// Read-only, like everything else here.
+export function frontierReport(projectDir) {
+  const cfg = readConfig(projectDir);
+  const items = loadItems(projectDir, cfg.backlogDir);
+  const { frontier } = deriveBacklog(items);
+  return {
+    backlogDir: cfg.backlogDir,
+    frontier: frontier.map((i) => ({
+      id: i.id, title: i.title, followupOf: i.followupOf, dependsOn: i.dependsOn,
+      reviewDimensions: i.reviewDimensions, lane: i.lane, file: i.file,
+      // A todo item may still carry `blocked:` — the ANSWERED question that
+      // /unblock left in place. It is runnable; a reader that treats the key as
+      // "blocked" skips the first item of a drain (consumer A FP.2, 2026-09-22).
+      answeredQuestion: i.blocked || null,
+    })),
+    malformed: items.filter((i) => i.malformed).map((i) => i.file),
+  };
+}
+
 const isMain = import.meta.url === `file://${process.argv[1]}`;
-if (isMain) {
+if (isMain && process.argv[2] === "frontier") {
+  const args = parseArgs(process.argv.slice(3));
+  process.stdout.write(JSON.stringify(frontierReport(args.projectDir), null, 2) + "\n");
+} else if (isMain) {
   const args = parseArgs(process.argv.slice(2).filter((a) => a !== "serve"));
   const srv = createServer({ projectDir: args.projectDir });
   let port;

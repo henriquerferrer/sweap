@@ -31,6 +31,8 @@ PATH, so a session (and you, in a session's terminal) can run these by name:
 | `sweap-roadmap-lint <file>` | The per-item spec gate — a failing `todo` item is not runnable |
 | `sweap-stranded` | Lists not-merged branches carrying backlog files nothing will land |
 | `sweap-note discovered …` / `sweap-note idea …` | Writes a discovered note / an idea into the capture inboxes |
+| `sweap-frontier` | The runnable `todo` items in drain order, as JSON (what `/sweap:run` picks from, recomputed before every item) |
+| `sweap-usage-tap install` / `sweap-usage-tap report` | Records the subscription meter (5-hour and 7-day `used_percentage`, timestamped) from the status line; `install` prints the `statusLine` setting to paste, `report` prints the readings |
 
 Add **`Bash(sweap-merge:*)`** to your project's `.claude/settings.json`
 `permissions.allow` (and the other three if they should run unprompted).

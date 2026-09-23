@@ -380,6 +380,21 @@ Then **print** the exact goal line, filled in, for the user to paste — do NOT
 try to set `/goal` yourself (only the user can invoke it). Pick the template by
 run shape from "Resolve the run" above.
 
+**Print the driver next to it.** The goal says when the run is done; the
+`/sweap:run` workflow is how the session drives the items (playbook, "Who
+holds the loop"). Print the invocation with `D` as its batch, in drain order:
+
+```
+/sweap:run {"ids": ["<D, in drain order>"]}
+```
+
+The session runs it, records the run when it returns, runs `/milestone-audit`
+if that completed the milestone, and relaunches it after a usage-limit reset,
+a red base branch made green, or a human answer — completed items replay from
+the journal, so a relaunch costs nothing for what already merged. A bare
+`/sweap:run` (no ids) drains the frontier in pick order instead; use it for a
+debt-only run.
+
 **Non-negotiable for any milestone run (regardless of prefix):** the goal line
 MUST carry the "…and the `<MILESTONE>` milestone-audit has run and been
 triaged" clause. A milestone is not complete until its audit has run — a run

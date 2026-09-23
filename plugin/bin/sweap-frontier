@@ -1,0 +1,28 @@
+#!/bin/sh
+# sweap-frontier — bare-name entry point for `sweap-board frontier`: the
+# runnable todo items in drain order, as JSON. Read-only. The `/sweap:run`
+# workflow's Scope agent runs it before every item. Same resolution mechanism
+# as bin/sweap-merge (read its header): the plugin root is recovered from this
+# script's own real path because ${CLAUDE_PLUGIN_ROOT} is unset in a
+# model-issued Bash call.
+#
+#   sweap-frontier [--project <dir>]     (default: the current directory)
+set -u
+
+self=$0
+case $self in
+  */*) ;;
+  *) self=$(command -v -- "$self") || exit 127 ;;
+esac
+n=0
+while [ -L "$self" ] && [ "$n" -lt 40 ]; do
+  link=$(readlink "$self") || break
+  case $link in
+    /*) self=$link ;;
+    *) self=$(dirname "$self")/$link ;;
+  esac
+  n=$((n + 1))
+done
+root=$(CDPATH='' cd -P -- "$(dirname "$self")/.." && pwd -P) || exit 1
+
+exec node "$root/tools/sweap-board.mjs" frontier "$@"

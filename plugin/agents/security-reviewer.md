@@ -16,6 +16,16 @@ narrower and deeper: this diff, this security lens, nothing else.
    tool rather than improvising your own ad hoc security pass — it encodes
    the project's baseline security-review methodology and you should not
    duplicate or diverge from it.
+   **The skill collects its diff from the primary checkout.** When the item
+   was built in a git worktree (the sweap default), the primary checkout sits
+   on a clean default branch and the skill hands its reviewer an EMPTY diff,
+   then reports no findings — observed twice in a row on consumer A (DV.47, FP.1).
+   So: `cd` into the worktree you were given and take the diff yourself with
+   `git diff <base>...HEAD` (and `git log <base>..HEAD --stat`) BEFORE invoking
+   the skill, hand that diff to the skill's methodology by hand if the skill's
+   own collection comes back empty, and never emit a verdict that does not name
+   the files the diff actually touched. A `clear` that describes no diff is not
+   a verdict; report it as "no diff collected" and stop.
 2. **On top of what that skill surfaces, give explicit, deliberate attention
    to:**
    - **Authorization bypass.** Every new or modified server entry point

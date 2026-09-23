@@ -1473,3 +1473,24 @@ test("buildMilestoneCard: a stall shows until the run records an end AFTER it", 
   const recovered = buildMilestoneCard({ items, runFile: { milestone: "F4", scope: [], needs: [], whyNotAgent: {}, deferredHandoffs: [], ended: "2026-09-12T14:00:00Z", reason: "turns-exhausted", stalled } });
   assert.equal(recovered.stalled, null);
 });
+
+// --- frontier: the /sweap:run workflow's pick list -----------------------------
+import { frontierReport } from "./sweap-board.mjs";
+
+test("frontierReport lists runnable todo items in drain order and keeps an answered question visible", () => {
+  const dir = fixture({
+    "CLAUDE.md": "## sweap config\nbacklog.dir: roadmap/\n",
+    "roadmap/F1.1.md": "---\nid: F1.1\ntitle: one\nstatus: done\n---\n",
+    "roadmap/F1.2.md": "---\nid: F1.2\ntitle: two\nstatus: todo\ndepends_on: [F1.1]\n---\n",
+    "roadmap/F1.3.md": "---\nid: F1.3\ntitle: three\nstatus: todo\ndepends_on: [F1.2]\n---\n",
+    "roadmap/F1.10.md": "---\nid: F1.10\ntitle: ten\nstatus: todo\n---\n",
+    "roadmap/FP.2.md": "---\nid: FP.2\ntitle: debt\nstatus: todo\nfollowup_of: F0\nblocked: answered — do X\n---\n",
+    "roadmap/F1.4.md": "---\nid: F1.4\ntitle: parked\nstatus: deferred\n---\n",
+  });
+  const r = frontierReport(dir);
+  assert.deepEqual(r.frontier.map((i) => i.id), ["FP.2", "F1.2", "F1.10"], "follow-ups first, then numeric (F1.2 before F1.10); F1.3 waits on F1.2; deferred and done are absent");
+  assert.equal(r.frontier[0].answeredQuestion, "answered — do X");
+  assert.equal(r.frontier[1].answeredQuestion, null);
+  assert.deepEqual(r.malformed, []);
+  rmSync(dir, { recursive: true, force: true });
+});

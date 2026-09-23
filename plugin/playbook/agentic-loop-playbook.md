@@ -86,6 +86,21 @@ on an item before dispatching it; a failing item is not runnable.
    pass; `migration`: see "Review dimensions". All before the PR merges.
 5. **Merge** with `sweap-merge watch <n>` (below), verify, clean up, next item.
 
+**Who holds the loop.** A run session drives items with the `/sweap:run`
+workflow (pass `{ids: [...]}` for a batch in a given order, `{max_items: n}`
+to bound it, or nothing to drain the frontier in pick order). The workflow
+holds the loop in a script: before every item it recomputes the frontier
+(`sweap-frontier`), dispatches ONE fresh implementer that exits when its PR is
+open, hands the CI wait to the small `merge-watcher` agent, and dispatches a
+fresh fixer per red with every earlier round in hand. Nothing waits on CI
+while holding implementation context. Never hold the loop in a long-lived
+agent instead: the consumer A F13 run's hand-written "lane runner" agents grew to
+806k of context waiting in 600-second Bash calls, and their expired caches were
+half the run's cost. When the workflow returns, the session records the run
+(below), runs `/milestone-audit` if a milestone completed, and relaunches the
+workflow after a usage-limit reset or a red base branch is fixed — completed
+items replay from the journal.
+
 **Discovered work.** Anything you notice that is not the item: file it and go
 back. `sweap-note discovered "<title>" gap|direction "<item id or PR #n>"
 "<what is wrong, and what done looks like>" "$(git branch --show-current)"`.
@@ -98,7 +113,15 @@ A status flip travels only in its own item's PR; the index changes only at
 ### Merge and wait
 
 Run `sweap-merge watch <n>` with Bash `run_in_background: true`. It ends the turn
-while it waits; its ONE terminal word is the result:
+while it waits; its ONE terminal word is the result. Inside an agent — the
+`merge-watcher`, or any agent a session delegates to — there is no turn to end:
+run `sweap-merge tick <n> --budget 540` in the FOREGROUND with the Bash
+timeout at `600000`, one bounded call at a time, until its closing word is
+terminal (a `pending`/`green`/`merging` closing word just means call it
+again). `tick` always prints its closing line; a foreground `watch` re-ticks
+until terminal and can outlive the Bash timeout with nothing printed. A run GitHub reports as `pending` or `requested` — queued behind a
+`concurrency:` group or a busy self-hosted fleet — is `pending`, never
+`attended` (0.31.0; before that every `attended` consumer A ever saw was this):
 
 | word | what you do |
 |---|---|
@@ -153,11 +176,28 @@ skills, and who opens the PR. Add below it; never delete a line of it.
 - Stop at ambiguity: report the question; do not guess.
 - Report: what changed, RED/GREEN, what you verified and what you did not, notes
   filed, anything you are unsure of.
+- Premises: grep every file the item names and COUNT every number it states
+  before building on it (every item in one consumer A run had a stale one). Build
+  what the item is FOR and record the discrepancy under its `## Notes`.
+- Run the unit tests your change touches BY NAME: a project's e2e command may
+  not run them (consumer A's does not), so "e2e green" is not "tests green".
+- Before committing, scan your added lines for `every|all|only|never|both|<a
+  number>` and cut each claim you cannot check — the one defect class behind
+  nine of ten blocking review findings.
+- Reviewers run one at a time against a worktree, never two in parallel: they
+  mutate the tree to verify findings and revert each other. Two review rounds,
+  then cut claims rather than open a third.
+- Commit in one call; push in its own call, plainly (`git push -u origin
+  <branch>`), nothing else in it — the push gate denies a compound command and
+  the denial eats the commit too.
+- Before escalating a symptom, grep the backlog's `discovered/` inbox: a note on
+  it may already refute your diagnosis.
 <!-- worker-brief:end -->
 
-If you delegate a RANGE of items to one agent, it drives each item exactly as
-above and reads this Run core itself. Never run gates in a worktree whose
-implementer is still working.
+A range of items is driven by `/sweap:run` ("Who holds the loop", above), never
+by one long-lived agent given the list. Never run gates in a worktree whose
+implementer is still working: two test runs in one worktree share a database
+and one's teardown drops the other's mid-flight.
 
 ### Ending the run
 
@@ -1612,6 +1652,7 @@ in-flight branch at width 1 too, and a Free-plan repo never reports BEHIND.
 | `/handoff <id>` | Walks one `[attended]` hand-off with the human, then flips it to done through a gated PR on their explicit confirmation | User runs; interactive only |
 | `sweap-merge watch <n>` (`sweap-merge status`) | Background merge driver for one PR: waits on the base branch's expected checks pinned to the head, runs the merge gate, merges, runs the post-merge hooks; exits with one terminal word. Run via Bash `run_in_background: true`; Monitor optional. A bare command because the plugin's `bin/` is on the Bash tool's PATH — `$CLAUDE_PLUGIN_ROOT` is unset in a model-issued Bash call. Allowlist `Bash(sweap-merge:*)` | Claude (the session that owns the PR) |
 | `/unblock <id>` | Walks one `[blocked]` question with the human — prepares the fork, never answers it — then closes it through a gated PR (`todo` + authored spec, or `done`) | User runs; interactive only |
+| `/sweap:run` (workflow) | The per-item loop held in a script: frontier before every item (`sweap-frontier`), one fresh implementer per item, the `merge-watcher` agent for the CI wait, a fresh fixer per red; strictly serial. Pauses at a 5-hour limit (twice per run, interactive subscription session only), stops at a weekly wall, a dead agent or a red base; a relaunch replays completed items | The run session (a human launches or relaunches) |
 
 ## Model policy
 
