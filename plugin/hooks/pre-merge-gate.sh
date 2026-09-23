@@ -790,10 +790,20 @@ verify_pr() {
 # on PR #388 with the Mac at load 13 (the two self-hosted CI runners plus an e2e
 # run), when the gh calls took ~9 s of the 10 and the audit gate was handed the
 # 1-second remainder and killed. The audit step is deterministic and offline
-# (20 ms on that PR); the only thing a small cap buys is a false deny on a loaded
-# machine, which is the normal state of a box that also hosts its own CI. The
-# hook's fast path (any command that is not a merge or a push) never reaches
-# this, so the larger timeout costs an ordinary Bash call nothing.
+# but NOT small for a PR that touches item files: 7.4 s idle on consumer A
+# (2026-09-23, 264 done items, five audit records), the same as a full
+# --check, because merge mode validates every record on the primary checkout
+# — on that repo 91 roadmap-lint runs over the follow-ups the records declare
+# plus a path-limited pickaxe and a merge-base per done item they cover (~51
+# each). It grows with every audited milestone's follow-ups, not with history
+# depth (one pickaxe is ~30 ms). A code-only PR exits in 4 ms. So the cap must
+# hold ~3x the idle figure plus two loaded gh calls; the only thing a small
+# cap buys is a false deny on a loaded machine, which is the normal state of
+# a box that also hosts its own CI. The hook's fast path (any command that is
+# not a merge or a push) never reaches this, so the larger timeout costs an
+# ordinary Bash call nothing. When the idle figure nears half the cap, the
+# structural fix is in roadmap/ideas (merge mode re-validating state CI's
+# --check already validated on main), not a bigger number.
 GATE_TOTAL_BUDGET="${MERGE_GATE_TOTAL_BUDGET:-50}"
 GATE_PER_PR_CAP="${MERGE_GATE_GH_TIMEOUT:-40}"
 gate_deadline=$(( $(date +%s) + GATE_TOTAL_BUDGET ))
