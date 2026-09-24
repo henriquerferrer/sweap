@@ -393,7 +393,10 @@ run shape from "Resolve the run" above. **Print it as ONE line**, however the
 template is wrapped here: a multi-line paste reaches the session as pasted
 text, not as a command (consumer A, 2026-09-23: the session read the pasted goal
 as prose and no goal was ever set), and a single line pasted after `/goal `
-is the command. Print nothing else to paste.
+is the command. Print nothing else to paste. The goal is read by a session
+that has read nothing else — it may start after `/clear` — so the goal refers
+to nothing "below" or "above": the end-of-run record is named by its playbook
+section (consumer A 2026-09-24: a fresh session asked for the missing section).
 
 **The goal names the driver, so one paste is the whole kickoff.** The goal's
 text is the first turn's directive — whether the built-in `/goal` engages or
@@ -452,7 +455,7 @@ drained AND every <MILESTONE> item is [done], run /milestone-audit <MILESTONE>
 and triage; drained with items left open is a stop, not a completion. When it
 returns stopped, clear the cause if you can (a red default branch: rerun its
 failed job once) and relaunch it fresh with the same args. When you stop,
-record it (see "Record the end of the run" below).
+record it as the playbook's "Ending the run" section says (docs/agentic-loop-playbook.md).
 ```
 
 That stop condition names the follow-ups deliberately. A correct audit ends by CREATING work: bucket-2 triage writes
@@ -485,7 +488,7 @@ Workflow({name: "sweap:run", args: {"ids": [<D, in drain order>], "milestone":
 its result, never poll it.
 When it returns stopped, clear the cause if you can (a red default branch:
 rerun its failed job once) and relaunch it fresh with the same args. When you
-stop, record it (see "Record the end of the run" below).
+stop, record it as the playbook's "Ending the run" section says (docs/agentic-loop-playbook.md).
 ```
 
 **Debt-only** (no runnable `M`, but `D` is non-empty):
