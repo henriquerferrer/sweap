@@ -1130,6 +1130,16 @@ sm_tick() {
     superseded)
       sm_disarm   # re-arm on the new head with fresh deadlines
       ;;
+    timed_out)
+      # A stored timed_out is re-armed by the next DELIBERATE tick: `watch`
+      # stops on it (terminal), so this happens only when someone starts a new
+      # watch — a relaunched run, a hand `sweap-merge watch <n>` after the
+      # runner fleet came back. Without this the state kept its old clocks and
+      # every later watch reported the same passed deadline within seconds
+      # (consumer A #407/#408, 2026-09-24 20:39Z). Bounded by the caller: each new
+      # watch gets exactly one fresh window.
+      sm_disarm
+      ;;
   esac
   if [ "$SM_STATE" = "merged" ]; then
     sm_after_merged
@@ -1290,7 +1300,12 @@ sm_tick() {
     arm_at="$(printf '%s' "$SM_STATE_JSON" | "$SM_JQ" -r '.arm_at // 0')"
     run_started=""
     [ -n "$EV_NEWEST_STARTED" ] && run_started="$(sm_iso_epoch "$EV_NEWEST_STARTED")" || run_started=""
-    if [ -n "$run_started" ]; then complete=$((run_started + window)); else complete=$((arm_at + window)); fi
+    # The window is anchored on the LATER of the newest run's start and the arm
+    # time. A run's run_started_at is its creation time and never moves — jobs
+    # that queued for hours behind a dead runner fleet (consumer A #407, 2026-09-24:
+    # created 15:41Z, picked up 20:35Z) carry a deadline that passed before any
+    # job ran, and a watch armed after the fact was dead on its first tick.
+    if [ -n "$run_started" ] && [ "$run_started" -gt "$arm_at" ]; then complete=$((run_started + window)); else complete=$((arm_at + window)); fi
     sm_set '.observed = $o | .complete_deadline = ($c|tonumber)' --argjson o "$EV_OBSERVED" --arg c "$complete"
     if [ "$EV_STATE" = "pending" ] && [ "$(sm_now)" -ge "$complete" ]; then
       EV_STATE="timed_out"; EV_REASON="complete_deadline $complete passed: $EV_REASON"

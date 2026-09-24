@@ -33,7 +33,7 @@ last line. Then:
 
 | last word | what you do |
 |---|---|
-| `pending` / `green` / `merging` / `missing` (the budget ran out mid-wait) | run the same command again |
+| `pending` / `green` / `merging` / `missing` (the budget ran out mid-wait) | run the same command again. On the SECOND consecutive `pending` line, whatever its reason (`queued`, `in_progress`, …: the reason is the RUN's status, and a run whose `checks` job ran while its `e2e` job waits for a dead runner says `in_progress` for the whole wait), first run `sweap-fleet --branch <the PR's head branch, the one in your dispatch>` (JSON; read `.verdict`; it exits 1 on `fleet-down` — that is the verdict, not a missing command). `fleet-down`: `sleep 60` inside the call and run it once more; still `fleet-down`: return `timed_out` with `class: fleet-down` and its `.reason` — nobody is there to run the jobs (consumer A 2026-09-24: the runners had deregistered themselves; the watchers saw `total_count: 0` and kept ticking for an hour), and the run stops instead of opening the next PR. `ok` or `unknown`: keep ticking |
 | (no output — the harness timed the call out) | run the same command again; if it happens twice in a row, return `timed_out` with what `sweap-merge status <n>` says |
 | `merged` | go to "After merged" |
 | `superseded` | the head moved (someone pushed) — run the command again |
@@ -41,7 +41,7 @@ last line. Then:
 | `attended` | GitHub reported `waiting` or `action_required` (a queued run is reported `pending` since sweap 0.31.0, so this is rarer than it was — but verify before you believe it). Check: `gh run list --branch <branch> --json status,conclusion,name --limit 10` and `gh api repos/{owner}/{repo}/actions/runners --jq '.runners[] | {name,status,busy}'`. If the newest run is `queued`/`pending`/`in_progress` or every runner is `online` and `busy`, it is queueing: wait 120 s (`sleep 120` inside the call) and tick again. Only when a run reports `waiting`/`action_required` and nothing is queued is it a real hold — return `attended` |
 | `held-by:<owner>` | another watcher holds the lease. `sleep 150`, then tick ONCE more. If it is still held, return `held-by` with the owner |
 | `failed` | go to "On failed" |
-| `timed_out` / `undecidable` | return the word and the driver's reason verbatim |
+| `timed_out` / `undecidable` | return the word and the driver's reason verbatim. For every `timed_out`, run the fleet check above once before returning and set `class: fleet-down` when it says so |
 
 Never make more than 40 tick calls in one dispatch (about six hours): return
 `timed_out` with what you saw instead. Never hand-roll the wait with your own `gh` polling
@@ -97,7 +97,7 @@ Return ONLY this shape (the workflow parses it):
 
 ```
 word: <merged|failed|behind|attended|held-by|timed_out|undecidable>
-class: <gate|starved|base-red|red|->        # only with failed
+class: <gate|starved|base-red|red|fleet-down|->   # with failed; fleet-down goes with timed_out
 reason: <the driver's terminal reason, verbatim>
 pr: <n>
 head: <sha the driver reported, if any>

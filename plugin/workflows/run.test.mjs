@@ -79,7 +79,16 @@ test("merge-watcher.md: 1h cache, no write tools, foreground bounded tick, atten
   assert.match(WATCHER, /never `gh pr merge` by hand/);
 });
 
-test("attended and held-by never stop the run; only a dead agent or a red base does", () => {
+test("attended and held-by never stop the run; a dead agent, a red base or a dead fleet does", () => {
+  assert.match(SRC, /class: \{ enum: \['gate', 'starved', 'base-red', 'red', 'fleet-down', '-'\] \}/, "structured output rejects a class outside the enum: the watcher's fleet-down would never reach the script");
+  const branch = SRC.match(/watch\.class === 'fleet-down'\) \{([\s\S]*?)break\n/);
+  assert.ok(branch, "a timed_out/fleet-down watch stops the run");
+  assert.match(branch[1], /stopped = /);
+  assert.ok(!/needsHuman\.push/.test(branch[1]), "the PR is not the human's: it resumes on relaunch; listing it would make the record say awaiting-human for a runner outage");
+  const gate = SRC.match(/if \(resume\.fleet === 'fleet-down'\) \{([\s\S]*?)\n\}/);
+  assert.ok(gate && /return \{/.test(gate[1]), "the Resume stage stops the run before any implementer when sweap-fleet says fleet-down");
+  assert.ok(SRC.indexOf("resume.fleet === 'fleet-down'") < SRC.indexOf("while (count < MAX_ITEMS)"));
+  assert.match(SRC, /sweap-merge tick \$\{impl\.pr\} --budget 540/, "the dispatch names the PR number: two watchers read the brief's <n> placeholder literally and ticked PR #1 (consumer A 2026-09-24)");
   // The run-stopping assignments name their causes.
   const stops = [...SRC.matchAll(/stopped = [^\n]+/g)].map((m) => m[0]);
   for (const s of stops) assert.ok(!/attended|held-by/.test(s), `a stop on ${s}`);
@@ -187,4 +196,40 @@ test("args: an object, a JSON string (parsed), a comma list, or nothing; a JSON-
   assert.equal(parseArgs('{"ids": [').bad_args, '{"ids": [');
   assert.match(SRC, /if \(ARGS\.bad_args\) return \{[^\n]*stopped: `args was a string that is not valid JSON/);
   assert.match(SRC, /const MILESTONE = typeof ARGS\.milestone === 'string'/);
+});
+
+// The open-PR skip is pure and lives in the script.
+const prHelpers = () => {
+  const one = (re) => { const m = SRC.match(re); assert.ok(m, `helper not found: ${re}`); return m[0]; };
+  const src = one(/const branchTail = [^\n]*\n/) + one(/const branchIsFor = [\s\S]*?\n\}\n/) + one(/const carriesAnId = [^\n]*\n/) + one(/const pick = [\s\S]*?\n\}\n/) + one(/const openPrFor = [\s\S]*?\n\}\n/);
+  return new Function(`${src}; return { branchIsFor, openPrFor }`)();
+};
+
+test("branchIsFor: the brief's branch shape, anchored at the start, dot-depth safe", () => {
+  const { branchIsFor } = prHelpers();
+  assert.equal(branchIsFor("feat/f13-4-unrestricted-hours", "F13.4"), true);
+  assert.equal(branchIsFor("chore/f13-6-wait-on-f13-20", "F13.6"), true);
+  assert.equal(branchIsFor("chore/f13-6-wait-on-f13-20", "F13.20"), false, "a later mention of another id does not claim the branch");
+  assert.equal(branchIsFor("fix/ds-5-3-x", "DS.5.3"), true);
+  assert.equal(branchIsFor("fix/ds-5-3-x", "DS.5"), false, "DS.5's prefix is a prefix of DS.5.3's branch");
+  assert.equal(branchIsFor("fix/fp-26-refusal-session-epoch", "FP.26"), true);
+  assert.equal(branchIsFor("main", "F13.4"), false);
+  assert.equal(branchIsFor("feat/F13-4-Hours", "F13.4"), true, "case-insensitive");
+  assert.equal(branchIsFor("feat/f13-4", "F13.4"), true, "no slug");
+});
+
+test("openPrFor: an open PR for the item (by the Resume mapping or by branch) sends the item straight to the watcher, with its worktree", () => {
+  const { openPrFor } = prHelpers();
+  const resume = { open_prs: [{ number: 407, branch: "feat/f13-4-unrestricted-hours", item: "" }, { number: 408, branch: "feat/f13-5-service-duration", item: "F13.5" }], worktrees: [{ path: "/wt/f13-4", branch: "feat/f13-4-unrestricted-hours", item: "" }] };
+  assert.deepEqual(openPrFor(resume, "F13.4"), { number: 407, branch: "feat/f13-4-unrestricted-hours", worktree: "/wt/f13-4" });
+  assert.deepEqual(openPrFor(resume, "F13.5"), { number: 408, branch: "feat/f13-5-service-duration", worktree: "" });
+  assert.equal(openPrFor(resume, "F13.6"), null);
+  const mis = { open_prs: [{ number: 420, branch: "chore/f13-20-rekey", item: "F13.2" }], worktrees: [] };
+  assert.equal(openPrFor(mis, "F13.2"), null, "a mis-mapped item field does not steer the watcher to another item's PR: the branch names F13.20");
+  assert.equal(openPrFor(mis, "F13.20").number, 420);
+  assert.equal(openPrFor({ open_prs: [{ number: 7, branch: "hotfix/typo", item: "F13.2" }] }, "F13.2").number, 7, "a branch outside the shape falls back to the mapping");
+  assert.equal(openPrFor({}, "F13.6"), null);
+  assert.match(SRC, /const already = openPrFor\(resume, item\.id\)/);
+  assert.match(SRC, /impl\.resumed && watch\.status_done === 'no'/, "a resumed PR that merged without the item reading done is a person's to read, never recorded as merged");
+  assert.match(SRC, /const wtOf = \(impl\) => impl\.worktree \|\|/, "a resumed PR with no known worktree tells the watcher and the fixer to add one, never to use the primary checkout");
 });

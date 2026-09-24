@@ -544,10 +544,25 @@ check "§6 future commit: appear_deadline = committedDate + 300" [ "$(state .app
 newcase s-pending
 write_runs "$(run 101 "$CI" in_progress null)" "$(run 102 "$AG" queued null)" "$(run 103 "$CR" completed success)"
 drive tick "$PR"; expect "§6 queued/in_progress before complete_deadline => pending" pending queued
-check "§6 complete_deadline = run_started_at + 2×60min (consumer A ci timeout, snapshot)" [ "$(state .complete_deadline)" = "$((RUN_STARTED_EPOCH + 7200))" ]
+check "§6 complete_deadline = arm time + 2×60min (the later of run_started_at and arm_at; consumer A ci timeout, snapshot)" [ "$(state .complete_deadline)" = "$((NOW + 7200))" ]
 check "§6 expected_timeout_min persisted" [ "$(state .expected_timeout_min)" = 60 ]
 check "§6 observed records run_id/attempt/status" [ "$(state ".observed[\"$CI\"].run_id")" = 101 ]
-TNOW=$((RUN_STARTED_EPOCH + 7201)) drive tick "$PR"; expect "§6 in_progress after complete_deadline => timed_out" timed_out complete_deadline
+TNOW=$((NOW + 7201)) drive tick "$PR"; expect "§6 in_progress after complete_deadline => timed_out" timed_out complete_deadline
+# A stored timed_out is re-armed by the next deliberate tick with a FRESH window
+# anchored on the new arm time (consumer A #407/#408, 2026-09-24: every hand watch
+# after the runner fleet came back died on the old deadline within seconds).
+TNOW=$((NOW + 7300)) drive tick "$PR"; expect "§6 tick after timed_out re-arms => pending again" pending queued
+check "§6 re-arm: arm_at is the new tick's time" [ "$(state .arm_at)" = "$((NOW + 7300))" ]
+check "§6 re-arm: complete_deadline = new arm_at + window (run_started is older)" [ "$(state .complete_deadline)" = "$((NOW + 7300 + 7200))" ]
+TNOW=$((NOW + 7300 + 7201)) drive tick "$PR"; expect "§6 the fresh window is finite: times out again" timed_out complete_deadline
+newcase s-pending-armed-early
+write_runs "$(run 101 "$CI" in_progress null)" "$(run 102 "$AG" queued null)" "$(run 103 "$CR" completed success)"
+TNOW=$((RUN_STARTED_EPOCH - 100)) drive tick "$PR"; expect "§6 a watch armed before the run started still anchors on the run start" pending queued
+check "§6 early arm: complete_deadline = run_started_at + window (the later of the two)" [ "$(state .complete_deadline)" = "$((RUN_STARTED_EPOCH + 7200))" ]
+newcase s-pending-armed-late
+write_runs "$(run 101 "$CI" in_progress null)" "$(run 102 "$AG" queued null)" "$(run 103 "$CR" completed success)"
+TNOW=$((RUN_STARTED_EPOCH + 5000)) drive tick "$PR"; expect "§6 a watch armed long after the run was created is not born dead" pending queued
+check "§6 late arm: complete_deadline anchored on arm_at, the later of the two" [ "$(state .complete_deadline)" = "$((RUN_STARTED_EPOCH + 5000 + 7200))" ]
 
 newcase s-waiting
 write_runs "$(run 101 "$CI" waiting null)" "$(run 102 "$AG" completed success)" "$(run 103 "$CR" completed success)"

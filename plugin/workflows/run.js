@@ -1,7 +1,7 @@
 export const meta = {
   name: 'run',
   description: 'Drive runnable backlog items to the default branch one at a time: a fresh implementer per item, a small watcher for the merge wait, a fresh fixer per red',
-  whenToUse: 'The run session invokes it instead of driving the per-item loop itself. Pass {ids: [...]} to drain a batch in a given order, {milestone: "F13"} to go on to that milestone\'s items (and any other milestone\'s follow-ups) once the batch is drained, {max_items: n} to bound the run, or nothing to drain the whole frontier in the playbook\'s pick order (follow-ups first, then numeric). It stops at a usage limit, an API death, a red base branch, or when nothing it may pick is runnable, and returns what merged, what needs a human, and where it stopped. The session then runs /milestone-audit when a milestone completed and records .claude/sweap-run.md.',
+  whenToUse: 'The run session invokes it instead of driving the per-item loop itself. Pass {ids: [...]} to drain a batch in a given order, {milestone: "F13"} to go on to that milestone\'s items (and any other milestone\'s follow-ups) once the batch is drained, {max_items: n} to bound the run, or nothing to drain the whole frontier in the playbook\'s pick order (follow-ups first, then numeric). It stops at a usage limit, an API death, a red base branch, a self-hosted runner fleet with nobody online (sweap-fleet), or when nothing it may pick is runnable, and returns what merged, what needs a human, and where it stopped. The session then runs /milestone-audit when a milestone completed and records .claude/sweap-run.md.',
   phases: [
     { title: 'Resume', detail: 'what an interrupted run left behind: worktrees, open PRs, armed watches, plans with unchecked steps' },
     { title: 'Scope', detail: 'sweap-frontier before every item — a merge changes what is runnable' },
@@ -82,6 +82,36 @@ const pickOrder = (frontier, ids, milestone) => {
   return batch.concat(rest)
 }
 
+// An open PR for the item means the implementer already finished: the run was
+// stopped (a usage wall, a dead fleet) between the PR opening and its merge.
+// The item is still `todo` on the base (its flip rides in the PR), so the
+// frontier lists it again; re-running an implementer against it would re-review
+// the diff and fail `gh pr create` (the PR exists). Go straight to the watcher.
+// The item is matched by the Resume agent's mapping OR by the branch name the
+// implementer brief prescribes (`<type>/<id lower-cased, dot to dash>-<slug>`),
+// anchored at the start so `chore/f13-6-wait-on-f13-20` is F13.6 and `ds-5-3-x`
+// is DS.5.3, not DS.5.
+const branchTail = (branch) => String(branch || '').toLowerCase().split('/').slice(1).join('/')
+const branchIsFor = (branch, id) => {
+  const tail = branchTail(branch)
+  const base = String(id).toLowerCase().replace(/\./g, '-')
+  return tail === base || (tail.startsWith(base + '-') && !/^\d/.test(tail.slice(base.length + 1)))
+}
+// A branch in the brief's shape names SOME item; when it is not this one, the
+// Resume agent's `item` mapping for it is not trusted (a mis-mapped PR would
+// send the watcher to another item's PR and record this item as merged).
+const carriesAnId = (branch) => /^[a-z]+\d*(-\d+)+(-|$)/.test(branchTail(branch))
+const pick = (list, id) => {
+  const all = (list || []).filter(Boolean)
+  return all.find((p) => branchIsFor(p.branch, id)) || all.find((p) => p.item === id && !carriesAnId(p.branch)) || null
+}
+const openPrFor = (resume, id) => {
+  const pr = pick(resume && resume.open_prs, id)
+  if (!pr) return null
+  const wt = pick(resume && resume.worktrees, id)
+  return { number: pr.number, branch: pr.branch, worktree: wt ? wt.path : '' }
+}
+
 // ---------------------------------------------------------------------------
 // Schemas — the workflow reads fields, never prose.
 const RESUME = {
@@ -96,6 +126,8 @@ const RESUME = {
     watches: { type: 'array', items: { type: 'object', required: ['pr', 'state'], properties: { pr: { type: 'number' }, state: { type: 'string' } } } },
     plans_unchecked: { type: 'array', items: { type: 'string' } },
     base_red: { type: 'boolean', description: 'true when the default branch tip has a red or cancelled workflow run' },
+    fleet: { enum: ['ok', 'fleet-down', 'unknown'], description: 'the verdict sweap-fleet printed' },
+    fleet_reason: { type: 'string', description: 'the reason sweap-fleet printed, plus any deprecations entry (a runner version retiring within days)' },
     notes: { type: 'string' },
   },
 }
@@ -136,7 +168,7 @@ const WATCH = {
   required: ['word', 'reason', 'pr', 'watch_calls'],
   properties: {
     word: { enum: ['merged', 'failed', 'behind', 'attended', 'held-by', 'timed_out', 'undecidable'] },
-    class: { enum: ['gate', 'starved', 'base-red', 'red', '-'] },
+    class: { enum: ['gate', 'starved', 'base-red', 'red', 'fleet-down', '-'] },
     reason: { type: 'string' },
     pr: { type: 'number' },
     head: { type: 'string' },
@@ -207,7 +239,8 @@ You are the RESUME stage of an unattended run. Report what an earlier run left b
 - \`gh pr list --state open --json number,headRefName,title,statusCheckRollup\`;
 - \`sweap-merge status\`;
 - \`grep -l '^- \\[ \\]' docs/superpowers/plans/*.md\` (a plan with unchecked steps);
-- \`gh run list --branch <default branch> --limit 3 --json conclusion,name,status\` — base_red is true when the newest completed run of any workflow on the default branch is red or cancelled.
+- \`gh run list --branch <default branch> --limit 3 --json conclusion,name,status\` — base_red is true when the newest completed run of any workflow on the default branch is red or cancelled;
+- \`sweap-fleet\` (on PATH with the plugin's bin/; if the command does not exist, fleet is \`unknown\` and say so; it EXITS 1 on fleet-down — that is the verdict, read the JSON) — copy its \`verdict\` into \`fleet\` and its \`reason\` (plus any \`deprecations\` entry) into \`fleet_reason\`.
 Map each worktree, PR and plan to the backlog item id it belongs to (the branch name carries the id in lower case with the dot as a dash, e.g. fix/du25-... is DU.25). Return the JSON only.`
 
 const scopePrompt = () => `You are the SCOPE stage of an unattended run. Run \`sweap-frontier\` from the primary checkout (the sweap plugin's bin/ is on PATH; if the command is missing or fails, set \`command_missing\` true and return an empty frontier). It prints the runnable todo items in drain order as JSON. Return the frontier as printed, in its order, with each item's followupOf (null when it has none), and the malformed list as printed. Do not read the item files; do not filter, reorder or judge the items — the run decides what to pick. Return the JSON only.`
@@ -236,11 +269,12 @@ Blocked: when the spec is genuinely ambiguous, a premise is unsatisfiable, or a 
 
 Return the JSON only: outcome, pr, branch, worktree, red_green (verbatim), review_rounds, reviewer_verdict (verbatim), security_verdict, premises, notes_filed, question, report.`
 
-const watchPrompt = (item, impl, previous) => `Watch PR #${impl.pr} for backlog item ${item.id} (branch \`${impl.branch}\`, worktree \`${impl.worktree}\`, base = the repository's default branch) with \`sweap-merge watch\`, exactly as your instructions say: foreground, bounded calls, loop until a terminal word, classify a red, verify after a merge.${previous ? ` Previous rounds on this PR: ${previous}` : ''} Return the report shape only.`
+const wtOf = (impl) => impl.worktree || `(none known — before any git operation on this branch run \`git worktree add <the path CLAUDE.md or the playbook names for this project> ${impl.branch}\`; never use the primary checkout)`
+const watchPrompt = (item, impl, previous) => `Watch PR #${impl.pr} for backlog item ${item.id} (branch \`${impl.branch}\`, worktree ${wtOf(impl)}, base = the repository's default branch) exactly as your instructions say: foreground, bounded calls of \`sweap-merge tick ${impl.pr} --budget 540\`, loop until a terminal word, classify a red (and a queued timeout against an empty fleet), verify after a merge.${previous ? ` Previous rounds on this PR: ${previous}` : ''} Return the report shape only.`
 
 const fixPrompt = (item, impl, watch, rounds) => `${READ_FIRST} Then read the playbook between \`<!-- worker-brief:begin -->\` and \`<!-- worker-brief:end -->\`: that brief binds you.
 
-You are the FIXER for PR #${impl.pr} (backlog item ${item.id}, branch \`${impl.branch}\`, worktree \`${impl.worktree}\`). The merge watcher reported \`failed\` with class \`${watch.class || '-'}\`: ${watch.reason}
+You are the FIXER for PR #${impl.pr} (backlog item ${item.id}, branch \`${impl.branch}\`, worktree ${wtOf(impl)}). The merge watcher reported \`failed\` with class \`${watch.class || '-'}\`: ${watch.reason}
 
 Failure evidence (the failing job, tests and decisive log lines):
 ${watch.failure || '(none captured — collect it yourself: gh pr checks, gh run view <id> --log-failed)'}
@@ -266,7 +300,13 @@ if (resume.base_red) {
   // redcheck does not see a push-event red; nothing below can make progress.
   return { merged, blocked, needs_human: needsHuman, skipped: IDS || [], failed, stopped: 'the default branch tip is red: rerun its failed job first (a flaky main stalls every PR)', resume }
 }
-log(`resume: ${resume.worktrees.length} worktree(s), ${resume.open_prs.length} open PR(s), ${resume.watches.length} armed watch(es)`)
+if (resume.fleet === 'fleet-down') {
+  // Nobody is there to run the jobs. An implementer would open a PR that
+  // cannot test and the watcher would time out 99 minutes later — per item,
+  // for as long as the fleet is down (consumer A 2026-09-24: three items).
+  return { merged, blocked, needs_human: needsHuman, skipped: IDS || [], failed, stopped: `the self-hosted runner fleet cannot run CI: ${resume.fleet_reason || 'sweap-fleet says fleet-down'} — bring the runners back (sweap-fleet prints ok), then relaunch`, resume }
+}
+log(`resume: ${resume.worktrees.length} worktree(s), ${resume.open_prs.length} open PR(s), ${resume.watches.length} armed watch(es)${resume.fleet && resume.fleet !== 'ok' ? `, fleet ${resume.fleet}` : ''}`)
 
 let count = 0
 while (count < MAX_ITEMS) {
@@ -281,9 +321,16 @@ while (count < MAX_ITEMS) {
   attempted.add(item.id)
   log(`item ${item.id} (${count + 1}${Number.isFinite(MAX_ITEMS) ? `/${MAX_ITEMS}` : ''})`)
 
-  const implemented = await call(implementPrompt(item, resume, priorReports), { label: `implement ${item.id}`, phase: 'Implement', schema: IMPLEMENT, model: MODEL, agentType: 'general-purpose' })
-  if (!implemented.ok) { stopped = `${item.id}: ${implemented.why}`; break }
-  const impl = implemented.value
+  let impl
+  const already = openPrFor(resume, item.id)
+  if (already) {
+    log(`item ${item.id}: PR #${already.number} is already open — straight to the watcher`)
+    impl = { outcome: 'pr-open', pr: already.number, branch: already.branch, worktree: already.worktree, resumed: true, red_green: '', review_rounds: null, reviewer_verdict: '', report: `resumed open PR #${already.number}` }
+  } else {
+    const implemented = await call(implementPrompt(item, resume, priorReports), { label: `implement ${item.id}`, phase: 'Implement', schema: IMPLEMENT, model: MODEL, agentType: 'general-purpose' })
+    if (!implemented.ok) { stopped = `${item.id}: ${implemented.why}`; break }
+    impl = implemented.value
+  }
   priorReports.push({ id: item.id, summary: `${impl.outcome}${impl.pr ? ` PR #${impl.pr}` : ''}; premises: ${impl.premises || '-'}` })
   if (impl.outcome === 'blocked') blocked.push({ id: item.id, pr: impl.pr, question: impl.question })
   if (!impl.pr) {
@@ -315,11 +362,24 @@ while (count < MAX_ITEMS) {
   if (watch && watch.word === 'merged' && impl.outcome === 'blocked') {
     // The PR was the blocked flip landing, not the item: it is already listed
     // under blocked; the human sees it once.
+  } else if (watch && watch.word === 'merged' && impl.resumed && watch.status_done === 'no') {
+    // A resumed PR the script never saw the inside of merged without the item
+    // reading done on the base: a blocked flip, or an implementer that forgot
+    // the flip. Either way not "merged", and not a guess at "blocked": a person
+    // reads the item file (a forgotten flip would otherwise get a fresh
+    // implementer against a merged PR on the next relaunch).
+    needsHuman.push({ id: item.id, pr: impl.pr, word: 'merged', class: '-', reason: 'merged without the item reading done on the base: a blocked flip, or a forgotten flip — read the item file' })
   } else if (watch && watch.word === 'merged') {
     merged.push({ id: item.id, pr: impl.pr, review_rounds: impl.review_rounds, fix_rounds: rounds.length, status_done: watch.status_done, cleanup: watch.cleanup })
   } else if (watch && watch.word === 'failed' && watch.class === 'base-red') {
     stopped = `${item.id}: PR #${impl.pr} is red on a workflow that is also red on the default branch — rerun main's failed job first`
     needsHuman.push({ id: item.id, pr: impl.pr, word: watch.word, class: watch.class, reason: watch.reason })
+    break
+  } else if (watch && watch.word === 'timed_out' && watch.class === 'fleet-down') {
+    // The queue is not slow, it is unattended: no online runner carries the
+    // labels the queued jobs need. The PR is fine and resumes on relaunch (see
+    // openPrFor); the run is simply not over, so nobody is listed as owing it.
+    stopped = `${item.id}: PR #${impl.pr} is queued and no online runner can take it — ${watch.reason}; bring the self-hosted fleet back (sweap-fleet prints ok), then relaunch`
     break
   } else if (!(last && last.outcome === 'blocked')) {
     // attended (a real hold), held-by, behind with conflicts, timed_out,
@@ -346,5 +406,5 @@ return {
   // so merged items are not picked again, and the Resume stage must run live
   // to see what the stop left behind (a resumed run would replay the first
   // launch's Resume result and hand the next implementer stale state).
-  next: stopped ? 'relaunch this workflow fresh, with the same arguments, after the cause is cleared (a usage limit: after the reset; a red base: after its job is green)' : (MILESTONE ? `batch and ${MILESTONE} frontier drained` : (IDS ? 'batch drained' : 'frontier drained')),
+  next: stopped ? 'relaunch this workflow fresh, with the same arguments, after the cause is cleared and verified gone (a usage limit: after the reset; a red base: after its job is green; a dead fleet: after sweap-fleet prints ok)' : (MILESTONE ? `batch and ${MILESTONE} frontier drained` : (IDS ? 'batch drained' : 'frontier drained')),
 }

@@ -43,6 +43,13 @@ Resolve the run:
   PR does — and while record-debt exists that record PR is the only
   backlog-advancing merge the gate allows, so resolve it before picking any
   run shape.
+- Run `sweap-fleet` (the plugin's bin/ is on PATH; JSON, read `.verdict`).
+  `fleet-down` → there is no goal to print: CI cannot run, and a run started
+  now opens PRs nobody can test, one per 99 minutes (consumer A 2026-09-24). Print
+  its `.reason` and the fix — the runner recreate command when CLAUDE.md names
+  one — and stop. `unknown` → say why and continue. A `deprecations` entry →
+  print one line before the goal: runner version <v> on <runners> retires
+  <date> (<n> days); update the fleet before then, or the run dies mid-way.
 - **Milestone `M`** = the first argument if given (e.g. `F2` or `DS3`, using
   any configured prefix); otherwise the next runnable milestone —
   across ALL configured prefixes, in the index's milestone order — that has
@@ -452,9 +459,10 @@ never by hand — launch it now with Workflow({name: "sweap:run", args: {"ids":
 [<D, in drain order>], "milestone": "<MILESTONE>"}}), args as an object; while
 it runs, end your turn and wait for its result, never poll it. When it returns
 drained AND every <MILESTONE> item is [done], run /milestone-audit <MILESTONE>
-and triage; drained with items left open is a stop, not a completion. When it
-returns stopped, clear the cause if you can (a red default branch: rerun its
-failed job once) and relaunch it fresh with the same args. When you stop,
+and triage; drained with items left open is a stop, not a completion. When it returns stopped, clear the cause if you can (a red default branch:
+rerun its failed job once), verify it is gone (sweap-fleet prints ok; the
+default branch is green) and only then relaunch it fresh with the same args;
+if you cannot verify that, stop and say which cause. When you stop,
 record it as the playbook's "Ending the run" section says (docs/agentic-loop-playbook.md).
 ```
 
@@ -487,7 +495,9 @@ Workflow({name: "sweap:run", args: {"ids": [<D, in drain order>], "milestone":
 "<MILESTONE>"}}), args as an object; while it runs, end your turn and wait for
 its result, never poll it.
 When it returns stopped, clear the cause if you can (a red default branch:
-rerun its failed job once) and relaunch it fresh with the same args. When you
+rerun its failed job once), verify it is gone (sweap-fleet prints ok; the
+default branch is green) and only then relaunch it fresh with the same args;
+if you cannot verify that, stop and say which cause. When you
 stop, record it as the playbook's "Ending the run" section says (docs/agentic-loop-playbook.md).
 ```
 
@@ -501,9 +511,10 @@ frontier is empty — or when the run workflow stopped on a cause you cannot
 clear (say which) — or after <TURNS> turns. How: I am asking you to drive every
 item with the sweap:run workflow and never by hand — launch it now with
 Workflow({name: "sweap:run", args: {"ids": [<D, in drain order>]}}), args as an
-object; while it runs, end your turn and wait for its result, never poll it. When it returns stopped,
-clear the cause if you can (a red default branch: rerun its failed job once)
-and relaunch it fresh with the same args. When you stop, record it (see
+object; while it runs, end your turn and wait for its result, never poll it. When it returns stopped, clear the cause if you can (a red default branch:
+rerun its failed job once), verify it is gone (sweap-fleet prints ok; the
+default branch is green) and only then relaunch it fresh with the same args;
+if you cannot verify that, stop and say which cause. When you stop, record it (see
 "Record the end of the run" below).
 ```
 

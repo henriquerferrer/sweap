@@ -101,7 +101,9 @@ with every earlier round in hand. Nothing waits on CI while holding
 implementation context. Never hold the loop in a long-lived agent instead: the
 Consumer A F13 run's hand-written "lane runner" agents grew to 806k of context
 waiting in 600-second Bash calls, and their expired caches were half the run's
-cost. While the workflow runs, end the turn and wait for its result; never
+cost. A dead runner fleet stops the run (`sweap-fleet`, asked at Resume and
+by the watcher on a queued timeout) instead of opening PRs nobody can test.
+While the workflow runs, end the turn and wait for its result; never
 poll it. When it returns, the session records the run (below), runs
 `/milestone-audit` if a milestone completed, and after a stop it clears the
 cause if it can (a red default branch: rerun its failed job once) and
@@ -1665,6 +1667,7 @@ in-flight branch at width 1 too, and a Free-plan repo never reports BEHIND.
 | `sweap-merge watch <n>` (`sweap-merge status`) | Background merge driver for one PR: waits on the base branch's expected checks pinned to the head, runs the merge gate, merges, runs the post-merge hooks; exits with one terminal word. Run via Bash `run_in_background: true`; Monitor optional. A bare command because the plugin's `bin/` is on the Bash tool's PATH — `$CLAUDE_PLUGIN_ROOT` is unset in a model-issued Bash call. Allowlist `Bash(sweap-merge:*)` | Claude (the session that owns the PR) |
 | `/unblock <id>` | Walks one `[blocked]` question with the human — prepares the fork, never answers it — then closes it through a gated PR (`todo` + authored spec, or `done`) | User runs; interactive only |
 | `sweap:run` (workflow) | The per-item loop held in a script: frontier before every item (`sweap-frontier`), one fresh implementer per item, the `merge-watcher` agent for the CI wait, a fresh fixer per red; strictly serial; `{ids, milestone}` scope it to the kickoff's batch and then one milestone. Pauses at a 5-hour limit (twice per run, interactive subscription session only), stops at a weekly wall, a dead agent or a red base; a relaunch is a fresh launch with the same args (the frontier is live) | The run session, from the goal's driver sentence; a human only pastes the goal |
+| `sweap-fleet` | Can the self-hosted runner fleet run this repo's CI: the label sets CI targets (from the newest run of each workflow) against the runners online, plus runner versions retiring within a week. Read-only JSON. The run's Resume stage, the `merge-watcher` and `/milestone` all ask it, so a dead fleet stops a run instead of queueing a PR per item | Claude (any stage), or the user |
 
 ## Model policy
 
