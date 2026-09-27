@@ -56,7 +56,12 @@ check against —
    state machine) against the handler or lib function, a journey / a11y / focus /
    race in the browser — with concrete role + action + outcome, incl. the
    negative / unauthorized case, or is any of them vague / wall-clock-dependent /
-   unassertable?
+   unassertable? And is it testable at THIS item: every field, route or control
+   the AC exercises is introduced by this item, by one in its `depends_on`
+   closure, or already shipped — above all, not by a later item its own
+   Out-of-scope names. Otherwise it goes to the first item whose closure holds
+   them all (F13.7's archive-count clause needed F13.9's `service_id` and
+   F13.10's picker, both its dependents; it blocked a run until moved).
 7. **Scope tiering.** Is anything marked core (P0 / `[todo]`) that is really
    cuttable (should be split to a later item), or vice versa? Over-scoped first
    items break the 10–25-turn budget.
