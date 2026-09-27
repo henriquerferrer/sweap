@@ -45,7 +45,7 @@ test("every agent() call goes through call(): null and throw both end as a repor
   assert.match(SRC, /if \(out === null \|\| out === undefined\) return \{ ok: false/);
   assert.match(SRC, /catch \(e\) \{\s*return \{ ok: false/);
   // The loop stops with a reason on every !ok, never continues past a dead agent.
-  for (const name of ["resumed", "scoped", "implemented", "watched", "fixed"]) {
+  for (const name of ["resumed", "scoped", "implemented", "watched", "fixed", "published", "rev", "fix", "sec"]) {
     assert.match(SRC, new RegExp(`if \\(!${name}\\.ok\\)`), `${name} is not checked for ok`);
   }
 });
@@ -55,13 +55,14 @@ test("implementer and fixer name their model and run as general-purpose (the ses
   const fix = SRC.match(/label: `fix \$\{item\.id\}[^\n]*/)[0];
   for (const line of [impl, fix]) {
     assert.match(line, /model: MODEL/, `no explicit model: ${line}`);
-    assert.match(line, /agentType: 'general-purpose'/, `implementer/fixer needs the Agent tool to dispatch the reviewer: ${line}`);
+    assert.match(line, /agentType: 'general-purpose'/, `implementer/fixer run as general-purpose: ${line}`);
   }
   assert.match(SRC, /const MODEL = [^\n]*'opus'/);
 });
 
 test("the merge wait is a separate small agent resolved under its plugin-scoped name", () => {
-  assert.match(SRC, /`\$\{PLUGIN_NAME\}:merge-watcher`, 'merge-watcher'/);
+  assert.match(SRC, /\[pluginTypes\[name\], `\$\{PLUGIN_NAME\}:\$\{name\}`, name\]/);
+  assert.match(SRC, /const callWatcher = \(prompt, opts\) => callPlugin\('merge-watcher', prompt, opts\)/);
   assert.match(SRC, /await callWatcher\(watchPrompt/);
   const watch = SRC.match(/label: `watch #\$\{impl\.pr\}`[^\n]*/)[0];
   assert.ok(!/model:/.test(watch), "the watcher's model comes from its own frontmatter, not the implementer's");
@@ -72,7 +73,8 @@ test("merge-watcher.md: 1h cache, no write tools, foreground bounded tick, atten
   assert.match(fm, /cacheTtl: 1h/, "the watcher is the one agent that idles past 5 minutes on purpose");
   const tools = fm.match(/^tools:\s*(.*)$/m)[1];
   for (const t of ["Write", "Edit", "NotebookEdit", "Agent"]) assert.ok(!tools.split(/[,\s]+/).includes(t), `watcher must not carry ${t}`);
-  assert.match(WATCHER, /sweap-merge tick <n> --budget 540/, "tick is the bounded verb that always prints its closing word; watch re-ticks until terminal and can be killed by the Bash timeout with nothing printed");
+  assert.match(WATCHER, /sweap-merge tick <PR number from your dispatch> --budget 540/, "tick is the bounded verb that always prints its closing word; watch re-ticks until terminal and can be killed by the Bash timeout with nothing printed");
+  assert.ok(!/<n>/.test(WATCHER), "a bare <n> placeholder was copied literally as `tick 1` on ~23 of 27 consumer A dispatches (2026-09-23..25)");
   assert.match(WATCHER, /`600000`/);
   assert.match(WATCHER, /actions\/runners/, "an attended word is checked against the fleet before it is believed (lane lessons 10 and 17)");
   assert.match(WATCHER, /held-by:<owner>[^\n]*\n?[^|]*sleep 150/);
@@ -159,8 +161,9 @@ test("the implementer brief binds to the playbook by its markers and never merge
   assert.match(SRC, /worker-brief:begin -->\\` and \\`<!-- worker-brief:end -->/);
   assert.match(SRC, /never run \\`sweap-merge\\`/);
   assert.match(SRC, /RESUME it/);
-  assert.match(SRC, /At most 2 review rounds/);
-  assert.match(SRC, /never in parallel against this worktree/);
+  assert.match(SRC, /Never dispatch an agent, never start the code-review or security-review skill, and never leave anything running in the background/, "consumer A F13: the implementer's own review forked into the background and forced its return — four items failed, two PRs went unreviewed");
+  assert.ok(!/subagent_type: "\$\{PLUGIN_NAME\}:reviewer"/.test(SRC), "the implementer no longer dispatches the reviewer; the script does");
+  assert.match(PLAYBOOK, /Under `\/sweap:run` you do not review, push or open the PR/, "the worker brief must not tell a run implementer to review, or the fork comes back");
   assert.match(PLAYBOOK, /<!-- run-core:end -->/);
   assert.match(PLAYBOOK, /<!-- worker-brief:begin -->/);
 });
@@ -230,6 +233,114 @@ test("openPrFor: an open PR for the item (by the Resume mapping or by branch) se
   assert.equal(openPrFor({ open_prs: [{ number: 7, branch: "hotfix/typo", item: "F13.2" }] }, "F13.2").number, 7, "a branch outside the shape falls back to the mapping");
   assert.equal(openPrFor({}, "F13.6"), null);
   assert.match(SRC, /const already = openPrFor\(resume, item\.id\)/);
-  assert.match(SRC, /impl\.resumed && watch\.status_done === 'no'/, "a resumed PR that merged without the item reading done is a person's to read, never recorded as merged");
+  assert.match(SRC, /watch\.word === 'merged' && watch\.status_done === 'no'\)/, "a PR that merged without the item reading done is a person's to read, never recorded as merged — resumed or published by the script");
   assert.match(SRC, /const wtOf = \(impl\) => impl\.worktree \|\|/, "a resumed PR with no known worktree tells the watcher and the fixer to add one, never to use the primary checkout");
+});
+
+
+// ---------------------------------------------------------------------------
+// The review stage, driven end to end with stub agents: the script runs as the
+// Workflow runtime runs it (an async body over agent/phase/log/args), and each
+// stub answers by label. These pin the ORDER and the outcomes, which a
+// source-level regex cannot.
+const AsyncFn = Object.getPrototypeOf(async function () {}).constructor;
+const simulate = async (over = {}, frontierItem = { id: "F1.1", followupOf: null, reviewDimensions: [] }) => {
+  const calls = [];
+  const agent = async (prompt, opts) => {
+    calls.push({ label: opts.label, agentType: opts.agentType, prompt });
+    const k = opts.label.split(" ")[0];
+    const n = calls.filter((c) => c.label.split(" ")[0] === k).length;
+    if (over[k]) { const v = over[k](n, opts); if (v instanceof Error) throw v; if (v !== undefined) return v; }
+    switch (k) {
+      case "resume": return { worktrees: [], open_prs: [], watches: [], plans_unchecked: [], notes: "", fleet: "ok", base: "trunk", backlog_dir: "backlog" };
+      case "scope": return { frontier: n === 1 ? [frontierItem] : [] };
+      case "implement": return { outcome: "committed", pr: null, branch: "feat/f1-1-x", worktree: "/wt/f1-1", red_green: "r/g", report: "done" };
+      case "review": return { verdict: "approve", findings: [], files_reviewed: ["a.ts"], verdict_line: "Verdict: approve" };
+      case "flip": return { outcome: "pr-open", pr: 77, branch: "chore/f1-1-blocked", worktree: "/wt/f1-1-blocked", report: "ok" };
+      case "publish": return { outcome: "pr-open", pr: 42, report: "ok" };
+      case "watch": { const pr = Number(opts.label.split("#")[1]); return { word: "merged", reason: "merged", pr, watch_calls: 1, status_done: pr === 77 ? "no" : "yes", cleanup: "clean" }; }
+    }
+    throw new Error(`unexpected agent ${opts.label}`);
+  };
+  const out = await new AsyncFn("agent", "phase", "log", "args", SRC.replace(/^export const meta/m, "const meta"))(agent, () => {}, () => {}, { ids: ["F1.1"] });
+  return { out, labels: calls.map((c) => c.label), calls };
+};
+const needsWork = () => ({ verdict: "needs-work", findings: [{ file: "a.ts:1", what: "off by one", kind: "other" }], files_reviewed: ["a.ts"], verdict_line: "Verdict: needs-work" });
+
+test("review stage: the SCRIPT awaits the reviewer before anything is pushed, and the reviewer is the plugin agent", async () => {
+  const { out, labels, calls } = await simulate();
+  assert.deepEqual(labels, ["resume", "scope #1", "implement F1.1", "review F1.1 #1", "publish F1.1", "watch #42", "scope #2"]);
+  assert.equal(calls.find((c) => c.label === "review F1.1 #1").agentType, "sweap:reviewer");
+  const rp = calls.find((c) => c.label === "review F1.1 #1").prompt;
+  assert.match(rp, /\/wt\/f1-1/, "the reviewer runs from the primary checkout: it must be told the worktree");
+  assert.match(rp, /origin\/trunk\.\.\.HEAD/, "the base the Resume stage read, never a <default branch> placeholder");
+  assert.match(rp, /`backlog\/F1\.1\.md`/);
+  assert.equal(out.merged[0].review_rounds, 1);
+});
+
+test("review stage: needs-work → fresh fixer → re-review with the earlier findings; at most two review rounds", async () => {
+  const { out, labels, calls } = await simulate({ review: needsWork, "review-fix": () => ({ outcome: "committed", summary: "cut the claim" }) });
+  assert.deepEqual(labels.slice(2, 8), ["implement F1.1", "review F1.1 #1", "review-fix F1.1 #1", "review F1.1 #2", "review-fix F1.1 #2", "publish F1.1"]);
+  assert.match(calls.find((c) => c.label === "review F1.1 #2").prompt, /a\.ts:1: off by one/);
+  assert.match(calls.find((c) => c.label === "review-fix F1.1 #2").prompt, /This is the LAST round/);
+  assert.match(calls.find((c) => c.label === "publish F1.1").prompt, /cut the claim/, "what the last round left is stated in the PR");
+  assert.equal(out.merged[0].review_rounds, 2);
+});
+
+test("review stage: a dead reviewer stops the run with nothing pushed; a blocked fixer never publishes", async () => {
+  const dead = await simulate({ review: () => null });
+  assert.ok(!dead.labels.some((l) => l.startsWith("publish")));
+  assert.match(dead.out.stopped, /review F1\.1 #1/);
+  const blocked = await simulate({ review: needsWork, "review-fix": () => ({ outcome: "blocked", summary: "s", question: "Which clinic wins?" }) });
+  assert.ok(!blocked.labels.some((l) => l.startsWith("publish")), "the reviewed-but-blocked code is never pushed");
+  assert.deepEqual(blocked.labels.slice(-3), ["flip F1.1", "watch #77", "scope #2"], "the blocked flip lands in a PR of its own and is watched to merge");
+  assert.deepEqual(blocked.out.blocked, [{ id: "F1.1", pr: 77, question: "Which clinic wins?" }]);
+  assert.deepEqual(blocked.out.merged, [], "a merged flip is not a merged item");
+  assert.deepEqual(blocked.out.needs_human, [], "…and is listed once, under blocked");
+  assert.match(blocked.calls.find((c) => c.label === "flip F1.1").prompt, /-b chore\/f1-1-blocked origin\/trunk/, "the flip branches off the default branch: no unreviewed code rides along");
+});
+
+test("security: tagged items get the security reviewer after the reviewer; a finding still blocking after one fix stays unpushed for a person", async () => {
+  const sec = { id: "F1.1", followupOf: null, reviewDimensions: ["security"] };
+  const clear = await simulate({ security: () => ({ verdict: "clear", findings: [], files_reviewed: ["api.ts"], verdict_line: "Security verdict: clear" }) }, sec);
+  assert.deepEqual(clear.labels.slice(3, 6), ["review F1.1 #1", "security F1.1 #1", "publish F1.1"]);
+  const blocking = await simulate({ security: () => ({ verdict: "blocking", findings: [{ file: "api.ts:3", what: "reads another org's rows", kind: "security" }], files_reviewed: ["api.ts"], verdict_line: "Security verdict: blocking" }), "security-fix": () => ({ outcome: "committed", summary: "tried" }) }, sec);
+  assert.ok(!blocking.labels.some((l) => l.startsWith("publish")), "a blocking security verdict is never pushed");
+  assert.equal(blocking.out.blocked[0].pr, 77, "an open security finding becomes a blocked flip, so the frontier stops re-picking it and /unblock accepts it");
+  assert.match(blocking.out.blocked[0].question, /api\.ts:3/);
+  const nodiff = await simulate({ security: () => ({ verdict: "no-diff", findings: [], files_reviewed: [], verdict_line: "" }) }, sec);
+  assert.ok(!nodiff.labels.some((l) => l.startsWith("publish")), "no diff collected is not a clear (DV.47, FP.1)");
+});
+
+test("a watcher report about another PR is not a word about this one (the `tick 1` slip)", async () => {
+  const once = await simulate({ watch: (n) => (n === 1 ? { word: "merged", reason: "merged", pr: 1, watch_calls: 1 } : undefined) });
+  assert.equal(once.labels.filter((l) => l.startsWith("watch")).length, 2, "re-dispatched once, naming the right PR");
+  assert.match(once.calls.filter((c) => c.label.startsWith("watch"))[1].prompt, /sweap-merge tick 42/);
+  assert.equal(once.out.merged.length, 1);
+  const always = await simulate({ watch: () => ({ word: "merged", reason: "merged", pr: 1, watch_calls: 1 }) });
+  assert.equal(always.out.merged.length, 0, "PR #1 merging never records this item as merged");
+  assert.equal(always.out.needs_human[0].word, "undecidable");
+});
+
+test("the implementer's blocked outcome lands a flip PR off the default branch; an empty diff or a missing worktree is never reviewed as approved", async () => {
+  const impBlocked = await simulate({ implement: () => ({ outcome: "blocked", pr: null, branch: "feat/f1-1-x", worktree: "/wt/f1-1", red_green: "", question: "Q?", report: "r" }) });
+  assert.deepEqual(impBlocked.labels.slice(2), ["implement F1.1", "flip F1.1", "watch #77", "scope #2"]);
+  assert.deepEqual(impBlocked.out.blocked, [{ id: "F1.1", pr: 77, question: "Q?" }]);
+  const empty = await simulate({ review: () => ({ verdict: "approve", findings: [], files_reviewed: [], verdict_line: "Verdict: approve" }) });
+  assert.ok(!empty.labels.some((l) => l.startsWith("publish")), "an approve over no files is the empty-diff trap");
+  assert.match(empty.out.failed[0].why, /no diff/);
+  const rel = await simulate({ implement: () => ({ outcome: "committed", pr: null, branch: "feat/f1-1-x", worktree: "", red_green: "", report: "r" }) });
+  assert.ok(!rel.labels.some((l) => l.startsWith("review")), "with no worktree path the reviewer would diff the primary checkout: main against main");
+  assert.equal(rel.out.failed.length, 1);
+});
+
+test("an acceptance or security finding still open after two review rounds is never cut: the item goes blocked, unpushed", async () => {
+  for (const kind of ["acceptance", "security"]) {
+    const r = await simulate({ review: () => ({ verdict: "needs-work", findings: [{ file: "reminders.ts:40", what: "closest reminder does not win on low credit", kind }], files_reviewed: ["reminders.ts"], verdict_line: "Verdict: needs-work" }), "review-fix": () => ({ outcome: "committed", summary: "tried" }) });
+    assert.deepEqual(r.labels.slice(3, 7), ["review F1.1 #1", "review-fix F1.1 #1", "review F1.1 #2", "flip F1.1"], `${kind}: no cutting round, no publish`);
+    assert.ok(!r.labels.some((l) => l.startsWith("publish")));
+    assert.match(r.out.blocked[0].question, new RegExp(`\\[${kind}\\] reminders\\.ts:40`));
+    assert.deepEqual(r.out.merged, []);
+  }
+  assert.match(SRC, /Never close an \\`acceptance\\` or \\`security\\` finding by cutting a claim/, "the round-1 fixer may not cut one either");
 });

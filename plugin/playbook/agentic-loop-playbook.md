@@ -79,7 +79,8 @@ on an item before dispatching it; a failing item is not runnable.
    plan. A re-review is a NEW dispatch with the new diff, never a message to the
    reviewer still alive. Reviewers read the local worktree, so **keep fixes local
    until every reviewer has approved, then push once** — each push to an open PR
-   cancels and restarts a full e2e run.
+   cancels and restarts a full e2e run. Under `/sweap:run` the script
+   dispatches the reviewers and awaits them; the implementer never does.
 4. **Conditional dimensions**, from the item's `review-dimensions:` —
    `security`: a dedicated security reviewer whose confirmed findings block the
    PR; `ui`: the implementer runs the ui-design skill and its hard gates must
@@ -95,7 +96,8 @@ batch is drained, `max_items` bounds it, and nothing at all drains the whole
 frontier in pick order (the frontier is backlog-wide, so a bare launch for an
 F13 run drains F14's runnable items too). The workflow holds the loop in a
 script: before every item it recomputes the frontier (`sweap-frontier`),
-dispatches ONE fresh implementer that exits when its PR is open, hands the CI
+dispatches ONE fresh implementer that exits when its branch is committed,
+reviews it with fresh reviewers (a fixer per finding), publishes it, hands the CI
 wait to the small `merge-watcher` agent, and dispatches a fresh fixer per red
 with every earlier round in hand. Nothing waits on CI while holding
 implementation context. Never hold the loop in a long-lived agent instead: the
@@ -125,7 +127,7 @@ A status flip travels only in its own item's PR; the index changes only at
 Run `sweap-merge watch <n>` with Bash `run_in_background: true`. It ends the turn
 while it waits; its ONE terminal word is the result. Inside an agent — the
 `merge-watcher`, or any agent a session delegates to — there is no turn to end:
-run `sweap-merge tick <n> --budget 540` in the FOREGROUND with the Bash
+run `sweap-merge tick <PR> --budget 540` (the PR's own number — there is no default, and `tick 1` answers for PR #1) in the FOREGROUND with the Bash
 timeout at `600000`, one bounded call at a time, until its closing word is
 terminal (a `pending`/`green`/`merging` closing word just means call it
 again). `tick` always prints its closing line; a foreground `watch` re-ticks
@@ -194,10 +196,15 @@ skills, and who opens the PR. Add below it; never delete a line of it.
 - Before committing, scan your added lines for `every|all|only|never|both|<a
   number>` and cut each claim you cannot check — the one defect class behind
   nine of ten blocking review findings.
-- Reviewers run one at a time against a worktree, never two in parallel: they
-  mutate the tree to verify findings and revert each other. Two review rounds,
-  then cut claims rather than open a third.
-- Commit in one call; push in its own call, plainly (`git push -u origin
+- Under `/sweap:run` you do not review, push or open the PR: commit and
+  return; the run dispatches the reviewer and a fixer per finding. Never
+  dispatch an agent or start a review skill yourself, and leave nothing
+  running in the background — it outlives your return. Driven by hand,
+  reviewers run one at a time against a worktree, never two in parallel (they
+  mutate the tree to verify findings and revert each other); two review
+  rounds, then cut claims rather than open a third.
+- Driven by hand (never under `/sweap:run`): commit in one call; push in its
+  own call, plainly (`git push -u origin
   <branch>`), nothing else in it — the push gate denies a compound command and
   the denial eats the commit too.
 - Before escalating a symptom, grep the backlog's `discovered/` inbox: a note on
