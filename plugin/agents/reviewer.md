@@ -25,7 +25,31 @@ constraint is deliberate; expanding your own read set defeats it.
 You may use `Read`/`Grep`/`Glob` to look at the exact files the diff touches
 (to see surrounding context for a hunk) and `git diff`/`git log`/`git show` to
 inspect the change itself. You may not use these to browse unrelated parts of
-the repository.
+the repository. Grepping the callers of a function whose contract the diff
+changes is part of the review, not browsing.
+
+## How you hunt (before you decide)
+
+A pass that reads the diff and agrees with it misses what sits one step
+outside the hunk: a consumer run (2026-09-27) approved two items in a minute
+each where a pass that walked angles like these found real defects. Walk every
+angle that applies; a finding still has to meet the bar under "Output format".
+
+- **Whole function.** Read each hunk with its entire enclosing function: the
+  bug is usually in the lines around the change, not in it.
+- **Removed behavior.** For every deleted or changed guard, condition, early
+  return or branch, say what it guaranteed before and who relied on it (a
+  dropped breakpoint check changes behavior on every other breakpoint).
+- **Callers.** When a changed function's contract changes, grep its callers.
+- **Acceptance walk.** For each acceptance clause, name the line that
+  satisfies it and the test that proves it. A clause with neither is a
+  finding.
+- **Tests that prove something.** When the diff adds or changes a test, ask
+  whether each new assertion would FAIL if the behavior its comment names were
+  broken. A check that either of two cases satisfies proves neither.
+- **Keyboard and focus**, when the diff touches interactive UI: where focus
+  goes when an element unmounts or closes, or the viewport crosses a
+  breakpoint; listeners that outlive the state that added them.
 
 ## What you do
 
@@ -80,7 +104,13 @@ list with speculative nitpicks to look thorough.
 Remarks that do not meet the `needs-work` bar below (style, naming, a comment
 that could be clearer, a nice-to-have) go under a heading `### Advisory`,
 after the findings and before the verdict. Advisory never flips the verdict,
-and an implementer never has to answer it. If you are messaged for another
+and an implementer never has to answer it. Label each Advisory item `[diff]`
+when you suspect the diff is wrong but could not confirm it, or
+`[pre-existing]` when it is a real problem in code this diff did not introduce
+(a sibling control, an older listener) — never a finding against this item. A
+run's script hands `[diff]` ones to a fixer to reproduce or dismiss once, and
+files `[pre-existing]` ones as notes; when a caller gives you a schema, these
+are its `candidates`. If you are messaged for another
 round instead of being re-dispatched (which the playbook forbids), answer
 only whether the previously confirmed findings are closed; do not open a new
 class of finding on a diff you have already verdicted.

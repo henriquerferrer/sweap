@@ -182,7 +182,8 @@ const REVIEW = {
     verdict: { enum: ['approve', 'needs-work'] },
     files_reviewed: { type: 'array', items: { type: 'string' }, description: 'the files the diff touches, as reviewed; empty when no diff could be collected' },
     findings: { ...FINDINGS, description: 'confirmed blocking findings only; empty on approve' },
-    advisory: { type: 'string' },
+    candidates: { type: 'array', description: 'what you suspect but could not confirm ([diff]), and real problems in code this diff did not introduce ([pre-existing]); never a blocking finding', items: { type: 'object', required: ['file', 'what', 'scope'], properties: {
+      file: { type: 'string' }, what: { type: 'string' }, scope: { enum: ['diff', 'pre-existing'] } } } },
     verdict_line: { type: 'string', description: 'the required final line, verbatim: "Verdict: approve" or "Verdict: needs-work"' },
   },
 }
@@ -200,10 +201,11 @@ const SECURITY = {
 
 const REVIEW_FIX = {
   type: 'object',
-  required: ['outcome', 'summary'],
+  required: ['outcome', 'changed', 'summary'],
   properties: {
     outcome: { enum: ['committed', 'blocked', 'gave-up'] },
-    summary: { type: 'string', description: 'per finding: fixed (how), cut (which claim), or disputed (the evidence)' },
+    changed: { type: 'boolean', description: 'true when you committed a change; false when every item was dismissed with evidence' },
+    summary: { type: 'string', description: 'per finding or candidate: fixed (how), cut (which claim), reproduced (the test), or dismissed/disputed (the evidence)' },
     question: { type: ['string', 'null'], description: 'when blocked: the spec question a finding exposed, verbatim' },
   },
 }
@@ -337,20 +339,25 @@ const watchPrompt = (item, impl, previous) => `Watch PR #${impl.pr} for backlog 
 const CTX = { base: '<default branch>', backlog: '<backlog dir>' }
 const slug = (id) => String(id).toLowerCase().replace(/\./g, '-')
 const where = (item, impl) => `branch \`${impl.branch}\`, worktree \`${impl.worktree}\`, base \`origin/${CTX.base}\` (run \`git -C ${impl.worktree} fetch origin\` first; the diff is \`git -C ${impl.worktree} diff origin/${CTX.base}...HEAD\`). The item file is \`${CTX.backlog}/${item.id}.md\` INSIDE the worktree. Read every file at its worktree path, never the primary checkout's copy (the primary checkout is the default branch, and may carry uncommitted files that are not this item's)`
-const reviewPrompt = (item, impl, rounds) => `Review backlog item ${item.id}: ${where(item, impl)}. Your input is ONLY that diff and the item file with the plan/spec the diff adds under docs/superpowers/. Run anything you run inside the worktree, and leave it as you found it.
-${rounds.length ? `This is review round ${rounds.length + 1}: the branch changed since round ${rounds.length}; judge the diff as it is now, and say for each earlier finding whether it is closed.\nEarlier findings:\n${rounds.map((r, i) => r.findings.map((f) => `- round ${i + 1}: ${f.file}: ${f.what}`).join('\n')).join('\n')}\n` : ''}Report exactly as your instructions say, then return the JSON only: verdict, findings (confirmed blocking ones only), files_reviewed, advisory, verdict_line.`
+const reviewPrompt = (item, impl, rounds, afterApprove) => `Review backlog item ${item.id}: ${where(item, impl)}. Your input is ONLY that diff and the item file with the plan/spec the diff adds under docs/superpowers/. Run anything you run inside the worktree, and leave it as you found it.
+${afterApprove ? `Round ${rounds.length} APPROVED this branch. Since then a fixer answered the reviewer's unconfirmed candidates; its report: ${afterApprove}\nReview ONLY the commits it added (the newest ones on the branch: \`git -C ${impl.worktree} log --oneline origin/${CTX.base}..HEAD\`), and whether each candidate it fixed is now closed; do not re-review what round ${rounds.length} approved.\n` : rounds.length ? `This is review round ${rounds.length + 1}: the branch changed since round ${rounds.length}; judge the diff as it is now, and say for each earlier finding whether it is closed.\nEarlier findings:\n${rounds.map((r, i) => r.findings.map((f) => `- round ${i + 1}: ${f.file}: ${f.what}`).join('\n')).join('\n')}\n` : ''}${!afterApprove && rounds.length && rounds[0].candidates && rounds[0].candidates.length ? `Round 1's unconfirmed candidates were answered by the fixer (fixed, or dismissed with evidence); do not raise them again unless the evidence is wrong.\n` : ''}Work through every angle your instructions' "How you hunt" section lists before you decide. Report exactly as your instructions say, then return the JSON only: verdict, findings (confirmed blocking ones only), files_reviewed, candidates (your Advisory items: [diff] ones you suspect but could not confirm, [pre-existing] ones the diff did not introduce), verdict_line.`
 
 const securityPrompt = (item, impl) => `Security-review backlog item ${item.id} (tagged \`review-dimensions: security\`): ${where(item, impl)}. Take that diff (and its \`--stat\`) yourself before anything else, then run the security-review skill; if its own diff collection comes back empty, apply its method by hand to the diff you took. No diff collected is the verdict \`no-diff\`, never \`clear\`. Leave the worktree as you found it. Return the JSON only: verdict, findings, files_reviewed, verdict_line.`
 
-const reviewFixPrompt = (item, impl, findings, source, last) => `${READ_FIRST} Then read the playbook between \`<!-- worker-brief:begin -->\` and \`<!-- worker-brief:end -->\`: that brief binds you.
+const reviewFixPrompt = (item, impl, findings, source, last, candidates = []) => `${READ_FIRST} Then read the playbook between \`<!-- worker-brief:begin -->\` and \`<!-- worker-brief:end -->\`: that brief binds you.
 
-You are the REVIEW FIXER for backlog item ${item.id}: ${where(item, impl)}. The ${source} returned these confirmed findings:
-${findings.map((f) => `- ${f.file}: ${f.what}`).join('\n')}
+You are the REVIEW FIXER for backlog item ${item.id}: ${where(item, impl)}. ${findings.length ? `The ${source} returned these confirmed findings:\n${findings.map((f) => `- ${f.file}: ${f.what}`).join('\n')}` : `The ${source} returned no confirmed finding.`}
+${candidates.length ? `\nIt also raised these UNCONFIRMED candidates. For each, try to reproduce it first — a failing test, or the command that shows it. If it reproduces, fix the root cause and keep the test. If it does not, dismiss it in your summary with the evidence. Never cut a claim, edit the item's acceptance or weaken a test for a candidate:\n${candidates.map((c) => `- ${c.file}: ${c.what}`).join('\n')}\n` : ''}
+Work only in the worktree. For each finding: reproduce it first (a failing test, or the command that shows it); fix the root cause; or, if the evidence says it is wrong, record why — never weaken a test to close one. Never close an \`acceptance\` or \`security\` finding by cutting a claim, editing the item's acceptance, or recording it as a note: fix it, or show with evidence it is not real (the next reviewer judges that). ${last ? 'This is the LAST round, and none of these findings is an acceptance or security one: for any you cannot fix, cut the claim it names (in code, comments or the item Notes) rather than leave it standing, and list what remains. ' : ''}Verify at the layer each finding names, by name. Commit in one call; \`git status --short\` must then print nothing. If you changed nothing (every item dismissed with evidence), commit nothing and return \`committed\` with \`changed\` false. Do not push, do not open a PR, never dispatch an agent or start a review skill, and leave nothing running in the background. If a finding shows the SPEC itself is wrong or ambiguous, return \`blocked\` with the question verbatim instead of guessing. Return the JSON only.`
 
-Work only in the worktree. For each finding: reproduce it first (a failing test, or the command that shows it); fix the root cause; or, if the evidence says it is wrong, record why — never weaken a test to close one. Never close an \`acceptance\` or \`security\` finding by cutting a claim, editing the item's acceptance, or recording it as a note: fix it, or show with evidence it is not real (the next reviewer judges that). ${last ? 'This is the LAST round, and none of these findings is an acceptance or security one: for any you cannot fix, cut the claim it names (in code, comments or the item Notes) rather than leave it standing, and list what remains. ' : ''}Verify at the layer each finding names, by name. Commit in one call; \`git status --short\` must then print nothing. Do not push, do not open a PR, never dispatch an agent or start a review skill, and leave nothing running in the background. If a finding shows the SPEC itself is wrong or ambiguous, return \`blocked\` with the question verbatim instead of guessing. Return the JSON only.`
+// Problems the reviewer found in code this item did not introduce are notes,
+// never the item's work: a sibling control, an old listener, a decision the
+// spec discloses. Filed and committed on the branch being pushed (the item's,
+// or the blocked flip's), so they reach main through that PR.
+const notesStep = (item, notes, dir, branch) => notes.length ? `First, inside \`${dir}\`, file each of these as a discovered note, one call each — \`cd ${dir} && sweap-note discovered '<a one-line title>' gap ${item.id} '<the text below, without single quotes>' ${branch}\` — then commit the new files under the backlog's discovered/ in one call. They are problems the reviewer found in code this item did not introduce. A note that fails to file is skipped and said in your report; it never changes your outcome:\n${notes.map((n) => `- ${n.file}: ${n.what}`).join('\n')}\n` : ''
 
-const publishPrompt = (item, impl, review) => `Publish backlog item ${item.id}'s reviewed branch: ${where(item, impl)}.
-1. Push in its own call, plainly: \`git -C ${impl.worktree} push -u origin ${impl.branch}\` and nothing else in that command.
+const publishPrompt = (item, impl, review, notes = []) => `Publish backlog item ${item.id}'s reviewed branch: ${where(item, impl)}.
+${notesStep(item, notes, impl.worktree, impl.branch)}1. Push in its own call, plainly: \`git -C ${impl.worktree} push -u origin ${impl.branch}\` and nothing else in that command.
 2. If \`gh pr view ${impl.branch} --json number,state\` shows an OPEN PR for the branch, that is the PR: return its number. Otherwise, from the worktree, \`gh pr create\` (never \`--repo\`/\`-R\`): the title is the branch's first commit subject; the body summarises the change from \`git log\` and the diff stat, then states the review record below verbatim, and ends with the line the playbook's worker brief names for PRs.
 Review record: ${review}
 Return the JSON only: outcome \`pr-open\` with the PR number, or \`failed\` with what refused.`
@@ -360,7 +367,7 @@ Return the JSON only: outcome \`pr-open\` with the PR number, or \`failed\` with
 // the default branch, so the item reads blocked (the frontier stops listing it,
 // the goal can stop, /unblock accepts it) and no unreviewed code rides along.
 // The item's work branch stays in its worktree for the resume after /unblock.
-const flipPrompt = (item, question) => `Land a BLOCKED flip for backlog item ${item.id}, and nothing else. From the primary checkout: \`git fetch origin\`, then \`git worktree add <the worktree path CLAUDE.md or the playbook names for this project>-blocked -b chore/${slug(item.id)}-blocked origin/${CTX.base}\`. In that worktree edit ONLY \`${CTX.backlog}/${item.id}.md\`: \`status: blocked\` and a \`blocked:\` key holding the question below verbatim; keep every other key and section. Commit only that file (one call). Push in its own call, plainly: \`git push -u origin chore/${slug(item.id)}-blocked\`. Then \`gh pr create\` (never \`--repo\`/\`-R\`) titled \`chore(${item.id}): blocked — <the question, shortened>\`, the body stating the question verbatim and ending with the line the playbook's worker brief names for PRs. Never touch the item's work branch or its worktree.
+const flipPrompt = (item, question, notes = []) => `Land a BLOCKED flip for backlog item ${item.id}, and nothing else. From the primary checkout: \`git fetch origin\`, then \`git worktree add <the worktree path CLAUDE.md or the playbook names for this project>-blocked -b chore/${slug(item.id)}-blocked origin/${CTX.base}\`. In that worktree edit ONLY \`${CTX.backlog}/${item.id}.md\`: \`status: blocked\` and a \`blocked:\` key holding the question below verbatim; keep every other key and section. Commit only that file (one call).${notes.length ? ` Then, in that same -blocked worktree: ${notesStep(item, notes, '<that -blocked worktree>', `chore/${slug(item.id)}-blocked`).replace(/^First, inside [^,]*, /, '')}` : ''} Push in its own call, plainly: \`git push -u origin chore/${slug(item.id)}-blocked\`. Then \`gh pr create\` (never \`--repo\`/\`-R\`) titled \`chore(${item.id}): blocked — <the question, shortened>\`, the body stating the question verbatim and ending with the line the playbook's worker brief names for PRs. Never touch the item's work branch or its worktree.
 Question: ${question}
 Return the JSON only: outcome \`pr-open\` with the PR number, branch and worktree; or \`failed\` with what refused.`
 
@@ -368,21 +375,54 @@ Return the JSON only: outcome \`pr-open\` with the PR number, branch and worktre
 // stops the run like any dead agent: nothing here is pushed without a verdict.
 const reviewStage = async (item, impl) => {
   const rounds = []
+  const notes = []
+  const seen = new Set()
+  let unconfirmed = []
   let lastFix = null
-  for (let r = 1; r <= MAX_REVIEW_ROUNDS; r++) {
-    const rev = await callPlugin('reviewer', reviewPrompt(item, impl, rounds), { label: `review ${item.id} #${r}`, phase: 'Review', schema: REVIEW, model: MODEL })
+  let candidateFix = null
+  let afterApprove = null
+  let maxRounds = MAX_REVIEW_ROUNDS
+  for (let r = 1; r <= maxRounds; r++) {
+    // Effort is named: a workflow agent otherwise inherits the session's, and at
+    // medium the reviewer passed code a recall-framed pass flagged (a consumer
+    // run, 2026-09-27: 0 findings where /code-review high had found real ones).
+    const rev = await callPlugin('reviewer', reviewPrompt(item, impl, rounds, afterApprove), { label: `review ${item.id} #${r}`, phase: 'Review', schema: REVIEW, model: MODEL, effort: 'high' })
     if (!rev.ok) return { stop: `${item.id}: ${rev.why}` }
     // An approve over no files is the empty-diff trap (the security reviewer
     // fell in it twice, DV.47 and FP.1): a verdict about nothing.
     if (!(rev.value.files_reviewed || []).length) return { failed: 'the reviewer collected no diff — not a verdict' }
     rounds.push(rev.value)
-    if (rev.value.verdict === 'approve') break
-    const hard = rev.value.findings.filter((f) => UNCUTTABLE.has(f.kind))
-    if (r === MAX_REVIEW_ROUNDS && hard.length) return { blocked: `After ${r} review rounds these confirmed findings are still open, and an acceptance or security finding is never cut (branch ${impl.branch}, unpushed, in ${impl.worktree}): ${hard.map((f) => `[${f.kind}] ${f.file}: ${f.what}`).join('; ')}. Say how to fix them, or change the item's acceptance, then /unblock.` }
-    const fix = await call(reviewFixPrompt(item, impl, rev.value.findings, 'reviewer', r === MAX_REVIEW_ROUNDS), { label: `review-fix ${item.id} #${r}`, phase: 'Review', schema: REVIEW_FIX, model: MODEL, agentType: 'general-purpose' })
+    const cands = rev.value.candidates || []
+    for (const c of cands) if (c.scope === 'pre-existing' && !seen.has(`${c.file}|${c.what}`)) { seen.add(`${c.file}|${c.what}`); notes.push(c) }
+    // Unconfirmed [diff] candidates get ONE chance, in round 1: a fixer
+    // reproduces or dismisses each. They never become findings, so they can
+    // never block or fail an item or be cut; later rounds' ones reach only the
+    // PR body.
+    const toCheck = r === 1 ? cands.filter((c) => c.scope === 'diff') : []
+    if (r > 1) unconfirmed = cands.filter((c) => c.scope === 'diff')
+    afterApprove = null
+    if (rev.value.verdict === 'approve' && !toCheck.length) break
+    const needsWork = rev.value.verdict === 'needs-work'
+    const hard = needsWork ? rev.value.findings.filter((f) => UNCUTTABLE.has(f.kind)) : []
+    if (r === maxRounds && hard.length) return { notes, blocked: `After ${r} review rounds these confirmed findings are still open, and an acceptance or security finding is never cut (branch ${impl.branch}, unpushed, in ${impl.worktree}): ${hard.map((f) => `[${f.kind}] ${f.file}: ${f.what}`).join('; ')}. Say how to fix them, or change the item's acceptance, then /unblock.` }
+    const fix = await call(reviewFixPrompt(item, impl, needsWork ? rev.value.findings : [], 'reviewer', r === maxRounds, toCheck), { label: `review-fix ${item.id} #${r}`, phase: 'Review', schema: REVIEW_FIX, model: MODEL, agentType: 'general-purpose' })
     if (!fix.ok) return { stop: `${item.id}: ${fix.why}` }
+    if (!needsWork) {
+      // The branch was approved; the fixer only answered candidates. Whatever
+      // it answers, a candidate never blocks or fails the item: anything but a
+      // committed change is a dismissal, and the approve stands.
+      candidateFix = fix.value
+      if (!(fix.value.outcome === 'committed' && fix.value.changed)) break
+      // Its commits get a review of their own, scoped to them, with room for a
+      // fix round after it: the approved branch must not be blocked by a last
+      // round nobody could answer.
+      afterApprove = fix.value.summary
+      maxRounds = MAX_REVIEW_ROUNDS + 1
+      continue
+    }
+    if (toCheck.length) candidateFix = fix.value
     lastFix = fix.value
-    if (fix.value.outcome === 'blocked') return { blocked: fix.value.question || fix.value.summary }
+    if (fix.value.outcome === 'blocked') return { notes, blocked: fix.value.question || fix.value.summary }
     if (fix.value.outcome !== 'committed') return { failed: `review fixer gave up: ${fix.value.summary}` }
   }
   let security = null
@@ -399,11 +439,13 @@ const reviewStage = async (item, impl) => {
     }
     security = sec.value
     if (security.verdict === 'no-diff') return { failed: 'the security reviewer collected no diff — not a verdict' }
-    if (security.verdict === 'blocking') return { blocked: `A confirmed security finding is still open after one fix round (branch ${impl.branch}, unpushed, in ${impl.worktree}): ${security.findings.map((f) => `${f.file}: ${f.what}`).join('; ')}. Fix it or record why the risk is accepted, then /unblock.` }
+    if (security.verdict === 'blocking') return { notes, blocked: `A confirmed security finding is still open after one fix round (branch ${impl.branch}, unpushed, in ${impl.worktree}): ${security.findings.map((f) => `${f.file}: ${f.what}`).join('; ')}. Fix it or record why the risk is accepted, then /unblock.` }
   }
   const lastRev = rounds[rounds.length - 1]
   const remaining = lastRev.verdict === 'needs-work' && lastFix ? ` Remaining after the last round (answered by its fixer): ${lastFix.summary}` : ''
-  return { ok: true, review_rounds: rounds.length, record: `${rounds.length} review round(s); last: ${lastRev.verdict_line}.${security ? ` ${security.verdict_line}.` : ''}${remaining}` }
+  const answered = candidateFix ? ` Round-1 unconfirmed candidates, as the fixer answered them: ${candidateFix.summary}` : ''
+  const open = unconfirmed.length ? ` Unconfirmed candidates from the last round, not acted on: ${unconfirmed.map((c) => `${c.file}: ${c.what}`).join('; ')}.` : ''
+  return { ok: true, notes, review_rounds: rounds.length, record: `${rounds.length} review round(s); last: ${lastRev.verdict_line}.${security ? ` ${security.verdict_line}.` : ''}${remaining}${answered}${open}` }
 }
 
 const fixPrompt = (item, impl, watch, rounds) => `${READ_FIRST} Then read the playbook between \`<!-- worker-brief:begin -->\` and \`<!-- worker-brief:end -->\`: that brief binds you.
@@ -469,6 +511,7 @@ while (count < MAX_ITEMS) {
   }
   priorReports.push({ id: item.id, summary: `${impl.outcome}${impl.pr ? ` PR #${impl.pr}` : ''}; premises: ${impl.premises || '-'}` })
   let question = impl.outcome === 'blocked' ? (impl.question || impl.report) : null
+  let flipNotes = []
   if (impl.outcome === 'committed') {
     // The script awaits the review the implementer used to dispatch itself and
     // could not (a consumer run, 2026-09-25: four items failed with finished work, two PRs
@@ -478,9 +521,9 @@ while (count < MAX_ITEMS) {
     const reviewed = await reviewStage(item, impl)
     if (reviewed.stop) { stopped = reviewed.stop; break }
     if (reviewed.failed) { failed.push({ id: item.id, why: `${reviewed.failed} (branch ${impl.branch} committed, unpushed, in ${impl.worktree})` }); count++; continue }
-    if (reviewed.blocked) question = reviewed.blocked
+    if (reviewed.blocked) { question = reviewed.blocked; flipNotes = reviewed.notes || [] }
     else {
-      const published = await call(publishPrompt(item, impl, reviewed.record), { label: `publish ${item.id}`, phase: 'Review', schema: PUBLISH, model: SMALL_MODEL, effort: 'low', agentType: 'general-purpose' })
+      const published = await call(publishPrompt(item, impl, reviewed.record, reviewed.notes), { label: `publish ${item.id}`, phase: 'Review', schema: PUBLISH, model: SMALL_MODEL, effort: 'low', agentType: 'general-purpose' })
       if (!published.ok) { stopped = `${item.id}: ${published.why}`; break }
       if (published.value.outcome !== 'pr-open' || !published.value.pr) { failed.push({ id: item.id, why: `reviewed but not published: ${published.value.report}` }); count++; continue }
       impl = { ...impl, outcome: 'pr-open', pr: published.value.pr, review_rounds: reviewed.review_rounds }
@@ -489,7 +532,7 @@ while (count < MAX_ITEMS) {
   if (question !== null) {
     let pr = impl.outcome === 'blocked' ? impl.pr : null
     if (!pr) {
-      const flipped = await call(flipPrompt(item, question), { label: `flip ${item.id}`, phase: 'Review', schema: PUBLISH, model: SMALL_MODEL, effort: 'low', agentType: 'general-purpose' })
+      const flipped = await call(flipPrompt(item, question, flipNotes), { label: `flip ${item.id}`, phase: 'Review', schema: PUBLISH, model: SMALL_MODEL, effort: 'low', agentType: 'general-purpose' })
       if (!flipped.ok) { stopped = `${item.id}: ${flipped.why}`; break }
       if (flipped.value.outcome === 'pr-open' && flipped.value.pr) { pr = flipped.value.pr; impl = { outcome: 'blocked', pr, branch: flipped.value.branch || `chore/${slug(item.id)}-blocked`, worktree: flipped.value.worktree || '' } }
       else question = `${question} (the blocked flip did not land: ${flipped.value.report})`
@@ -579,5 +622,8 @@ return {
   // so merged items are not picked again, and the Resume stage must run live
   // to see what the stop left behind (a resumed run would replay the first
   // launch's Resume result and hand the next implementer stale state).
-  next: stopped ? 'relaunch this workflow fresh, with the same arguments, after the cause is cleared and verified gone (a usage limit: after the reset; a red base: after its job is green; a dead fleet: after sweap-fleet prints ok)' : (MILESTONE ? `batch and ${MILESTONE} frontier drained` : (IDS ? 'batch drained' : 'frontier drained')),
+  // "drained" alone means nothing is left for an agent. Failed items are still
+  // todo and runnable (skipped only because this run attempted them): the goal
+  // cites the bare word, so a run that left failures says so in the same line.
+  next: stopped ? 'relaunch this workflow fresh, with the same arguments, after the cause is cleared and verified gone (a usage limit: after the reset; a red base: after its job is green; a dead fleet: after sweap-fleet prints ok)' : `${MILESTONE ? `batch and ${MILESTONE} frontier drained` : (IDS ? 'batch drained' : 'frontier drained')}${failed.length ? ` with ${failed.length} failed — relaunch fresh once to retry them` : ''}`,
 }

@@ -1292,8 +1292,10 @@ which is stopping early — the audit is part of the milestone's definition of
 done, not an optional extra. If a milestone goal is ever hand-written rather
 than printed by `/milestone`, the audit clause still travels with it.
 
-The evaluator won't call the goal met until the audit has run and its findings
-are triaged. The `/milestone-audit` workflow finds and reports confirmed
+The goal's completion state is the audit run and triaged; its other ends
+(nothing runnable, a stop you cannot clear, the turn cap) are successful ends
+of the run, never completions of the milestone — record them as
+awaiting-human or frontier-empty, never goal-met. The `/milestone-audit` workflow finds and reports confirmed
 findings; it never edits code. What happens next is the **triage** the
 surrounding session performs (below): a bucket-1 fix is a deliberate, gated
 *follow-on* PR the session opens, not something the audit workflow does silently.

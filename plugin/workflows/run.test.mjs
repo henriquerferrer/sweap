@@ -344,3 +344,90 @@ test("an acceptance or security finding still open after two review rounds is ne
   }
   assert.match(SRC, /Never close an \\`acceptance\\` or \\`security\\` finding by cutting a claim/, "the round-1 fixer may not cut one either");
 });
+
+// ---------------------------------------------------------------------------
+// Review depth (a consumer run, 2026-09-27): the reviewer ran at the session's
+// medium effort and its doubts went to an Advisory string nothing read.
+test("the reviewer runs at high effort, named, never inherited from the session", () => {
+  const line = SRC.match(/callPlugin\('reviewer',[^\n]*/)[0];
+  assert.match(line, /effort: 'high'/);
+});
+
+const cand = (scope, what = "focus lands on the page after close") => ({ file: "patients.tsx:963", what, scope });
+test("an approve's [diff] candidates get one fixer round to reproduce or dismiss, then a second review only if code changed", async () => {
+  const changed = await simulate({ review: (n) => (n === 1 ? { verdict: "approve", findings: [], files_reviewed: ["a.ts"], candidates: [cand("diff")], verdict_line: "Verdict: approve" } : undefined), "review-fix": () => ({ outcome: "committed", changed: true, summary: "reproduced with a test, fixed" }) });
+  assert.deepEqual(changed.labels.slice(3, 7), ["review F1.1 #1", "review-fix F1.1 #1", "review F1.1 #2", "publish F1.1"]);
+  const fp = changed.calls.find((c) => c.label === "review-fix F1.1 #1").prompt;
+  assert.match(fp, /returned no confirmed finding/);
+  assert.match(fp, /UNCONFIRMED candidates[\s\S]*patients\.tsx:963/);
+  assert.match(fp, /Never cut a claim, edit the item's acceptance or weaken a test for a candidate/);
+  const dismissed = await simulate({ review: (n) => (n === 1 ? { verdict: "approve", findings: [], files_reviewed: ["a.ts"], candidates: [cand("diff")], verdict_line: "Verdict: approve" } : undefined), "review-fix": () => ({ outcome: "committed", changed: false, summary: "dismissed: the listener is gated" }) });
+  assert.deepEqual(dismissed.labels.slice(3, 6), ["review F1.1 #1", "review-fix F1.1 #1", "publish F1.1"], "nothing changed, nothing to re-review");
+});
+
+test("candidates never block an item and never reach the uncuttable path; later rounds' ones only reach the PR body", async () => {
+  const r = await simulate({ review: (n) => (n === 1 ? needsWork() : { verdict: "needs-work", findings: [{ file: "a.ts:2", what: "still off", kind: "other" }], files_reviewed: ["a.ts"], candidates: [cand("diff", "maybe a race")], verdict_line: "Verdict: needs-work" }), "review-fix": () => ({ outcome: "committed", changed: true, summary: "cut it" }) });
+  assert.ok(r.labels.includes("publish F1.1"));
+  assert.deepEqual(r.out.blocked, []);
+  assert.match(r.calls.find((c) => c.label === "publish F1.1").prompt, /Unconfirmed candidates from the last round, not acted on: patients\.tsx:963: maybe a race/);
+  assert.ok(!/maybe a race/.test(r.calls.find((c) => c.label === "review-fix F1.1 #2").prompt), "a round-2 candidate is not handed to the last fixer (it would be cut)");
+});
+
+test("[pre-existing] candidates are filed as discovered notes, on the published and on the blocked path, never given to the fixer", async () => {
+  const pub = await simulate({ review: () => ({ verdict: "approve", findings: [], files_reviewed: ["a.ts"], candidates: [cand("pre-existing", "the empty-panel Reset unmounts under focus")], verdict_line: "Verdict: approve" }) });
+  assert.ok(!pub.labels.some((l) => l.startsWith("review-fix")), "not this item's work");
+  assert.match(pub.calls.find((c) => c.label === "publish F1.1").prompt, /cd \/wt\/f1-1 && sweap-note discovered '<a one-line title>' gap F1\.1[\s\S]*commit the new files[\s\S]*never changes your outcome[\s\S]*empty-panel Reset/);
+  const blk = await simulate({ review: (n) => ({ ...needsWork(), findings: [{ file: "x.ts", what: "clause 3 unmet", kind: "acceptance" }], candidates: n === 1 ? [cand("pre-existing", "old listener")] : [] }), "review-fix": () => ({ outcome: "committed", changed: true, summary: "tried" }) });
+  const flip = blk.calls.find((c) => c.label === "flip F1.1").prompt;
+  assert.match(flip, /-blocked worktree[\s\S]*sweap-note discovered[\s\S]*chore\/f1-1-blocked[\s\S]*old listener/, "committed on the flip branch, so it reaches main");
+  assert.ok(flip.indexOf("sweap-note") > flip.indexOf("Commit only that file"), "notes are filed after the flip commit, before the push");
+  assert.equal((flip.match(/old listener/g) || []).length, 1, "a note re-raised by round 2 is filed once");
+});
+
+// The /goal condition is judged by a small model with no thinking, as ONE
+// predicate over the whole text (a consumer, 2026-09-27: it agreed "NOTHING IS
+// RUNNABLE is met", then refused 13 times because the preamble named the audit).
+test("every goal template is a list of success states, the How is outside the check, and each cites a word the workflow really returns", () => {
+  const MS = readFileSync(join(HERE, "..", "commands", "milestone.md"), "utf8");
+  const goals = [...MS.matchAll(/```\n(\/goal [\s\S]*?)```/g)].map((m) => m[1]);
+  assert.equal(goals.length, 3, "milestone+debt, hand-offs outstanding, debt-only");
+  for (const raw of goals) {
+    const g = raw.replace(/\s+/g, " ");
+    assert.match(g, /^\/goal This goal is MET when ANY ONE of these is shown in the conversation:/);
+    assert.match(g, /How \(instructions, NOT part of the check\):/);
+    assert.match(g, /the human typed a message asking you to stop/);
+    assert.match(g, /with no item under failed/);
+    assert.match(g, /relaunch it fresh once/);
+    assert.match(g, /"Ending the run"/);
+    assert.ok(!/Stop when|stop, not a completion|below\)/.test(g), "the old grammar made the stop clauses exceptions to an audit precondition");
+    const word = g.match(/returned "([a-zA-Z<> ]+drained)"/)[1];
+    const shape = word.replace("<MILESTONE>", "${MILESTONE}");
+    assert.ok(SRC.includes(g.includes('"milestone":') ? `\`${shape}\`` : `'${shape}'`), `the goal cites "${word}"; run.js must return exactly that for this template's args`);
+  }
+  assert.match(goals[0].replace(/\s+/g, " "), /\(B\) to \(E\) are successful ends of this run, not failures, and none of them needs the audit/);
+});
+
+test("a candidate never blocks or fails an approved item, whatever the fixer answers", async () => {
+  const approveWith = (n) => (n === 1 ? { verdict: "approve", findings: [], files_reviewed: ["a.ts"], candidates: [cand("diff")], verdict_line: "Verdict: approve" } : undefined);
+  for (const answer of [{ outcome: "gave-up", changed: false, summary: "could not reproduce" }, { outcome: "blocked", changed: false, summary: "s", question: "is this intended?" }]) {
+    const r = await simulate({ review: approveWith, "review-fix": () => answer });
+    assert.ok(r.labels.includes("publish F1.1"), `${answer.outcome} on a candidate still publishes the approved branch`);
+    assert.deepEqual([r.out.blocked, r.out.failed], [[], []]);
+    assert.match(r.calls.find((c) => c.label === "publish F1.1").prompt, /as the fixer answered them/);
+  }
+});
+
+test("after an approve, the candidate fix gets a review scoped to its commits and a fix round after it, never an unanswerable last round", async () => {
+  const r = await simulate({
+    review: (n) => (n === 1 ? { verdict: "approve", findings: [], files_reviewed: ["a.ts"], candidates: [cand("diff")], verdict_line: "Verdict: approve" }
+      : n === 2 ? { verdict: "needs-work", findings: [{ file: "a.ts:9", what: "the new guard breaks clause 2", kind: "acceptance" }], files_reviewed: ["a.ts"], verdict_line: "Verdict: needs-work" } : undefined),
+    "review-fix": () => ({ outcome: "committed", changed: true, summary: "fixed" }),
+  });
+  assert.deepEqual(r.labels.slice(3, 9), ["review F1.1 #1", "review-fix F1.1 #1", "review F1.1 #2", "review-fix F1.1 #2", "review F1.1 #3", "publish F1.1"]);
+  assert.match(r.calls.find((c) => c.label === "review F1.1 #2").prompt, /Round 1 APPROVED this branch[\s\S]*Review ONLY the commits it added/);
+  assert.deepEqual(r.out.blocked, []);
+});
+
+test("a drained run that left failed items says so in the same line the goal cites", () => {
+  assert.match(SRC, /\$\{failed\.length \? ` with \$\{failed\.length\} failed — relaunch fresh once to retry them` : ''\}/);
+});

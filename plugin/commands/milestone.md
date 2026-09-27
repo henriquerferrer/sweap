@@ -445,25 +445,34 @@ travels with the completing run instead).
 **Milestone + debt** (an `M` was resolved; no hand-offs outstanding):
 
 ```
-/goal First, every outstanding audit follow-up item in the backlog is [done];
-then every unblocked <MILESTONE> item is [done] per its definition of done, and
-the <MILESTONE> milestone-audit (plus the Tier-2 UI audit for a UI-heavy
-milestone) has run and been triaged. Stop when the only [todo] items left are
-audit follow-ups carrying followup_of: <MILESTONE> (those are the next run's
-debt, not this run's work), or when NOTHING IS RUNNABLE — every remaining [todo]
-has an unsatisfied dependency on a [blocked], [attended] or [deferred] item, so
-the frontier is empty and no agent may pick anything up — or when the run
-workflow stopped on a cause you cannot clear (say which). Or after <TURNS>
-turns. How: I am asking you to drive every item with the sweap:run workflow and
-never by hand — launch it now with Workflow({name: "sweap:run", args: {"ids":
-[<D, in drain order>], "milestone": "<MILESTONE>"}}), args as an object; while
-it runs, end your turn and wait for its result, never poll it. When it returns
-drained AND every <MILESTONE> item is [done], run /milestone-audit <MILESTONE>
-and triage; drained with items left open is a stop, not a completion. When it returns stopped, clear the cause if you can (a red default branch:
-rerun its failed job once), verify it is gone (sweap-fleet prints ok; the
-default branch is green) and only then relaunch it fresh with the same args;
-if you cannot verify that, stop and say which cause. When you stop,
-record it as the playbook's "Ending the run" section says (docs/agentic-loop-playbook.md).
+/goal This goal is MET when ANY ONE of these is shown in the conversation: (A)
+every outstanding audit follow-up item and every <MILESTONE> item is [done] per its
+definition of done, and /milestone-audit <MILESTONE> (plus the Tier-2 UI audit for
+a UI-heavy milestone) has run and been triaged; (B) the sweap:run workflow
+returned "batch and <MILESTONE> frontier drained" with no item under failed,
+while <MILESTONE> items remain open because every
+remaining [todo] waits on a [blocked], [attended] or [deferred] item, or the
+only [todo] items left are audit follow-ups carrying followup_of: <MILESTONE>
+(the next run's debt); (C) the workflow stopped on a cause you cannot clear,
+and you said which; (D) the human typed a message asking you to stop; (E)
+<TURNS> turns have passed. (B) to (E) are successful ends of this run, not failures, and none of
+them needs the audit. How (instructions, NOT part of the check): drive every
+item with the sweap:run workflow and never by hand — launch it now with
+Workflow({name: "sweap:run", args: {"ids": [<D, in drain order>], "milestone":
+"<MILESTONE>"}}), args as an object; while it runs, end your turn and wait for
+its result, never poll it. When it returns drained and every <MILESTONE> item is
+[done], run /milestone-audit <MILESTONE> and triage — that is (A). When it
+returns drained with items still open, that is (B): stop; the audit waits for
+the run that completes the milestone. When it returns drained with items under
+failed, relaunch it fresh once with the same args; if they fail again, that is
+(C). When it returns stopped, clear the cause
+if you can (a red default branch: rerun its failed job once), verify it is gone
+(sweap-fleet prints ok; the default branch is green) and only then relaunch it
+fresh with the same args; if you cannot verify that, stop and say which cause —
+that is (C). When you stop, record it as the playbook's "Ending the run"
+section says (docs/agentic-loop-playbook.md): (A) is goal-met; (B) is
+awaiting-human with every blocked or attended id in needs:, or frontier-empty
+when there is none; (E) is turns-exhausted.
 ```
 
 That stop condition names the follow-ups deliberately. A correct audit ends by CREATING work: bucket-2 triage writes
@@ -482,40 +491,50 @@ clause travels with the *completing* run, the one kicked off after the hand-offs
 close:
 
 ```
-/goal Every outstanding audit follow-up item in the backlog is [done]; then
-every unblocked <MILESTONE> item NOT gated by an outstanding hand-off is [done]
-per its definition of done. Hand-offs <IDS> are the human's and remain open, so
-<MILESTONE> cannot complete and its milestone-audit is NOT due this run — do not
-attempt it. Stop when NOTHING IS RUNNABLE — every remaining [todo] has an
-unsatisfied dependency on a [blocked], [attended] or [deferred] item, so the
-frontier is empty — or when the run workflow stopped on a cause you cannot
-clear (say which) — or after <TURNS> turns. How: I am asking you to drive every
-item with the sweap:run workflow and never by hand — launch it now with
-Workflow({name: "sweap:run", args: {"ids": [<D, in drain order>], "milestone":
-"<MILESTONE>"}}), args as an object; while it runs, end your turn and wait for
-its result, never poll it.
+/goal This goal is MET when ANY ONE of these is shown in the conversation: (A)
+the sweap:run workflow returned "batch and <MILESTONE> frontier drained" with
+no item under failed — every outstanding audit
+follow-up item and every <MILESTONE> item NOT gated by an outstanding hand-off
+is [done], or waits on a [blocked], [attended] or [deferred] item; (B) the
+workflow stopped on a cause you cannot clear, and you said which; (C) the human
+typed a message asking you to stop; (D) <TURNS> turns have passed. Hand-offs <IDS> are the
+human's and remain open, so <MILESTONE> cannot complete and its milestone-audit
+is NOT due this run — do not attempt it; no end of this run needs it. How
+(instructions, NOT part of the check): drive every item with the sweap:run
+workflow and never by hand — launch it now with Workflow({name: "sweap:run",
+args: {"ids": [<D, in drain order>], "milestone": "<MILESTONE>"}}), args as an
+object; while it runs, end your turn and wait for its result, never poll it.
 When it returns stopped, clear the cause if you can (a red default branch:
 rerun its failed job once), verify it is gone (sweap-fleet prints ok; the
 default branch is green) and only then relaunch it fresh with the same args;
-if you cannot verify that, stop and say which cause. When you
-stop, record it as the playbook's "Ending the run" section says (docs/agentic-loop-playbook.md).
+if you cannot verify that, stop and say which cause. When it returns drained
+with items under failed, relaunch it fresh once; if they fail again, that is
+(B). When you stop, record it as the playbook's "Ending the run" section says
+(docs/agentic-loop-playbook.md): (A) is awaiting-human with the open hand-offs
+and every blocked or attended id in needs:, never goal-met.
 ```
 
 **Debt-only** (no runnable `M`, but `D` is non-empty):
 
 ```
-/goal Every outstanding audit follow-up item in the backlog is [done] per its
-definition of done. Stop when NOTHING IS RUNNABLE — every remaining [todo] has
-an unsatisfied dependency on a [blocked], [attended] or [deferred] item, so the
-frontier is empty — or when the run workflow stopped on a cause you cannot
-clear (say which) — or after <TURNS> turns. How: I am asking you to drive every
-item with the sweap:run workflow and never by hand — launch it now with
+/goal This goal is MET when ANY ONE of these is shown in the conversation: (A)
+the sweap:run workflow returned "batch drained" with no item under failed —
+every outstanding audit
+follow-up item is [done] per its definition of done, or waits on a [blocked],
+[attended] or [deferred] item; (B) the workflow stopped on a cause you cannot
+clear, and you said which; (C) the human typed a message asking you to stop; (D)
+<TURNS> turns have passed. How (instructions, NOT part of the check): drive every item with
+the sweap:run workflow and never by hand — launch it now with
 Workflow({name: "sweap:run", args: {"ids": [<D, in drain order>]}}), args as an
-object; while it runs, end your turn and wait for its result, never poll it. When it returns stopped, clear the cause if you can (a red default branch:
+object; while it runs, end your turn and wait for its result, never poll it.
+When it returns stopped, clear the cause if you can (a red default branch:
 rerun its failed job once), verify it is gone (sweap-fleet prints ok; the
 default branch is green) and only then relaunch it fresh with the same args;
-if you cannot verify that, stop and say which cause. When you stop, record it (see
-"Record the end of the run" below).
+if you cannot verify that, stop and say which cause. When it returns drained
+with items under failed, relaunch it fresh once; if they fail again, that is
+(B). When you stop, record it as the playbook's "Ending the run" section says
+(docs/agentic-loop-playbook.md): (A) is goal-met when every follow-up is done,
+else awaiting-human with every blocked or attended id in needs:.
 ```
 
 **Why the stop clause names the frontier and not a set of statuses.** "Gated by
