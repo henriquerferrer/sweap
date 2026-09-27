@@ -45,7 +45,7 @@ Resolve the run:
   run shape.
 - Run `sweap-fleet` (the plugin's bin/ is on PATH; JSON, read `.verdict`).
   `fleet-down` → there is no goal to print: CI cannot run, and a run started
-  now opens PRs nobody can test, one per 99 minutes (consumer A 2026-09-24). Print
+  now opens PRs nobody can test, one per 99 minutes (a consumer, 2026-09-24). Print
   its `.reason` and the fix — the runner recreate command when CLAUDE.md names
   one — and stop. `unknown` → say why and continue. A `deprecations` entry →
   print one line before the goal: runner version <v> on <runners> retires
@@ -194,7 +194,7 @@ free) and print the goal that now applies.
 
 **Why this is not a fork any more.** A hand-off is an item *of* the milestone,
 so while it is open the milestone cannot complete, so its audit is not due —
-which means "later" never yields the ordinary goal, only the degraded one. Consumer A
+which means "later" never yields the ordinary goal, only the degraded one. A consumer
 ran the whole of 2026-08-20 on a goal whose audit clause was unsatisfiable from
 the minute it was printed, because `DS.5.3` was authored `attended` in the very
 commit that created the milestone. The run then had no legal way to finish or to
@@ -366,7 +366,7 @@ you cannot name why it is theirs, do it yourself.
 `needs:` verbatim in their end-of-run notification — in a cloud routine the run
 file is discarded with the VM, so the notification is the only durable copy.
 This is what gives a stuck run a legitimate way OUT: before it existed the only exit from an unsatisfiable goal was to ask
-the human in chat, where no tool could see it, which is why consumer A looked
+the human in chat, where no tool could see it, which is why a consumer looked
 silent for seven hours on 2026-08-21 while it was in fact politely waiting for
 an answer.
 
@@ -398,19 +398,19 @@ Then **print** the exact goal line, filled in, for the user to paste — do NOT
 try to set `/goal` yourself (only the user can invoke it). Pick the template by
 run shape from "Resolve the run" above. **Print it as ONE line**, however the
 template is wrapped here: a multi-line paste reaches the session as pasted
-text, not as a command (consumer A, 2026-09-23: the session read the pasted goal
+text, not as a command (a consumer, 2026-09-23: the session read the pasted goal
 as prose and no goal was ever set), and a single line pasted after `/goal `
 is the command. Print nothing else to paste. The goal is read by a session
 that has read nothing else — it may start after `/clear` — so the goal refers
 to nothing "below" or "above": the end-of-run record is named by its playbook
-section (consumer A 2026-09-24: a fresh session asked for the missing section).
+section (a consumer, 2026-09-24: a fresh session asked for the missing section).
 
 **The goal names the driver, so one paste is the whole kickoff.** The goal's
 text is the first turn's directive — whether the built-in `/goal` engages or
 the line lands as a plain prompt, the session reads the same words — so the
 sentence that launches the `sweap:run` workflow lives INSIDE the goal, never
 next to it. Printing the launch as a second paste is what produced "should I
-run the goal or the other one?" on consumer A (2026-09-23): the human ran a bare
+run the goal or the other one?" on a consumer repo (2026-09-23): the human ran a bare
 `/sweap:run` first, which threw away the drain order this command computed
 (the run started on FP.2, not the CI flake DV.48) and drained the whole
 frontier (F14 and F15 items behind F13's), then pasted the goal, which launched
@@ -468,7 +468,7 @@ record it as the playbook's "Ending the run" section says (docs/agentic-loop-pla
 
 That stop condition names the follow-ups deliberately. A correct audit ends by CREATING work: bucket-2 triage writes
 `followup_of:` todo items, so a run that audits well can never literally reach
-"only blocked or attended remain" — consumer A's F11 run hit exactly that and had to
+"only blocked or attended remain" — a consumer's F11 run hit exactly that and had to
 escalate the ambiguity. Those items are the NEXT run's debt (the frontier drains
 them debt-first), not this one's.
 
@@ -524,7 +524,7 @@ attended hand-off stays `status: todo` for as long as the hand-off is open —
 `blocked` means an agent got stuck and needs an answer, `deferred` means the
 premise is not yet valid, and there is no third label for "todo, deps unmet".
 That is what the frontier computation is for. A stop clause phrased in statuses
-therefore cannot fire in exactly the situation `attended` exists to model: consumer A
+therefore cannot fire in exactly the situation `attended` exists to model: a consumer
 reached a state on 2026-08-21 where the frontier was provably EMPTY — nothing an
 agent was permitted to pick up — while nine `DS.5.4`–`DS.5.12` items sat at
 `todo` behind one hand-off, so every status-based clause read false. The run
@@ -549,7 +549,7 @@ with no argument shows the condition when it took; "No goal set" means the line
 landed as a prompt (the run still starts — the driver sentence is read either
 way — but nothing re-drives the session after a turn that ends idle). Two
 things end a 24/7 run that no sweap control can catch: a per-model credit wall
-on the SESSION model (consumer A 2026-09-03: "You've reached your Fable limit"
+on the SESSION model (a consumer, 2026-09-03: "You've reached your Fable limit"
 ended the turn and nothing moved for eight hours; the session's own model
 should be one the subscription's automatic continue covers), and a
 `.claude/settings*.json` that sets `autoContinueAtUsageLimit` — on by

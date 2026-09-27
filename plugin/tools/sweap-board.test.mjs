@@ -762,8 +762,8 @@ test("renderPage mounts the running-milestone card and can mark it in the backlo
   assert.match(html, /ms\.running/);
 });
 
-// --- what the consumer A run exposed (2026-08-20) -----------------------------------
-// Run live against consumer A mid-milestone, the card rendered NOTHING. Three
+// --- what a consumer's run exposed (2026-08-20) -----------------------------------
+// Run live against a consumer mid-milestone, the card rendered NOTHING. Three
 // separate defects, two of them older than the card; each test below is one of
 // them, written against the shapes that repo actually produces.
 import { parseBoard, dotless, dotlessOwners, refMatchesLoosely } from "./sweap-board.lib.mjs";
@@ -778,7 +778,7 @@ test("parseBoard reads a real markdown table — pipe-edged rows, dotted ids, da
     "| track A (`communications`) | track B (everything else) |",
     "| FN.1 → FN.2 → FN.3 | DS.5.1 → FJ.6 |",
   ].join("\n"));
-  // Dotted ids parse at all — `[A-Za-z]+\d` rejected every one of consumer A's ids.
+  // Dotted ids parse at all — `[A-Za-z]+\d` rejected every one of a consumer's ids.
   assert.deepEqual(Object.keys(ann.steps), ["DS.5.1", "FN.3"]);
   assert.equal(ann.steps["FN.3"], "worker active");
   // An em-dash cell is markdown for "nothing", not a blocked question.
@@ -1459,7 +1459,7 @@ test("writeSession rejects a missing milestone, a bad date, and a bogus verdict"
 });
 
 test("a discovered note with an unreadable kind is announced in the card's notes, never coerced and never dropped", async () => {
-  // consumer A #290/#292: two hand-written notes with a kind the triage paths do not
+  // consumer PR #290/#292: two hand-written notes with a kind the triage paths do not
   // read sat invisible on main. The page header and /milestone both read
   // `notes`, so one line there is the whole fix.
   const dir = fixture({

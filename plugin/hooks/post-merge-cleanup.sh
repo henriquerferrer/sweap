@@ -23,7 +23,7 @@ set -uo pipefail
 
 # SELF-FILTER to a merge, like post-merge-redcheck.sh and post-merge-auditcheck.sh.
 # The registration's `if: Bash(gh pr merge:*)` does not hold on compound commands:
-# in one consumer A run 314 of 315 firings were on commands with no merge in them
+# in one consumer run 314 of 315 firings were on commands with no merge in them
 # (`until gh run view ...`, `cd ... && ...`), each spending 8-13s in gh and
 # re-injecting the stranded-backlog banner. Anything we cannot judge (no jq, no
 # parser beside us, an unreadable payload, run by hand on a TTY) keeps the old

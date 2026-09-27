@@ -155,7 +155,7 @@ export function frontierReport(projectDir) {
       reviewDimensions: i.reviewDimensions, lane: i.lane, file: i.file,
       // A todo item may still carry `blocked:` — the ANSWERED question that
       // /unblock left in place. It is runnable; a reader that treats the key as
-      // "blocked" skips the first item of a drain (consumer A FP.2, 2026-09-22).
+      // "blocked" skips the first item of a drain (a consumer's FP.2, 2026-09-22).
       answeredQuestion: i.blocked || null,
     })),
     malformed: items.filter((i) => i.malformed).map((i) => i.file),

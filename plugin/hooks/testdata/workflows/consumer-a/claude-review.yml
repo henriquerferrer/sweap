@@ -29,7 +29,7 @@ concurrency:
 jobs:
   review:
     if: ${{ !github.event.pull_request.draft }}
-    # MOVED TO SELF-HOSTED on 2026-08-23 at Henrique's direct request, after the
+    # MOVED TO SELF-HOSTED on 2026-08-23 at the maintainer's direct request, after the
     # account's Actions spending limit was reached and this job stopped starting:
     #
     #   "The job was not started because recent account payments have failed or
@@ -84,7 +84,7 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: |
             Review this pull request (#${{ github.event.pull_request.number }})
-            as the consumer A repository reviewer. Read CLAUDE.md and
+            as the consumer-a repository reviewer. Read CLAUDE.md and
             docs/agentic-loop-playbook.md for conventions first.
             Focus on, in priority order: correctness bugs; tenant-isolation /
             RLS violations (every tenant table follows the F0 pattern; queries

@@ -74,7 +74,7 @@ test("merge-watcher.md: 1h cache, no write tools, foreground bounded tick, atten
   const tools = fm.match(/^tools:\s*(.*)$/m)[1];
   for (const t of ["Write", "Edit", "NotebookEdit", "Agent"]) assert.ok(!tools.split(/[,\s]+/).includes(t), `watcher must not carry ${t}`);
   assert.match(WATCHER, /sweap-merge tick <PR number from your dispatch> --budget 540/, "tick is the bounded verb that always prints its closing word; watch re-ticks until terminal and can be killed by the Bash timeout with nothing printed");
-  assert.ok(!/<n>/.test(WATCHER), "a bare <n> placeholder was copied literally as `tick 1` on ~23 of 27 consumer A dispatches (2026-09-23..25)");
+  assert.ok(!/<n>/.test(WATCHER), "a bare <n> placeholder was copied literally as `tick 1` on ~23 of 27 dispatches on a consumer (2026-09-23..25)");
   assert.match(WATCHER, /`600000`/);
   assert.match(WATCHER, /actions\/runners/, "an attended word is checked against the fleet before it is believed (lane lessons 10 and 17)");
   assert.match(WATCHER, /held-by:<owner>[^\n]*\n?[^|]*sleep 150/);
@@ -90,7 +90,7 @@ test("attended and held-by never stop the run; a dead agent, a red base or a dea
   const gate = SRC.match(/if \(resume\.fleet === 'fleet-down'\) \{([\s\S]*?)\n\}/);
   assert.ok(gate && /return \{/.test(gate[1]), "the Resume stage stops the run before any implementer when sweap-fleet says fleet-down");
   assert.ok(SRC.indexOf("resume.fleet === 'fleet-down'") < SRC.indexOf("while (count < MAX_ITEMS)"));
-  assert.match(SRC, /sweap-merge tick \$\{impl\.pr\} --budget 540/, "the dispatch names the PR number: two watchers read the brief's <n> placeholder literally and ticked PR #1 (consumer A 2026-09-24)");
+  assert.match(SRC, /sweap-merge tick \$\{impl\.pr\} --budget 540/, "the dispatch names the PR number: two watchers read the brief's <n> placeholder literally and ticked PR #1 (a consumer, 2026-09-24)");
   // The run-stopping assignments name their causes.
   const stops = [...SRC.matchAll(/stopped = [^\n]+/g)].map((m) => m[0]);
   for (const s of stops) assert.ok(!/attended|held-by/.test(s), `a stop on ${s}`);
@@ -131,7 +131,7 @@ test("allowedFor: this milestone's items and OTHER milestones' follow-ups; never
   assert.equal(milestoneOf("F13.4"), "F13");
   const t = (id, followupOf, M) => allowedFor({ id, followupOf }, M);
   assert.equal(t("F13.1", null, "F13"), true);
-  assert.equal(t("F14.1", null, "F13"), false, "consumer A 2026-09-23: a bare launch listed F14.1 and five F15 items for an F13 run");
+  assert.equal(t("F14.1", null, "F13"), false, "a consumer, 2026-09-23: a bare launch listed F14.1 and five F15 items for an F13 run");
   assert.equal(t("FP.2", "F12", "F13"), true, "debt of an earlier milestone is drained first");
   assert.equal(t("DV.48", "DV", "F13"), true, "a follow-up family keyed by followup_of alone (no milestone prefix) is still debt");
   assert.equal(t("F13.28", "F13", "F13"), false, "a follow-up OF this milestone is the next run's debt; the goal stops on it");
@@ -161,7 +161,7 @@ test("the implementer brief binds to the playbook by its markers and never merge
   assert.match(SRC, /worker-brief:begin -->\\` and \\`<!-- worker-brief:end -->/);
   assert.match(SRC, /never run \\`sweap-merge\\`/);
   assert.match(SRC, /RESUME it/);
-  assert.match(SRC, /Never dispatch an agent, never start the code-review or security-review skill, and never leave anything running in the background/, "consumer A F13: the implementer's own review forked into the background and forced its return — four items failed, two PRs went unreviewed");
+  assert.match(SRC, /Never dispatch an agent, never start the code-review or security-review skill, and never leave anything running in the background/, "a consumer run (2026-09-25): the implementer's own review forked into the background and forced its return — four items failed, two PRs went unreviewed");
   assert.ok(!/subagent_type: "\$\{PLUGIN_NAME\}:reviewer"/.test(SRC), "the implementer no longer dispatches the reviewer; the script does");
   assert.match(PLAYBOOK, /Under `\/sweap:run` you do not review, push or open the PR/, "the worker brief must not tell a run implementer to review, or the fork comes back");
   assert.match(PLAYBOOK, /<!-- run-core:end -->/);
@@ -188,7 +188,7 @@ test("args: an object, a JSON string (parsed), a comma list, or nothing; a JSON-
   assert.ok(block, "parseArgs not found");
   const parseArgs = new Function(`${block[0]}; return parseArgs`)();
   assert.deepEqual(parseArgs({ ids: ["A"], milestone: "F13" }), { ids: ["A"], milestone: "F13" });
-  assert.deepEqual(parseArgs('{"ids": ["DV.48", "FP.2"], "milestone": "F13"}'), { ids: ["DV.48", "FP.2"], milestone: "F13" }, "a model launching from a goal sentence has passed a JSON string before (consumer A 2026-09-02); it must not become garbage ids");
+  assert.deepEqual(parseArgs('{"ids": ["DV.48", "FP.2"], "milestone": "F13"}'), { ids: ["DV.48", "FP.2"], milestone: "F13" }, "a model launching from a goal sentence has passed a JSON string before (a consumer, 2026-09-02); it must not become garbage ids");
   assert.deepEqual(parseArgs("DV.48, FP.2"), { ids: ["DV.48", "FP.2"] });
   assert.deepEqual(parseArgs(["DV.48", "FP.2"]), { ids: ["DV.48", "FP.2"] }, "a bare array is a batch (the workflow-authoring reference passes args that way), never a silent whole-frontier run");
   assert.deepEqual(parseArgs('["DV.48"]'), { ids: ["DV.48"] });

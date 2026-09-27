@@ -78,7 +78,7 @@ jobs:
             #
             # NOT HEAD^. A push can land several commits at once, and HEAD^ sees
             # only the tip, so a code commit earlier in the same push is
-            # invisible to the classifier. Consumer A, 2026-08-30: a human pushed a
+            # invisible to the classifier. A consumer, 2026-08-30: a human pushed a
             # ci.yml edit (892147d, which rewrote the e2e job's runner labels and
             # timeout) together with its roadmap update (5964666). HEAD^ saw only
             # the roadmap file, the lane came out `roadmap-only`, and e2e skipped

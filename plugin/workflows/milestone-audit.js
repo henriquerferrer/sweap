@@ -278,7 +278,7 @@ const lensConfig = await agent(
 
 // LENSES-START
 // One finder per KEY. A project that lists a default key among its extras
-// (consumer A: `default + [tenancy, authz, ...]`) used to get that lens twice — a
+// (a consumer: `default + [tenancy, authz, ...]`) used to get that lens twice — a
 // second high-effort finder plus its refuters on every audit, and a lost-lens
 // check (keyed) that one live copy could mask. The project's lens wins the
 // collision: it is the one grounded in this codebase.
@@ -316,7 +316,7 @@ const NO_WRITES =
 // name, such as `my-plugin:code-reviewer`, once the plugin is enabled". The same
 // file dropped into a repo's own `.claude/agents/` registers BARE. This workflow
 // dispatched the bare name unconditionally, so it worked in sweap's own checkout
-// and was broken for every plugin install — consumer A's F11 audit lost all eleven
+// and was broken for every plugin install — a consumer's F11 audit lost all eleven
 // finder agents to `agent type 'audit-reader' not found. Available agents: ...
 // sweap:audit-reader, ...` and only completed because the session hand-patched
 // its own copy of this script.
@@ -524,7 +524,7 @@ const found = await pipeline(
 // a finder threw or was lost, and without this the two collapse into the same
 // empty list one line down — which is how a run whose finders ALL failed
 // produced a well-formed, gate-passing record saying the milestone was clean
-// (consumer A F11: eleven finder agents died on an unresolvable agent type and the
+// (a consumer's F11: eleven finder agents died on an unresolvable agent type and the
 // record would have read 0/0/0). Fail at the source, where the failure is still
 // visible and attributable, rather than emitting an audit-shaped artifact that
 // says nothing happened and nothing was wrong in the same breath.

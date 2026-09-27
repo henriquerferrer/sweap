@@ -110,7 +110,7 @@ script reported (these are the fill-ins the script cannot do for you):
      `sweap-merge watch 12` and bare `sweap-merge`, and the space it implies
      stops it matching some unrelated `sweap-merge…` program. Without the rule
      the driver prompts while `Bash(gh pr merge:*)` does not, so every run
-     routes around it — that is exactly how consumer A's first run with the driver
+     routes around it — that is exactly how a consumer's first run with the driver
      installed used it zero times. Allowlisting is only possible because the
      name is stable: a prefix pattern against the script's own path is not,
      since the plugin cache path carries a commit sha and changes on every

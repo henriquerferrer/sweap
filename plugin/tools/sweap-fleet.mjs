@@ -9,7 +9,7 @@
 //
 // Read-only: four kinds of `gh` GET calls, nothing written anywhere.
 //
-// WHY THIS EXISTS. Consumer A, 2026-09-24: GitHub retired the runner version both
+// WHY THIS EXISTS. A consumer, 2026-09-24: GitHub retired the runner version both
 // self-hosted runners were on; they deregistered themselves in a loop for five
 // hours. The merge driver reported every PR as queued, the watcher timed out
 // after 99 minutes and filed the item as needing a human, and the run went on

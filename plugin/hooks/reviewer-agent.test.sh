@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # reviewer-agent.test.sh — the review-loop rules that live in prose (reviewer.md
-# and the playbook's step 3) and have no other pre-merge check. Consumer A DV.9
+# and the playbook's step 3) and have no other pre-merge check. A consumer's DV.9
 # (2026-09-07): one reviewer re-messaged five times produced seven rounds and
 # ~600k tokens, the last three rounds about comment wording; the CI reviewer
 # approved the PR on its first pass. The remedy is on the reviewer side, and
@@ -18,7 +18,7 @@ ok "Advisory never flips the verdict"                           grep -qF 'Adviso
 ok "a re-messaged reviewer answers only closure, no new class"  grep -qF 'do not open a new' "$REVIEWER"
 ok "the verdict line is still the last line"                    grep -qF 'it must be the last line' "$REVIEWER"
 ok "playbook: a re-review is a NEW dispatch"                    grep -qF 'A re-review is a NEW' "$PLAYBOOK"
-ok "playbook records the DV.9 measurement"                      grep -qF 'consumer A DV.9, 2026-09-07' "$PLAYBOOK"
+ok "playbook records the DV.9 measurement"                      grep -qF "a consumer's DV.9, 2026-09-07" "$PLAYBOOK"
 # The Run core is what an item driver reads and nothing else up front, and the
 # worker brief inside it is dispatched BY REFERENCE to its two markers. A
 # restructure that drops a marker, or pushes the core past where a short read

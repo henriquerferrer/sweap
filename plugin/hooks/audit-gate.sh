@@ -98,7 +98,7 @@ case "$BACKLOG_DIR" in */) : ;; *) BACKLOG_DIR="$BACKLOG_DIR/" ;; esac
 # --files can only deny a PR that touches a top-level item file (the last arm of
 # merge mode's case, below — keep the two in step). A code-only PR is decided
 # here, before any record is validated: that validation is what cost a code-only
-# Consumer A merge 6s of the gate's ~10s budget and timed three of them out.
+# merge on a consumer repo 6s of the gate's ~10s budget and timed three of them out.
 if [ "$MODE" = "--files" ]; then
   touches_items=0
   for f in "$@"; do
@@ -212,7 +212,7 @@ COMPLETE="$(complete_from)"
 # unwritable before the merge and the merge was unreachable without the record.
 #
 # That deadlock was total: it blocked the final PR of EVERY milestone, forever.
-# Consumer A hit it on F10.4 (2026-08-15) the first time a milestone completed with the
+# A consumer hit it on F10.4 (2026-08-15) the first time a milestone completed with the
 # CI job installed, and no ordering of merges escapes it.
 #
 # So: a milestone that is NOT complete at the mainline anchor but IS complete here
@@ -276,7 +276,7 @@ BASE_EOF
 #
 # A PLANNED HAND-OFF audited while it was still open breaks the equivalence. The
 # playbook's order is that the audit is not due until the hand-off closes, so this
-# is the documented exception, not the norm — consumer A audited DS.5 early with
+# is the documented exception, not the norm — a consumer audited DS.5 early with
 # DS.5.13 ("walk the app and give the verdict") still `attended`. The human does
 # that work OUTSIDE the repo, so the flip carries a status byte and nothing else,
 # and it necessarily lands after the range_head of a record that already exists.
@@ -372,7 +372,7 @@ validate_record() { # validate_record <milestone> <file> ; 0 = valid
   # A PANEL THAT DID NOT RUN IS NOT AN AUDIT. `unscored:` counts confirmed findings
   # that no refuter ever scored — distinct from `unverified:`, which also covers the
   # legitimate case of a finding reading could not settle. A run whose refuters died
-  # on capacity (consumer A DS.5, 2026-09-02: 330 agents dispatched, 115 failed, 26 of 31
+  # on capacity (a consumer's DS.5, 2026-09-02: 330 agents dispatched, 115 failed, 26 of 31
   # "confirmed" findings never scored) emitted a well-formed record that passed every
   # arithmetic check here, because nothing read the number. Writing the gap down was
   # free and it passed; that is the shortcut this refuses.
@@ -404,7 +404,7 @@ validate_record() { # validate_record <milestone> <file> ; 0 = valid
   fi
   # AN EXPERIMENT THAT RAN AND WAS NOT READ IS NOT EVIDENCE EITHER WAY. `proofs_lost:`
   # counts findings the Validate stage dispatched a prover for and whose verdict never
-  # reached the record. Consumer A F12 (2026-09-12): 26 provers ran, the journal held 26
+  # reached the record. A consumer's F12 (2026-09-12): 26 provers ran, the journal held 26
   # execution-backed verdicts (25 confirmed, 1 refuted), and the record said 26
   # UNVERIFIED — triage then filed 22 items to redo experiments already done. The
   # workflow now writes the count down; this is the gate that reads it. Same shape and
@@ -483,7 +483,7 @@ validate_record() { # validate_record <milestone> <file> ; 0 = valid
       # `git log --name-only -S -- <backlog dir>` lists, per commit, exactly the
       # paths whose match count changed (diffcore-pickaxe without --pickaxe-all),
       # and on linear history the last commit a path appears under IS its oldest
-      # per-path hit — 41 of 41 on consumer A. But git's default history
+      # per-path hit — 41 of 41 on a consumer repo. But git's default history
       # simplification is decided PER PATHSPEC: a merge that is TREESAME to one
       # parent for roadmap/F1.1.md is followed along that parent only, while for
       # `-- roadmap/` the same merge is TREESAME to neither parent and BOTH sides
@@ -560,7 +560,7 @@ DONE_ITEMS_EOF
   # A zero-findings record is the one shape that satisfies every other check here
   # while asserting nothing at all: 0 == 0 + 0, no blocks to dispose of, binding
   # intact, required keys present (`raw: 0` is non-empty). It is also exactly
-  # what a totally BROKEN run produces — consumer A's F11 audit lost all eleven finder
+  # what a totally BROKEN run produces — a consumer's F11 audit lost all eleven finder
   # agents to an unresolvable agent type, and the record that fell out of that
   # would have passed here as a clean milestone.
   #
@@ -587,7 +587,7 @@ DONE_ITEMS_EOF
   # A milestone can be audited on more than one axis: the code audit plus, for a
   # UI-heavy milestone, a Tier-2 UI audit (playbook, "UI audit"). Those are
   # SEPARATE runs with their own lens sets, their own stats and their own
-  # journals — consumer A's F9 was audited 54/34/20 on code and 11/9/2 on UI, and the
+  # journals — a consumer's F9 was audited 54/34/20 on code and 11/9/2 on UI, and the
   # single stat set here could only describe one of them, leaving the UI
   # survivors (FK.4, FK.5) as disposition blocks that no `confirmed` count
   # accounted for.
@@ -628,7 +628,7 @@ DONE_ITEMS_EOF
   blocks="$(printf '%s\n' "$body" | grep -c '^### ' || true)"
   # Blocks are DISPOSITIONS, not findings, and the two have different
   # cardinalities: a multi-lens ensemble converging on one defect is the normal
-  # case (consumer A's F9: six lenses hit the same claim-lease bug — the record called
+  # case (a consumer's F9: six lenses hit the same claim-lease bug — the record called
   # that convergence "the strongest signal this audit produced"). Requiring one
   # block per confirmed finding would force that correct collapse to be undone
   # into six blocks saying the same thing. So `defects:` may declare the distinct
@@ -655,10 +655,10 @@ DONE_ITEMS_EOF
   # headers; a disposition line is `disposition: fix_pr #N | followup <id> |
   # blocked <id>`. Count and validate per block via awk block-splitting.
   if [ "$blocks" -gt 0 ]; then
-    # A record names the same follow-up under several blocks (consumer A F12: 51
+    # A record names the same follow-up under several blocks (a consumer's F12: 51
     # disposition lines over 25 distinct ids), and every check on a referenced
     # file — existence, followup_of, status, roadmap-lint — is a function of the
-    # file, so each (kind, id) pair is judged once. 26 of consumer A's 91 lint runs
+    # file, so each (kind, id) pair is judged once. 26 of a consumer's 91 lint runs
     # per gate call were repeats.
     local n=0 checked=""
     while [ "$n" -lt "$blocks" ]; do
@@ -770,7 +770,7 @@ ATTENDED_EOF
   # non-failing prefix.
   #
   # Why it lives here at all, when the board and the run summary already list
-  # blocked items: those are read-only displays, and consumer A proved they change
+  # blocked items: those are read-only displays, and a consumer proved they change
   # nothing (2026-08-16 research memo — five of six questions survived a whole
   # milestone authoring cycle unasked). The evidence there says the intervention
   # that works is a documented pending-state AT THE TRANSITION, and this gate is
@@ -820,7 +820,7 @@ fi
 #   2. post-merge-auditcheck.sh re-runs --check on the freshly-pulled mainline
 #      right after any merge, so a repo whose CI job is missing still learns
 #      within ONE PR instead of drifting for days.
-# The 2026-08-11 consumer A miss (F9's prose-only record merged, F10 authored on top)
+# A consumer's 2026-08-11 miss (F9's prose-only record merged, F10 authored on top)
 # is what this note exists for: the old comment deferred to "the next --check"
 # while nothing was scheduled to run one. Do not weaken (1) or (2) and leave this
 # deferral standing on its own.

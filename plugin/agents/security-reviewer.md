@@ -19,7 +19,7 @@ narrower and deeper: this diff, this security lens, nothing else.
    **The skill collects its diff from the primary checkout.** When the item
    was built in a git worktree (the sweap default), the primary checkout sits
    on a clean default branch and the skill hands its reviewer an EMPTY diff,
-   then reports no findings — observed twice in a row on consumer A (DV.47, FP.1).
+   then reports no findings — observed twice in a row on a consumer repo (DV.47, FP.1).
    So: `cd` into the worktree you were given and take the diff yourself with
    `git diff <base>...HEAD` (and `git log <base>..HEAD --stat`) BEFORE invoking
    the skill, hand that diff to the skill's methodology by hand if the skill's

@@ -66,7 +66,7 @@ want "--base: no diff (same ref) is code" code "$( (cd "$R" && bash "$LANE" --ba
 # ci.yml's `changes` job used to pass --base HEAD^ here, on the premise that a
 # squash merge is one commit. True of the agent path (sweap-merge.sh always
 # merges --squash), false of the human path — and CI changes ARE the human path,
-# because the merge gate denies those PRs to sessions. Consumer A, 2026-08-30: a
+# because the merge gate denies those PRs to sessions. A consumer, 2026-08-30: a
 # ci.yml edit (892147d, rewriting the e2e job) and its roadmap update (5964666)
 # went up in ONE push; HEAD^ saw only the roadmap file and e2e skipped the job
 # the first commit had just changed. The base is github.event.before instead.

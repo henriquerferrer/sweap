@@ -50,7 +50,7 @@ run "$(ev audit-prover Write probe.test.ts /repo/wt)"
 check "prover may write a relative path" silent
 run "$(ev audit-prover Bash "" /repo/wt)"
 check "prover may run commands" silent
-run "$(ev audit-prover Write /Users/h/consumer-a/apps/x.test.tsx /repo/wt)"
+run "$(ev audit-prover Write /Users/h/app/apps/x.test.tsx /repo/wt)"
 check "prover is denied an absolute write outside its worktree" deny
 run "$(ev audit-prover Write /repo/wt-other/x.ts /repo/wt)"
 check "a sibling path sharing a prefix is not inside the worktree" deny

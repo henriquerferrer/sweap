@@ -7,7 +7,7 @@
 #
 # Suites: the version-bump gate first (it fails fast and costs nothing — a
 # plugin/ change that does not bump plugin/.claude-plugin/plugin.json never
-# reaches consumer A/B, because the consumer's plugin cache is keyed by version;
+# reaches the consumers, because the consumer's plugin cache is keyed by version;
 # SWEAP_SKIP_VERSION_CHECK=1 is the escape hatch), every plugin/hooks/*.test.sh
 # plus scripts/version-bump-check.test.sh (serial, timed — pre-merge-gate.test.sh
 # legitimately takes ~3-5 min because it sleeps through real gh-timeout paths;

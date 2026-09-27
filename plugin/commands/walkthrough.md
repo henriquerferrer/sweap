@@ -14,7 +14,7 @@ the direction loop human — but all three human inputs happen *before* or
 `/handoff` takes a task). Nothing happens *after* something ships.
 
 The evidence is local, not theoretical. On 2026-08-18 one unscripted walkthrough
-of consumer A — green on 269 Playwright specs, a six-lens adversarial code audit and
+of a consumer repo — green on 269 Playwright specs, a six-lens adversarial code audit and
 a five-lens UI critic — found ten defects plus a screenful of server-console
 errors, and became the DS.5 milestone plus a spun-off one
 (`roadmap/ideas/archive/revisit-and-standardize-the-screens.md`). It has happened

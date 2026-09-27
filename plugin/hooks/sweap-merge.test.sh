@@ -5,10 +5,10 @@
 # A stub `gh` on PATH answers from fixture files under a per-case directory
 # (GH_FIX): pr view, compare, actions/workflows, contents listings, raw workflow
 # files, actions/runs (paged or sequenced), pr merge. The consumers' real
-# workflow files (consumer A, consumer B) are VENDORED SNAPSHOTS under testdata/workflows
+# workflow files (consumer-a, consumer-b) are VENDORED SNAPSHOTS under testdata/workflows
 # (see its README: until 2026-08-30 they were cp'd out of ~/Documents at run time,
 # which made this suite — sweap's merge bar — depend on another repo's current
-# contents on one Mac; raising consumer A's e2e timeout reddened four cases with no
+# contents on one Mac; raising consumer-a's e2e timeout reddened four cases with no
 # sweap commit, and elsewhere the cp silently yielded an empty fixture dir). A
 # fake plugin dir carries a COPY of the driver next to an env-driven gate and
 # post-merge scripts that count invocations (the driver resolves its hooks from
@@ -430,7 +430,7 @@ mk_lock() {   # mk_lock <owner> <epoch> <pid> <heartbeat>
 
 # ======================================================================================
 printf '== E: the expected set (§5)\n'
-for repo in consumer A consumer B; do
+for repo in consumer-a consumer-b; do
   for f in ci.yml audit-gate.yml claude-review.yml; do
     r="$(classify "$WFX/$repo/$f" main)"
     check "E $repo/$f classifies as member" [ "${r%%|*}" = "member" ]
@@ -462,8 +462,10 @@ r="$(classify "$WFX/consumer-a/claude-review.yml" main)"; check "E consumer-a/cl
 # `types:`, switching to `pull_request_target`): that makes the expected set
 # undecidable and stalls every merge in that repo, and it should be loud HERE rather
 # than discovered by a session whose merge hangs. Skips silently when a checkout is
-# absent — most machines running this suite are not Henrique's.
-for live in ~/Documents/consumer-a ~/Documents/consumer-b; do
+# absent. Opt in with SWEAP_LIVE_CONSUMERS, a colon-separated list of consumer
+# checkout paths (e.g. SWEAP_LIVE_CONSUMERS=~/code/app:~/code/site).
+IFS=: read -r -a live_consumers <<<"${SWEAP_LIVE_CONSUMERS:-}"
+for live in ${live_consumers[@]+"${live_consumers[@]}"}; do
   [ -d "$live/.github/workflows" ] || continue
   repo="$(basename "$live")"
   for f in "$live"/.github/workflows/*.yml; do
@@ -544,12 +546,12 @@ check "§6 future commit: appear_deadline = committedDate + 300" [ "$(state .app
 newcase s-pending
 write_runs "$(run 101 "$CI" in_progress null)" "$(run 102 "$AG" queued null)" "$(run 103 "$CR" completed success)"
 drive tick "$PR"; expect "§6 queued/in_progress before complete_deadline => pending" pending queued
-check "§6 complete_deadline = arm time + 2×60min (the later of run_started_at and arm_at; consumer A ci timeout, snapshot)" [ "$(state .complete_deadline)" = "$((NOW + 7200))" ]
+check "§6 complete_deadline = arm time + 2×60min (the later of run_started_at and arm_at; consumer-a's ci timeout, snapshot)" [ "$(state .complete_deadline)" = "$((NOW + 7200))" ]
 check "§6 expected_timeout_min persisted" [ "$(state .expected_timeout_min)" = 60 ]
 check "§6 observed records run_id/attempt/status" [ "$(state ".observed[\"$CI\"].run_id")" = 101 ]
 TNOW=$((NOW + 7201)) drive tick "$PR"; expect "§6 in_progress after complete_deadline => timed_out" timed_out complete_deadline
 # A stored timed_out is re-armed by the next deliberate tick with a FRESH window
-# anchored on the new arm time (consumer A #407/#408, 2026-09-24: every hand watch
+# anchored on the new arm time (consumer PR #407/#408, 2026-09-24: every hand watch
 # after the runner fleet came back died on the old deadline within seconds).
 TNOW=$((NOW + 7300)) drive tick "$PR"; expect "§6 tick after timed_out re-arms => pending again" pending queued
 check "§6 re-arm: arm_at is the new tick's time" [ "$(state .arm_at)" = "$((NOW + 7300))" ]
@@ -574,11 +576,11 @@ drive tick "$PR"; expect "§6 completed/action_required (0 check runs) => attend
 
 # A run GitHub reports as `pending` or `requested` is queued — behind a
 # `concurrency:` group or a saturated self-hosted fleet — not awaiting a human.
-# On consumer A every `attended` the driver ever emitted (10 of 145 state files, PRs
+# On a consumer every `attended` the driver ever emitted (10 of 145 state files, PRs
 # #236 … #385) was this shape, and every one of those PRs then merged untouched;
 # a genuine approval hold reports `waiting` or `action_required`. `attended` is
 # terminal, so mislabelling the fleet's most common state halted unattended
-# lanes on it (consumer A roadmap/discovered/…-750948.md, lane lessons 10 and 17).
+# lanes on it (a consumer's roadmap/discovered/…-750948.md, lane lessons 10 and 17).
 newcase s-pending-status
 write_runs "$(run 101 "$CI" pending null)" "$(run 102 "$AG" completed success)" "$(run 103 "$CR" completed success)"
 drive tick "$PR"; expect "§6 status pending (queued behind concurrency/fleet) => pending, never attended" pending pending
@@ -1347,7 +1349,7 @@ drive status "$PR"; check "status: flags a dead poller" contains "$OUT" "dead po
 mk_lock "other:99" 9 "$$" "$((NOW - 5000))"
 drive status "$PR"; check "status: flags a stale heartbeat" contains "$OUT" "stale"
 drive status 123; check "status: unknown PR prints nothing" [ -z "$OUT" ]
-# NO LOCK is the case that cost consumer A 26 minutes: `status` said nothing, and
+# NO LOCK is the case that cost a consumer 26 minutes: `status` said nothing, and
 # silence read as health. It must now say which of the two it is.
 rm -rf "$STATE_DIR/$PR.lock"
 # The owner recorded in the state file is `<session>:<pid>`; the tick that wrote
@@ -1615,7 +1617,7 @@ drive tick "$PR"; expect "rerun: stale attempt => pending (arms the appear deadl
 TNOW=$((NOW + 301)) drive tick "$PR"; expect "rerun: attempt 1 still reported after appear_deadline => failed (the rerun never appeared)" failed "never appeared"
 drive rerun "$PR" --reason "once more"
 check "rerun: and the workflow's rerun on this head is spent" [ "$RC" = 1 ] -- word_is refused -- contains "$OUT" "already rerun once"
-# the cap is per (head, workflow): consumer A #319 — ci.yml red, rerun, then
+# the cap is per (head, workflow): consumer PR #319 — ci.yml red, rerun, then
 # claude-review.yml red on the SAME head. The second workflow's first red gets
 # its own rerun; a second red of ci.yml on that head does not.
 newcase r-per-workflow

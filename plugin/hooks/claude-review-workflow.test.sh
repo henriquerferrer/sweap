@@ -9,7 +9,7 @@
 # These greps are the only pre-merge check the file gets. Each one pins a
 # control that was added because its absence cost a run:
 #
-#   - --disallowedTools Agent/Task/ScheduleWakeup: consumer A #310 (2026-09-11), the
+#   - --disallowedTools Agent/Task/ScheduleWakeup: consumer PR #310 (2026-09-11), the
 #     reviewer fanned out into background agents and ended its turn to wait;
 #     an Action never re-invokes, so the verdict was lost three times.
 #   - the retry pass: the one re-invocation that first pass assumed it would

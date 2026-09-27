@@ -20,7 +20,7 @@
 # THIS IS A CORRECTNESS CONTROL, NOT CONCURRENCY MACHINERY. It used to be
 # described here as guarding "the core hazard of parallel runs", which was always
 # attributing a general effect to a specific cause, and became actively
-# misleading once `parallel: 1` went default (2026-08-18). Measured over consumer A's
+# misleading once `parallel: 1` went default (2026-08-18). Measured over a consumer's
 # 161 merged PRs: 42 (26%) had another PR land on `main` while they were open —
 # and restricted to PRs open two hours or less, still 27 of 138 (20%), against a
 # median open window of 19 minutes. One PR went stale in five minutes. A
@@ -808,11 +808,11 @@ verify_pr() {
 # Why 50/40 and not the 18/10 they were until 0.31.1. A single PR's verification
 # is two gh calls (the rollup view, the compare) and then the local audit gate,
 # each charged against the SAME per-PR deadline in that order. Measured on
-# Consumer A 2026-09-23: 1.9 s end to end on an idle Mac — and two denials in a row
+# a consumer, 2026-09-23: 1.9 s end to end on an idle Mac — and two denials in a row
 # on PR #388 with the Mac at load 13 (the two self-hosted CI runners plus an e2e
 # run), when the gh calls took ~9 s of the 10 and the audit gate was handed the
 # 1-second remainder and killed. The audit step is deterministic and offline
-# but NOT small for a PR that touches item files: 7.4 s idle on consumer A
+# but NOT small for a PR that touches item files: 7.4 s idle on a consumer repo
 # (2026-09-23, 264 done items, five audit records), the same as a full
 # --check, because merge mode validates every record on the primary checkout
 # — on that repo 91 roadmap-lint runs over the follow-ups the records declare

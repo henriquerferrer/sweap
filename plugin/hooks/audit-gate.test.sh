@@ -184,7 +184,7 @@ commit_all "$R" record
 run_gate "$R" --check
 check "two full SHAs still validate" 0
 
-# T8b: the OPEN HAND-OFF carve-out (consumer A DS.5.13). A record written EARLY, while
+# T8b: the OPEN HAND-OFF carve-out (a consumer's DS.5.13). A record written EARLY, while
 # a planned hand-off was still open, cannot be satisfied by any later PR: the flip
 # is by construction after range_head. Exempt only on all THREE conjuncts.
 # Fixture shape: F1.2 authored `attended`, the record written while it is open,
@@ -234,7 +234,7 @@ run_gate "$R" --check
 check "open_at_audit naming an item that does not exist => invalid" 1
 check_out "the phantom id is named" "open_at_audit names F9\.9"
 
-# T8f: `unscored:` — a panel that never ran is not an audit (consumer A DS.5).
+# T8f: `unscored:` — a panel that never ran is not an audit (a consumer's DS.5).
 R="$(new_repo t8f)"
 base="$(head_sha "$R")"
 mk_item "$R" F1.1 'done'
@@ -257,7 +257,7 @@ commit_all "$R" record
 run_gate "$R" --check
 check "unscored > 0 WITH an explicit acknowledgement => valid" 0
 
-# T8p: `proofs_lost:` — an experiment that ran and was not read is not evidence (consumer A F12).
+# T8p: `proofs_lost:` — an experiment that ran and was not read is not evidence (a consumer's F12).
 R="$(new_repo t8p)"
 base="$(head_sha "$R")"
 mk_item "$R" F1.1 'done'
@@ -593,7 +593,7 @@ check "inline-comment baseline still exempts F1" 0
 
 # --- record format versioning -----------------------------------------------------
 # There is NO grandfathering. An earlier gate reported an already-merged record
-# with no `sweap_format:` as STALE (non-blocking) — built for consumer A F9's prose
+# with no `sweap_format:` as STALE (non-blocking) — built for a consumer's F9's prose
 # record, long since migrated. It was a hole: deleting that one key from ANY
 # merged record downgraded its validation failure to a warning. Milestones that
 # predate adoption are exempted by `audit.baseline`, which is explicit.
@@ -667,7 +667,7 @@ check "no origin/main => pre-format record judged strictly" 1
 
 # --- defects: collapsing converged findings -------------------------------------
 # A multi-lens ensemble converging on ONE defect is the normal case, not an edge
-# case (consumer A F9: six lenses hit the same claim-lease bug). Blocks are
+# case (a consumer's F9: six lenses hit the same claim-lease bug). Blocks are
 # dispositions, not findings.
 
 # T32a: without `defects:`, blocks must still equal confirmed (unchanged contract).
@@ -704,7 +704,7 @@ check "defects: 0 with confirmed findings => invalid" 1
 
 # --- multi-axis audits (code + Tier-2 UI) ---------------------------------------
 # A UI-heavy milestone is audited on two axes, each a separate run with its own
-# lens set, stats and journal. Consumer A F9: 54/34/20 on code, 11/9/2 on UI, and the
+# lens set, stats and journal. A consumer's F9: 54/34/20 on code, 11/9/2 on UI, and the
 # two UI survivors (FK.4, FK.5) needed disposition blocks that no single
 # `confirmed` count could account for.
 add_axis() { # add_axis <repo> <milestone> <axis> <raw> <refuted> <confirmed>
@@ -785,7 +785,7 @@ check "blocks beyond total confirmed across axes => invalid" 1
 # on: the audit only runs against the merged mainline (playbook, "Audit
 # evidence"), and validate_record enforces that (range_head ancestor of HEAD).
 # Before this, that PR was denied in BOTH modes on its own checkout, so no
-# milestone could ever be completed. Consumer A hit it on F10.4, 2026-08-15.
+# milestone could ever be completed. A consumer hit it on F10.4, 2026-08-15.
 #
 # with_anchor <ref> <repo> <args...>: run the gate with SWEAP_MAIN_REF set.
 # Exported/unset around the call rather than prefixed onto run_gate — a

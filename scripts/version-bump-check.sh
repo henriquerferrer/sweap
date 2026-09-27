@@ -2,7 +2,7 @@
 #
 # version-bump-check.sh — the merge bar's version gate.
 #
-# A consumer's plugin cache (consumer A, consumer B) is keyed by the "version" field in
+# A consumer's plugin cache is keyed by the "version" field in
 # plugin/.claude-plugin/plugin.json: `claude plugin update` compares versions and
 # does nothing when they match ("already at the latest version"). So a merged
 # change under plugin/ that does not bump that version never reaches a consumer,
@@ -132,7 +132,7 @@ if [ "$nvisible" -gt 10 ]; then
   printf '          ... and %s more\n' "$((nvisible - 10))"
 fi
 printf '\n'
-printf '        the plugin cache is keyed by version — a merged change that does not bump it never reaches consumer A/B\n'
+printf '        the plugin cache is keyed by version — a merged change that does not bump it never reaches the consumers\n'
 printf '\n'
 printf '        Fix:     bump "version" in %s.\n' "$MANIFEST"
 printf '        Escape:  SWEAP_SKIP_VERSION_CHECK=1 ./test.sh — for a change that truly ships nothing.\n'

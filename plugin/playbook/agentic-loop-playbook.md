@@ -101,7 +101,7 @@ reviews it with fresh reviewers (a fixer per finding), publishes it, hands the C
 wait to the small `merge-watcher` agent, and dispatches a fresh fixer per red
 with every earlier round in hand. Nothing waits on CI while holding
 implementation context. Never hold the loop in a long-lived agent instead: the
-Consumer A F13 run's hand-written "lane runner" agents grew to 806k of context
+a consumer's F13 run's hand-written "lane runner" agents grew to 806k of context
 waiting in 600-second Bash calls, and their expired caches were half the run's
 cost. A dead runner fleet stops the run (`sweap-fleet`, asked at Resume and
 by the watcher on a queued timeout) instead of opening PRs nobody can test.
@@ -133,7 +133,7 @@ terminal (a `pending`/`green`/`merging` closing word just means call it
 again). `tick` always prints its closing line; a foreground `watch` re-ticks
 until terminal and can outlive the Bash timeout with nothing printed. A run GitHub reports as `pending` or `requested` — queued behind a
 `concurrency:` group or a busy self-hosted fleet — is `pending`, never
-`attended` (0.31.0; before that every `attended` consumer A ever saw was this):
+`attended` (0.31.0; before that every `attended` a consumer ever saw was this):
 
 | word | what you do |
 |---|---|
@@ -189,10 +189,10 @@ skills, and who opens the PR. Add below it; never delete a line of it.
 - Report: what changed, RED/GREEN, what you verified and what you did not, notes
   filed, anything you are unsure of.
 - Premises: grep every file the item names and COUNT every number it states
-  before building on it (every item in one consumer A run had a stale one). Build
+  before building on it (every item in one consumer run had a stale one). Build
   what the item is FOR and record the discrepancy under its `## Notes`.
 - Run the unit tests your change touches BY NAME: a project's e2e command may
-  not run them (consumer A's does not), so "e2e green" is not "tests green".
+  not run them (a consumer's does not), so "e2e green" is not "tests green".
 - Before committing, scan your added lines for `every|all|only|never|both|<a
   number>` and cut each claim you cannot check — the one defect class behind
   nine of ten blocking review findings.
@@ -264,7 +264,7 @@ overrides only the keys that differ from the baked defaults. The keys:
   `just e2e`). **CI runs it in full on every PR, and that run is the
   authoritative merge gate** — the project's whole automated suite (unit +
   integration + e2e); there is no separate unit-test key. **Locally you run the
-  part of it your change touches**, never the whole suite: on consumer A a local
+  part of it your change touches**, never the whole suite: on a consumer repo a local
   full run cost a median 23 min per item (43% of an implementer's time) and,
   sharing one machine with the CI runners, made CI's own e2e slower and flakier.
 - **`backlog.file`** — the backlog **index** file (milestone list + the
@@ -341,7 +341,7 @@ hazard.
   `roadmap/ideas/archive/`. **Idea files are committed, not scratch** — see the
   sweep rule under End-of-run hygiene. They were untracked-until-triaged until
   2026-08-19, which lost the difference between "captured" and "still on one
-  disk": consumer A carried three uncommitted ideas for up to three days while
+  disk": a consumer carried three uncommitted ideas for up to three days while
   sessions, following their own judgment, committed untriaged ones into
   unrelated PRs anyway (2 of the 3 times an idea ever reached git). A rule the
   agents override two thirds of the time is the defect.
@@ -451,7 +451,7 @@ blocked. If their next move is to *do something*, it is attended. See
 
 Both queues have a command that *drains* them — `/unblock <id>` for a question,
 `/handoff <id>` for a task. A queue that is only displayed is not worked: sweap
-listed blocked items in three read-only places for months and consumer A still
+listed blocked items in three read-only places for months and a consumer still
 carried five questions through whole milestones unasked
 (`docs/research/2026-08-16-blocked-question-queue.md`).
 
@@ -516,12 +516,12 @@ merge); this section holds the reasons behind them.
   parity).
 - **Step 3, a re-review is a NEW dispatch** with the new diff, never a message
   to the reviewer that is still alive: a re-messaged reviewer's context drifts
-  and every round finds a new class of remark (consumer A DV.9, 2026-09-07: one
+  and every round finds a new class of remark (a consumer's DV.9, 2026-09-07: one
   reviewer re-messaged five times, seven rounds, the last three about comment
   wording, ~600k tokens; the CI reviewer then approved the PR on its first
   pass). Non-blocking remarks belong under the reviewer's `Advisory` section and
   never flip the verdict.
-- **Step 3, fixes stay local until every reviewer approves.** consumer A, last 40
+- **Step 3, fixes stay local until every reviewer approves.** A consumer, last 40
   PRs: 13 of the 20 cancelled CI runs came from review fixes pushed to an
   already-open PR, each restarting a ~16-minute e2e run (398 runner-minutes),
   and on a single-machine runner fleet the overlap also slowed the run that
@@ -591,7 +591,7 @@ which touches code, or reports no files, is denied, and any *other* gate check
 in state SKIPPED is denied outright as a misconfiguration. One script, two
 readers: the lane CI took and the lane the gate accepts cannot disagree.
 
-Why this is load-bearing rather than an optimisation: on consumer A every extra PR
+Why this is load-bearing rather than an optimisation: on a consumer repo every extra PR
 cost TWO e2e runs (the PR, then the `push` to main) on a runner that shares the
 agents' CPU — a docs-only PR measured 24.8 minutes — and that price is what
 pushed agents to bundle backlog files onto unrelated feature branches. The
@@ -861,7 +861,7 @@ may ADD dimensions it judges necessary; it may not remove tagged ones.
   `sweap-merge.sh` implements (next bullet); a session should not hand-roll
   them. They stay here as documentation of what the driver does. The gate
   decides at merge time; the waiting before it is where runs have burned the
-  most time. Four rules, each bought by a documented incident (consumer A
+  most time. Four rules, each bought by a documented incident (a consumer
   2026-08-21/22, one run):
   **(1) Absence is not a pass.** A check that has not been reported is not
   green: wait on the expected set being *present and succeeded*, never on
@@ -880,7 +880,7 @@ may ADD dimensions it judges necessary; it may not remove tagged ones.
   Code kills a session's background Bash tasks on a macOS memory-pressure event
   once the user has been away ~30 min with the model idle and no subagent
   running — by process GROUP, so everything the task started dies with it. It
-  arrives as `Background command "…" was stopped`. Consumer A #237 went green at
+  arrives as `Background command "…" was stopped`. consumer PR #237 went green at
   19:31 and merged at 19:57, by hand, because of exactly that (2026-09-02).
   sweap's scaffold now writes `CLAUDE_CODE_DISABLE_BG_SHELL_PRESSURE_REAP=1`
   into the project's `.claude/settings.json` `env` block, which turns the reaper
@@ -908,7 +908,7 @@ may ADD dimensions it judges necessary; it may not remove tagged ones.
   `echo "[${CLAUDE_PLUGIN_ROOT:-UNSET}]"` prints `UNSET`), so 0.13.0's
   advertised `bash "${CLAUDE_PLUGIN_ROOT}/hooks/sweap-merge.sh" watch <n>`
   expanded to `bash /hooks/sweap-merge.sh` and could not run: the driver
-  appeared ZERO times in consumer A's first run that had it. What makes the bare
+  appeared ZERO times in a consumer's first run that had it. What makes the bare
   name work is that Claude Code adds **`<plugin-root>/bin` to the Bash tool's
   PATH for every enabled plugin** (measured: enabled plugins with no `bin/` on
   disk still contribute their bin path to `$PATH`), so the plugin ships
@@ -937,7 +937,7 @@ may ADD dimensions it judges necessary; it may not remove tagged ones.
   rerun was ever recorded for that head SHA *and workflow* — one per head and
   workflow, ever; a second red of the same workflow on the same head is a
   finding, not a flake (a different workflow going red on the same head gets
-  its own one rerun — consumer A #319's shape). A bare `gh run rerun` from a
+  its own one rerun — consumer PR #319's shape). A bare `gh run rerun` from a
   session is denied by the merge gate and redirected here, so every rerun is
   on record. On accept it records `reruns[]`
   (head, run ids, reason, who, when) in the PR's state file, re-arms the
@@ -984,7 +984,7 @@ may ADD dimensions it judges necessary; it may not remove tagged ones.
   `Bash(sweap-note:*)` if those are to run unprompted): an allowlist that
   names `Bash(gh pr merge:*)` and nothing for the driver makes the raw merge
   the frictionless path and the driver the one that prompts — which is half of
-  why consumer A's first run with the driver available never used it. An advertised
+  why a consumer's first run with the driver available never used it. An advertised
   preference loses to an allowlisted idiom every time. Be aware it scopes *verbs, not flags*:
   `Bash(gh pr merge:*)` also matches `gh pr merge --admin` (force-merge past
   checks) and `--repo <other>` (act on a different repo). Two things keep this
@@ -1067,7 +1067,7 @@ person.
 hand-offs is still open is a documented exception, not the order above — and it
 has a price the exception used to hide: the record's `range_head` predates the
 hand-off's flip, so flipping it later fails the gate's range binding and NO PR
-can satisfy it (consumer A DS.5.13, 2026-09-03). Pay the price at audit time instead
+can satisfy it (a consumer's DS.5.13, 2026-09-03). Pay the price at audit time instead
 of discovering it at flip time: put every still-open member in the record's
 **`open_at_audit: [<id>, ...]`** list. It is a coverage claim in the record's own
 diff — these members were not covered by this audit — and the gate verifies it
@@ -1100,7 +1100,7 @@ human is notified, and the run moves to the next item.
 What was missing, until 2026-08-16, was the other half: **nothing drained the
 queue.** Blocked items appeared in the end-of-run summary, on the board, and in
 the loop's stop condition — three read-only displays — while the questions
-survived milestone after milestone (consumer A: five of six questions outlived a full
+survived milestone after milestone (a consumer: five of six questions outlived a full
 authoring-and-draining cycle; one outlived two). The fix is a **closing event at
 the boundary**, not a fourth place to look.
 
@@ -1253,7 +1253,7 @@ detection is at the GATE instead, on the finished record, where `unscored` is a
 fact rather than an inference. Resume when capacity is back, BEFORE triaging
 anything: a finding no
 refuter scored is not an adversarially-confirmed finding, and the record's
-`unscored:` count is what the gate refuses. Consumer A's DS.5 run lost 115 of 330
+`unscored:` count is what the gate refuses. A consumer's DS.5 run lost 115 of 330
 agents this way, recovered 65 on a resume and never recovered 50, and the record
 still read as a finished audit — a resume does not self-complete either, which is
 why the count is checked rather than assumed. If you genuinely mean to close a
@@ -1274,7 +1274,7 @@ no cron, no standing agent. **`/milestone` prints the goal text and is its only
 owner** — a copy kept here drifted from it. Two things about that text are
 load-bearing: the stop clause excludes `followup_of: <milestone>` items, because
 a correct audit ends by CREATING work and a run that audits well could otherwise
-never stop (consumer A's F11 run hit exactly that); and both stop conditions have a
+never stop (a consumer's F11 run hit exactly that); and both stop conditions have a
 drain the stop message must name — `/unblock <id>` for a question, `/handoff
 <id>` for a task.
 
@@ -1305,7 +1305,7 @@ scoped name, then bare name, then — if the runtime rejects both — whatever n
 the not-found error says it *does* have, which survives a plugin or marketplace
 rename the script cannot see. What it never does is fall back to *no* agent
 type: an unresolvable agent is a thrown error, because the alternative is the
-default toolset, which can `Write`. (consumer A's F11 audit lost all eleven finders
+default toolset, which can `Write`. (a consumer's F11 audit lost all eleven finders
 to `agent type 'audit-reader' not found` before this resolution existed.) Watch
 for this class when reviewing: a guarantee that depends on a name is only as
 good as that name's addressability in the install it lands in.
@@ -1617,14 +1617,14 @@ the goal clause above, or triggered manually.
 Rationale: loop tightness with machine verification remains the PRIMARY
 throughput lever, and on this backlog it is very nearly the only one. Frontier
 parallelism (next section) recovers CI dead time on genuinely independent items
-— which measured **17%** of transitions in consumer A, worth **+9.4% at K = 2**. It
+— which measured **17%** of transitions in a consumer repo, worth **+9.4% at K = 2**. It
 is opt-in for that reason; a serially-dependent milestone gains nothing from it
 and simply runs the serial loop.
 
 ## One item at a time (serial by design)
 
 A run works ONE roadmap item at a time. sweap shipped a coordinator mode
-(`parallel: 2+`) and removed it on measurement: across ~99 consecutive consumer A
+(`parallel: 2+`) and removed it on measurement: across ~99 consecutive consumer
 merges only ~17% had two items genuinely in flight together — the rest were
 dependency-chained — which is +9.4% at width 2 (Amdahl), bought with board
 upkeep, a re-verifying merge queue that RAISES total CI minutes, and workers
@@ -1678,7 +1678,7 @@ in-flight branch at width 1 too, and a Free-plan repo never reports BEHIND.
 
 ## Model policy
 
-- Implementation grind: Opus 4.8 (high effort) is sufficient — the gates are
+- Implementation grind: the current Opus tier at high effort is sufficient — the gates are
   designed so correctness doesn't depend on the model being right first try.
 - Planning, spec-writing, adversarial review, security audits: use the
   strongest available model tier — these are the judgment-heavy stages where
@@ -1695,7 +1695,7 @@ here is the one recipe too long for the core.
   kill by that marker, and VERIFY zero survivors — `pgrep -f <pat>` matches the
   waiting loop's own command line and `jobs -p` is empty in a non-interactive
   shell, so both produce silent no-op cleanup loops. Orphans reparent to init
-  and outlive the session: consumer A burned ~4h35m at load average 111 on three
+  and outlive the session: a consumer burned ~4h35m at load average 111 on three
   stray `yes`, where one PR's checks took 7m44s and failed vs 2m4s and passed
   after the kill. A run that leaks them poisons every later timing measurement
   and every CI run on the machine.
@@ -1751,7 +1751,7 @@ the human's standing answers — treat them as given, do not re-ask in a session
    starting anything new.
 5. Check `.claude/sweap-run.md` for a `stalled:` line. The StopFailure hook
    writes one when the orchestrator's own turn ended on an API error mid-run
-   (consumer A 2026-09-09, Claude Code 2.1.263: a 500 at 23:31 and nothing moved
+   (a consumer, 2026-09-09, Claude Code 2.1.263: a 500 at 23:31 and nothing moved
    for ten hours). Since Claude Code 2.1.269 a `/goal` run retries an API
    error with backoff and pauses only after that, and the line says which
    case applies; several `stalled:` lines within ~25 min are one outage. The

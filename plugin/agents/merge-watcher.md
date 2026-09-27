@@ -27,7 +27,7 @@ sweap-merge tick <PR number from your dispatch> --budget 540
 
 There is no default PR. `sweap-merge tick 1` asks about PR #1, which merged
 long ago, and the driver truthfully answers `merged` — about the wrong PR
-(consumer A 2026-09-23..25: most watchers ran `tick 1` first and had to notice).
+(a consumer, 2026-09-23..25: most watchers ran `tick 1` first and had to notice).
 Your report's `pr:` is the number you ticked, and the run checks it against
 the PR it dispatched you for.
 
@@ -40,7 +40,7 @@ last line. Then:
 
 | last word | what you do |
 |---|---|
-| `pending` / `green` / `merging` / `missing` (the budget ran out mid-wait) | run the same command again. On the SECOND consecutive `pending` line, whatever its reason (`queued`, `in_progress`, …: the reason is the RUN's status, and a run whose `checks` job ran while its `e2e` job waits for a dead runner says `in_progress` for the whole wait), first run `sweap-fleet --branch <the PR's head branch, the one in your dispatch>` (JSON; read `.verdict`; it exits 1 on `fleet-down` — that is the verdict, not a missing command). `fleet-down`: `sleep 60` inside the call and run it once more; still `fleet-down`: return `timed_out` with `class: fleet-down` and its `.reason` — nobody is there to run the jobs (consumer A 2026-09-24: the runners had deregistered themselves; the watchers saw `total_count: 0` and kept ticking for an hour), and the run stops instead of opening the next PR. `ok` or `unknown`: keep ticking |
+| `pending` / `green` / `merging` / `missing` (the budget ran out mid-wait) | run the same command again. On the SECOND consecutive `pending` line, whatever its reason (`queued`, `in_progress`, …: the reason is the RUN's status, and a run whose `checks` job ran while its `e2e` job waits for a dead runner says `in_progress` for the whole wait), first run `sweap-fleet --branch <the PR's head branch, the one in your dispatch>` (JSON; read `.verdict`; it exits 1 on `fleet-down` — that is the verdict, not a missing command). `fleet-down`: `sleep 60` inside the call and run it once more; still `fleet-down`: return `timed_out` with `class: fleet-down` and its `.reason` — nobody is there to run the jobs (a consumer, 2026-09-24: the runners had deregistered themselves; the watchers saw `total_count: 0` and kept ticking for an hour), and the run stops instead of opening the next PR. `ok` or `unknown`: keep ticking |
 | (no output — the harness timed the call out) | run the same command again; if it happens twice in a row, return `timed_out` with what `sweap-merge status <PR>` says |
 | `merged` | go to "After merged" |
 | `superseded` | the head moved (someone pushed) — run the command again |

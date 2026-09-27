@@ -540,7 +540,7 @@ check "a todo item may depend on an attended item" 0 "$WORK/H1.5.md"
 
 # --- carried: (milestone boundaries a blocked question has survived) --------
 # Optional everywhere, format-checked when present, and legal on any status
-# because it is retained after the question is answered (see consumer A FL.1, which
+# because it is retained after the question is answered (see a consumer's FL.1, which
 # keeps `blocked:` long after flipping out of blocked).
 mk C1.1.md '---
 id: C1.1

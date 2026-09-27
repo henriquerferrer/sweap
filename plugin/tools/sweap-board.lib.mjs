@@ -700,7 +700,7 @@ export function buildMilestoneCard({ items, index = [], runFile = null, inFlight
   const compareMs = (a, b) => (order(a) - order(b)) || compareItems({ id: a + ".0", followupOf: null }, { id: b + ".0", followupOf: null });
 
   // An audit-follow-up FAMILY is not a milestone. `FN.3` groups under "FN", but
-  // FN is a family keyed by `followup_of: F11` — consumer A's config says so in as
+  // FN is a family keyed by `followup_of: F11` — a consumer's config says so in as
   // many words, and its backlog holds 13 such families against 15 real
   // milestones. A group with no non-follow-up item in it has never been a
   // milestone, so the card must never name one; that is exactly the wrong
@@ -717,7 +717,7 @@ export function buildMilestoneCard({ items, index = [], runFile = null, inFlight
   const nextRunnable = incomplete.find((m) => byMilestone.get(m).some((i) => readyIds.has(i.id))) || null;
   // ...and a milestone whose every item is GATED — the hand-offs-outstanding
   // shape — is still the milestone being run. It is the shape /milestone models
-  // explicitly, and it is the state consumer A sat in for this whole run: DS.5's
+  // explicitly, and it is the state a consumer sat in for this whole run: DS.5's
   // nine todo items all wait on DS.5.3, an attended hand-off. Requiring a READY
   // item here is what made the card render nothing at all on the one project
   // actually running a milestone.
@@ -800,7 +800,7 @@ export function buildMilestoneCard({ items, index = [], runFile = null, inFlight
     end.plan = resumePlan(items, owed.map((i) => i.id));
   }
   // Distinct from `end`: there IS work and nobody is on it. This is the state
-  // consumer A sat in for 7h on 2026-08-21 while looking, from every tool, like
+  // a consumer sat in for 7h on 2026-08-21 while looking, from every tool, like
   // silence. Cheap to compute and it needs no cooperation from the run.
   const idle = frontier.length && !inFlight.length
     ? { runnable: frontier.length, detail: `${frontier.length} item${frontier.length > 1 ? "s are" : " is"} runnable and nothing is in flight` }
@@ -887,7 +887,7 @@ export function parseBoard(text) {
     if (parts.length < 2) continue;
     // A real markdown table pipes its outer edges too, which lands an empty
     // cell at each end. The board's documented one-line form does not. Accept
-    // both — consumer A writes the table, and its every row was being dropped.
+    // both — a consumer writes the table, and its every row was being dropped.
     if (parts[0] === "") parts = parts.slice(1);
     if (parts.length && parts[parts.length - 1] === "") parts = parts.slice(0, -1);
     if (parts.length < 2) continue;
@@ -915,7 +915,7 @@ export function ciSummary(rollup) {
 }
 
 const escId = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-// Branch names routinely drop an id's dots — consumer A ships `fn3-status-guards`
+// Branch names routinely drop an id's dots — a consumer ships `fn3-status-guards`
 // for FN.3 and `fn10-message-tables` for FN.10 — so a strict match finds
 // nothing and the whole live-run section reads empty during an active run.
 export const dotless = (s) => String(s).toLowerCase().replace(/\./g, "");
@@ -962,7 +962,7 @@ export async function buildState(projectDir, { git, gh, audit = null, stranded: 
   if (items.some((i) => i.malformed)) notes.push("one or more item files are malformed (shown flagged)");
   // A note whose `kind:` is neither gap nor direction is promoted by nothing and
   // listed by nothing, so it vanishes in an inbox whose one job is not to lose
-  // things. Consumer A #290/#292 (2026-09-09): two notes hand-written on a code PR
+  // things. consumer PR #290/#292 (2026-09-09): two notes hand-written on a code PR
   // against the playbook's "never write the file by hand" (the CLI writer has
   // always rejected a bad kind) sat invisible until someone happened to look.
   // Surfaced here, in the channel the page header and /milestone already read,

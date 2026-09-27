@@ -18,7 +18,7 @@
 # lane too slow, never too permissive. `.github/**` is deliberately code: a
 # workflow edit must run the full pipeline it edits.
 #
-# WHY IT EXISTS (research memo, 2026-08-22): on consumer A a docs-only PR ran
+# WHY IT EXISTS (research memo, 2026-08-22): on a consumer repo a docs-only PR ran
 # 24.8 minutes of e2e on a self-hosted runner that shares the agents' CPU, and
 # every merge re-ran it on the `push` event — so a captured backlog item cost
 # two e2e runs. That price is what pushed agents to bundle item files onto
@@ -61,7 +61,7 @@ shift
 
 # --- --tested-tree: did THIS tree already pass e2e? -----------------------------
 # After a squash merge the push-to-main run re-tests a tree the PR run has just
-# passed: on consumer A 160 of 160 merges had tree(merge commit) == tree(PR head), the
+# passed: on a consumer repo 160 of 160 merges had tree(merge commit) == tree(PR head), the
 # push run caught 0 regressions, and its 16 reds were all flakes or CPU contention
 # — which left main red and made `sweap-merge rerun` refuse the NEXT PR. This mode
 # lets that run skip e2e, and only e2e, when every condition below holds. ANY

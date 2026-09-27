@@ -12,7 +12,7 @@ import { classify, newestPerWorkflow, dedupeSets, report } from "./sweap-fleet.m
 const HERE = dirname(fileURLToPath(import.meta.url));
 const R = (name, status, labels, extra = {}) => ({ name, status, busy: false, labels, version: "2.337.0", ...extra });
 
-test("classify: a set naming self-hosted with NO registered runner at all is fleet-down (consumer A 2026-09-24: the runners deregistered themselves, total_count 0)", () => {
+test("classify: a set naming self-hosted with NO registered runner at all is fleet-down (a consumer, 2026-09-24: the runners deregistered themselves, total_count 0)", () => {
   const c = classify([["self-hosted", "e2e"], ["self-hosted"]], []);
   assert.equal(c.verdict, "fleet-down");
   assert.deepEqual(c.missing, [["self-hosted", "e2e"], ["self-hosted"]]);
@@ -42,7 +42,7 @@ test("classify: a hosted label set no runner matches is not this tool's business
   const c = classify([["ubuntu-latest"]], runners);
   assert.equal(c.verdict, "ok");
   assert.deepEqual(c.hosted, [["ubuntu-latest"]]);
-  // but a hosted-LOOKING set that a registered runner does carry is fleet-targeted (consumer A runners carry ubuntu-24.04)
+  // but a hosted-LOOKING set that a registered runner does carry is fleet-targeted (a consumer's runners carry ubuntu-24.04)
   assert.equal(classify([["ubuntu-24.04"]], runners).verdict, "fleet-down");
 });
 

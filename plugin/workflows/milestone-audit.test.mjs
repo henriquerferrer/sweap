@@ -53,7 +53,7 @@ test("every Find and Refute agent is dispatched through the read-only resolver",
 // The previous version of this file asserted that the dispatched string equalled
 // the agent file's `name:` frontmatter. Both sides were the bare name, so it
 // passed while every plugin install was broken: a plugin agent is addressable
-// only under its SCOPED name (`<plugin>:<agent>`), and consumer A's F11 audit lost
+// only under its SCOPED name (`<plugin>:<agent>`), and a consumer's F11 audit lost
 // all eleven finders to `agent type 'audit-reader' not found`. The property is
 // "the workflow can address the agent in whatever install it lands in", which
 // two strings I wrote cannot demonstrate.

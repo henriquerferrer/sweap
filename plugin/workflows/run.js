@@ -12,7 +12,7 @@ export const meta = {
   ],
 }
 
-// WHY THIS SHAPE. The consumer A F13 run (2026-09-18..20) drove items with eight
+// WHY THIS SHAPE. A consumer's F13 run (2026-09-18..20) drove items with eight
 // long-lived "lane runner" subagents that each held the loop for 8-13 items and
 // waited on CI inside 600-second Bash calls. They grew to 758k and 806k of
 // context, read 464M tokens, and paid 116M of the run's 130M cache-expiry
@@ -27,7 +27,7 @@ export const meta = {
 // ---------------------------------------------------------------------------
 // Arguments. An object, nothing, or a string: a JSON string is parsed (a model
 // launching from a goal sentence has passed its args as a string before —
-// consumer A 2026-09-02, milestone-audit; without this a '{"ids": [...]}' string
+// a consumer, 2026-09-02, milestone-audit; without this a '{"ids": [...]}' string
 // would split into garbage ids and the run would end with nothing done), any
 // other string is a comma list of ids. A string that looks like JSON but does
 // not parse stops the run before the Resume stage, with the text.
@@ -48,7 +48,7 @@ const RAW_IDS = typeof ARGS.ids === 'string' ? ARGS.ids.split(/[,\s]+/).filter(B
 const IDS = Array.isArray(RAW_IDS) && RAW_IDS.length ? RAW_IDS.map(String) : null
 const MAX_ITEMS = Number.isFinite(Number(ARGS.max_items)) && Number(ARGS.max_items) > 0 ? Number(ARGS.max_items) : Infinity
 // The milestone the run is for. The frontier is backlog-wide (every runnable
-// todo item, whatever its milestone): on consumer A on 2026-09-23 a bare launch
+// todo item, whatever its milestone): on a consumer repo on 2026-09-23 a bare launch
 // listed F14.1 and five F15 items behind the F13 items, and the run's goal
 // named F13. With a milestone, the run picks the batch first, then only that
 // milestone's items and the follow-ups of OTHER milestones (the debt the goal
@@ -171,7 +171,7 @@ const FINDINGS = { type: 'array', items: { type: 'object', required: ['file', 'w
   file: { type: 'string', description: 'path, with :line when there is one' }, what: { type: 'string', description: 'what is wrong and why it matters' },
   kind: { enum: ['acceptance', 'security', 'other'], description: 'acceptance: the diff fails an acceptance clause of the item; security: access control, tenant isolation, data exposure, session or credential handling; other: everything else' } } } }
 // A confirmed finding of these kinds is never cut to make an item "done": it is
-// fixed and re-reviewed, or it becomes a question for a person (consumer A F13.13
+// fixed and re-reviewed, or it becomes a question for a person (a consumer item
 // merged done with acceptance clause 6 unmet, cut after round two).
 const UNCUTTABLE = new Set(['acceptance', 'security'])
 
@@ -306,7 +306,7 @@ const scopePrompt = () => `You are the SCOPE stage of an unattended run. Run \`s
 
 const implementPrompt = (item, resume, prior) => `${READ_FIRST} Then read the playbook between \`<!-- worker-brief:begin -->\` and \`<!-- worker-brief:end -->\`: that brief binds you.
 
-You are the IMPLEMENTER for backlog item ${item.id}, and only that item. You drive it from its item file to a COMMITTED branch in its worktree, then you exit. You do not review, push, open the PR, merge or watch CI: after you return the run dispatches a fresh reviewer against your branch, a fixer per finding, and a watcher. You never run \`sweap-merge\`, never \`gh pr merge\`, never touch \`.github/\`, never commit in the primary checkout, never push to the default branch. Never dispatch an agent, never start the code-review or security-review skill, and never leave anything running in the background: whatever outlives your return is delivered to nobody, or wakes a second copy of you that writes into a branch the run is already reviewing (consumer A F13, 2026-09-25: four items came back failed and two PRs opened unreviewed this way).
+You are the IMPLEMENTER for backlog item ${item.id}, and only that item. You drive it from its item file to a COMMITTED branch in its worktree, then you exit. You do not review, push, open the PR, merge or watch CI: after you return the run dispatches a fresh reviewer against your branch, a fixer per finding, and a watcher. You never run \`sweap-merge\`, never \`gh pr merge\`, never touch \`.github/\`, never commit in the primary checkout, never push to the default branch. Never dispatch an agent, never start the code-review or security-review skill, and never leave anything running in the background: whatever outlives your return is delivered to nobody, or wakes a second copy of you that writes into a branch the run is already reviewing (a consumer run, 2026-09-25: four items came back failed and two PRs opened unreviewed this way).
 
 Item file: \`<backlog dir>/${item.id}.md\` — the item file IS the spec (Surface, Interfaces, Out of scope, Acceptance).${item.answeredQuestion ? ` It still carries a \`blocked:\` key: that is the ANSWERED question /unblock left in place, and the answer is in the file. The item is runnable; do not escalate it as blocked.` : ''}
 
@@ -437,7 +437,7 @@ if (resume.base_red) {
 if (resume.fleet === 'fleet-down') {
   // Nobody is there to run the jobs. An implementer would open a PR that
   // cannot test and the watcher would time out 99 minutes later — per item,
-  // for as long as the fleet is down (consumer A 2026-09-24: three items).
+  // for as long as the fleet is down (a consumer, 2026-09-24: three items).
   return { merged, blocked, needs_human: needsHuman, skipped: IDS || [], failed, stopped: `the self-hosted runner fleet cannot run CI: ${resume.fleet_reason || 'sweap-fleet says fleet-down'} — bring the runners back (sweap-fleet prints ok), then relaunch`, resume }
 }
 if (resume.base) CTX.base = resume.base
@@ -471,7 +471,7 @@ while (count < MAX_ITEMS) {
   let question = impl.outcome === 'blocked' ? (impl.question || impl.report) : null
   if (impl.outcome === 'committed') {
     // The script awaits the review the implementer used to dispatch itself and
-    // could not (consumer A F13: four items failed with finished work, two PRs
+    // could not (a consumer run, 2026-09-25: four items failed with finished work, two PRs
     // opened unreviewed — the Agent tool comes and goes inside a workflow agent
     // and the code-review fallback forks into the background).
     if (!/^\//.test(impl.worktree || '') || !impl.branch) { failed.push({ id: item.id, why: `committed without an absolute worktree path and a branch (${impl.worktree || '-'}, ${impl.branch || '-'}): nothing to review` }); count++; continue }
@@ -513,7 +513,7 @@ while (count < MAX_ITEMS) {
     if (!watched.ok) { stopped = `${item.id}: ${watched.why}`; break }
     watch = watched.value
     // A report about another PR is no word about this one (`tick 1` answered
-    // `merged` for PR #1 on ~23 of 27 consumer A dispatches, 2026-09-23..25).
+    // `merged` for PR #1 on ~23 of 27 dispatches on a consumer, 2026-09-23..25).
     if (watch.pr !== impl.pr) {
       if (watchMismatch++) { watch = { ...watch, word: 'undecidable', class: '-', reason: `the watcher reported PR #${watch.pr}, not PR #${impl.pr}, twice` }; break }
       previous = `${previous ? previous + ' ' : ''}Your last report was about PR #${watch.pr}; this dispatch is PR #${impl.pr} — tick exactly \`sweap-merge tick ${impl.pr}\`.`

@@ -3,7 +3,7 @@
 # stop-failure-notify.sh — StopFailure hook: the orchestrator's own turn just
 # ended on an API error. Say so where the next reader will look.
 #
-# Consumer A 2026-09-09: a lane runner died on an API 500 at 23:31:50Z, its failure
+# A consumer, 2026-09-09: a lane runner died on an API 500 at 23:31:50Z, its failure
 # notification woke the orchestrator, and the orchestrator's own next turn ended
 # on the same 500 two seconds later. Nothing re-drives a main session whose turn
 # ended in an API error; it sat until a human typed "can you continue?" ten
@@ -34,7 +34,7 @@ ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 # WHAT HAPPENS NEXT DEPENDS ON THE HARNESS VERSION, so say which. Claude Code
 # 2.1.269 (2026-09-11): "Fixed /goal runs silently stalling after API errors,
 # network drops, or token limits: the goal now retries with backoff, or pauses
-# and says why". The consumer A stall was on 2.1.263. On >= 2.1.269 a /goal run
+# and says why". A consumer's stall was on 2.1.263. On >= 2.1.269 a /goal run
 # retries this on its own and pauses only after the retries; the human is
 # needed when it is still idle after that, or when the run is not /goal-driven.
 # Below 2.1.269 nothing retries and the human is needed now. Version read from

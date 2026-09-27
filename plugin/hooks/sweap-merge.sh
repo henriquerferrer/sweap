@@ -1136,7 +1136,7 @@ sm_tick() {
       # watch — a relaunched run, a hand `sweap-merge watch <n>` after the
       # runner fleet came back. Without this the state kept its old clocks and
       # every later watch reported the same passed deadline within seconds
-      # (consumer A #407/#408, 2026-09-24 20:39Z). Bounded by the caller: each new
+      # (consumer PR #407/#408, 2026-09-24 20:39Z). Bounded by the caller: each new
       # watch gets exactly one fresh window.
       sm_disarm
       ;;
@@ -1302,7 +1302,7 @@ sm_tick() {
     [ -n "$EV_NEWEST_STARTED" ] && run_started="$(sm_iso_epoch "$EV_NEWEST_STARTED")" || run_started=""
     # The window is anchored on the LATER of the newest run's start and the arm
     # time. A run's run_started_at is its creation time and never moves — jobs
-    # that queued for hours behind a dead runner fleet (consumer A #407, 2026-09-24:
+    # that queued for hours behind a dead runner fleet (consumer PR #407, 2026-09-24:
     # created 15:41Z, picked up 20:35Z) carry a deadline that passed before any
     # job ran, and a watch armed after the fact was dead on its first tick.
     if [ -n "$run_started" ] && [ "$run_started" -gt "$arm_at" ]; then complete=$((run_started + window)); else complete=$((arm_at + window)); fi
@@ -1381,7 +1381,7 @@ sm_status() {
       # sm_tick runs in a subshell whose EXIT trap releases it — and bash runs an
       # EXIT trap on SIGTERM too, so a KILLED watcher also leaves no lock. Claude
       # Code kills a session's background shells under memory pressure (see the
-      # playbook), which is how consumer A #237 sat green and unmerged for 26 minutes:
+      # playbook), which is how consumer PR #237 sat green and unmerged for 26 minutes:
       # `status` showed a 29s-old heartbeat and no annotation, and that was read as
       # "someone is on it". Say which of the two it is, or say that it cannot be
       # told — never let silence read as health.
@@ -1426,7 +1426,7 @@ sm_status() {
 # then pointless), and refuses when a rerun was ever recorded for this head SHA
 # AND workflow path (one per head+workflow, ever — a second red of the same
 # workflow on the same head is a finding; a different workflow's first red on
-# the same head is not, see consumer A #319). It carries
+# the same head is not, see consumer PR #319). It carries
 # its reason, records `reruns[]` in the state file, and re-arms through
 # sm_disarm so the next tick waits with fresh deadlines. Nothing is written on
 # a refusal.
@@ -1452,7 +1452,7 @@ sm_rerun_judge() {
   # conclusion `failure`. A missing run, a startup_failure, a cancelled or an
   # in-flight one is not rerunnable (GitHub refuses reruns of unfinished runs,
   # and the others are not flakes to begin with).
-  # The cap is per (head, workflow path), not per head: consumer A #319 went red
+  # The cap is per (head, workflow path), not per head: consumer PR #319 went red
   # on ci.yml, was rerun, then went red on claude-review.yml on the SAME head
   # — a different workflow's first flake, not the same one's second. A path
   # already in reruns[].runs[] for this head is spent; what is left is the

@@ -62,7 +62,7 @@ run_hook "$R" "ls -la"
 check "non-merge command => silent no-op" 0
 
 # T2: THE REGRESSION. A prose, frontmatter-less record merged by the PR we just
-# ran (consumer A PR #122, 2026-08-11) must ALARM. Anchored at origin/main this is
+# ran (consumer PR #122, 2026-08-11) must ALARM. Anchored at origin/main this is
 # silent, because the record is trivially "already merged" the moment it lands.
 R="$(new_repo t2)"
 mk_done_item "$R" F9.1

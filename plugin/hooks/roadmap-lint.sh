@@ -74,7 +74,7 @@ fi
 # deliberately optional and never required: no pre-existing item file has it, an
 # absent value reads as 0 everywhere, and a question that has never crossed a
 # boundary has nothing to record. It is also NOT rejected on other statuses —
-# like `blocked:` itself (see consumer A FL.1), it is retained after the item is
+# like `blocked:` itself (see a consumer's FL.1), it is retained after the item is
 # answered, as the record of how long the answer took. All this lint owes it is
 # the format contract, so `carried: soon` can't reach the board or the gate.
 if printf '%s\n' "$fm" | grep -q '^carried:'; then

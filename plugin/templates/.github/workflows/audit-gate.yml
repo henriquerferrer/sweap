@@ -53,12 +53,12 @@ jobs:
     # it is meant to police is not a gate.
     #
     # vars.AUDIT_GATE_RUNNER exists for the INVERSE failure, which happened
-    # (consumer B, 2026-08-24): account billing blocked every GitHub-HOSTED job
+    # (a consumer, 2026-08-24): account billing blocked every GitHub-HOSTED job
     # ("payments have failed or your spending limit needs to be increased"),
     # so the hosted pin was the thing wedging every PR while the self-hosted
     # fleet stayed healthy. Set the variable (repo Settings → Variables, e.g.
     # `self-hosted`) only on a repo whose self-hosted capacity is watched
-    # (consumer-style watchdog) — you are trading the billing failure mode for
+    # (a self-healing watchdog) — you are trading the billing failure mode for
     # the runner-down failure mode, not eliminating either. Default unchanged.
     runs-on: ${{ vars.AUDIT_GATE_RUNNER || 'ubuntu-24.04' }}
     timeout-minutes: 10

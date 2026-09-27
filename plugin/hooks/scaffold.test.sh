@@ -183,7 +183,7 @@ out="$(CLAUDE_PROJECT_DIR="$K2/proj" CLAUDE_PLUGIN_ROOT="$CLAUDE_PLUGIN_ROOT" ba
 ok "k2: a repo that does not vendor the playbook is not given one" \
   test ! -f "$K2/proj/docs/agentic-loop-playbook.md"
 
-# Now opt in the way consumer A did — a copy already on disk — and re-run.
+# Now opt in the way a consumer did — a copy already on disk — and re-run.
 mkdir -p "$K2/proj/docs"; printf 'stale local copy\n' > "$K2/proj/docs/agentic-loop-playbook.md"
 out="$(CLAUDE_PROJECT_DIR="$K2/proj" CLAUDE_PLUGIN_ROOT="$CLAUDE_PLUGIN_ROOT" bash "$SCAFFOLD" <<< '{"source":"startup"}' 2>/dev/null)"
 ok "k2: an existing vendored playbook is brought into lockstep" \
@@ -517,7 +517,7 @@ fi
 # --- o. the reviewer workflow is MANAGED, not project-owned -------------------
 # Regression guard for 0.20.0. claude-review.yml was copy-if-absent for six
 # months, so a fix to the verdict gate reached only repos that did not yet run a
-# reviewer — consumer A and consumer B each drifted into a hand-edited variant and both
+# reviewer — two consumers each drifted into a hand-edited variant and both
 # hit the same no-verdict defect with nowhere to fix it once. If someone ever
 # drops it back out of sync_managed_all, these fail.
 O="$WORK/o"; mk_fixture "$O"; OP="$O/proj"
@@ -540,7 +540,7 @@ ok   "o: a local hand-edit is overwritten" test "$(grep -c 'self-hosted' "$OP/.g
 # --- o2. the REAL template keeps its customization seams ---------------------
 # Managing the file only works because everything a consumer used to hand-edit
 # has a seam. If a seam regresses, the next sync silently clobbers a consumer's
-# runner fence - which on consumer A put a 5-9 min job on the e2e runner.
+# runner fence - which on a consumer repo put a 5-9 min job on the e2e runner.
 RT="$(cd "$HERE/.." && pwd)/templates/.github/workflows/claude-review.yml"
 ok   "o2: runs-on reads RUNNER_LABELS as JSON" grep -q "fromJSON(vars.RUNNER_LABELS || '\[\"ubuntu-24.04\"\]')" "$RT"
 # Only the seam may set runs-on. A literal label anywhere on that line would be

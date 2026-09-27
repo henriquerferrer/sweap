@@ -3,7 +3,7 @@
 # post-merge-cleanup.test.sh — the hook filters ITSELF to a merge.
 #
 # The registration's `if: Bash(gh pr merge:*)` did not hold on compound commands:
-# in one consumer A run 314 of 315 firings were on commands with no merge in them,
+# in one consumer run 314 of 315 firings were on commands with no merge in them,
 # each spending 8-13s in gh.
 #
 # Run:  bash plugin/hooks/post-merge-cleanup.test.sh

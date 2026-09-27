@@ -117,7 +117,7 @@ produced which finding; do not invent per-finding attribution for a UI axis.
   non-zero, and the gate REFUSES a record carrying `unscored > 0` unless you
   either resume the run named in `workflow_run:` and regenerate, or state in
   **`unscored_accepted: <why>`** that you are closing the milestone over a panel
-  that did not run. Reason: consumer A's DS.5 run lost 115 of 330 agents to usage
+  that did not run. Reason: a consumer's DS.5 run lost 115 of 330 agents to usage
   limits and emitted `confirmed: 31, unverified: 26` — 26 findings nothing had
   checked — and it passed every arithmetic check here, because nothing read the
   number. Writing the gap down was free and it passed.
@@ -126,7 +126,7 @@ produced which finding; do not invent per-finding attribution for a UI axis.
   result. The Workflow emits it on every record; the gate DEMANDS it, `>= 1`,
   whenever `raw` is 0. Reason: a `0 / 0 / 0` record passes every other check on
   this list, and it is also exactly what a run whose finders all died produces
-  (consumer A's F11 lost eleven finder agents to an unresolvable agent type). The
+  (a consumer's F11 lost eleven finder agents to an unresolvable agent type). The
   property being enforced is *this audit ran*, which is a different claim from
   *this audit was clean*. Records written before the key existed still validate
   unless they claim zero findings — purely additive, no `sweap_format` bump.

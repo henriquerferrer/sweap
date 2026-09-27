@@ -92,7 +92,7 @@ anchor="$(git -C "$primary" rev-parse --verify -q 'HEAD^{commit}^' 2>/dev/null)"
 # history, and this hook has a 30 s harness timeout (hooks.json; sweap-merge allows the same 30 s). A timed-out backstop must
 # stay SILENT rather than fire a false alarm — CI remains the real control.
 # 28 s, under the 30 s the merge driver allows a post-merge hook (sweap-merge.sh,
-# sm_post_merge). A full --check is 7 s idle on consumer A and ~3-4x that on a Mac
+# sm_post_merge). A full --check is 7 s idle on a consumer repo and ~3-4x that on a Mac
 # whose CI runners are busy, so 20 s went quiet under exactly the load that
 # makes a backstop worth having (2026-09-23 memo).
 TIMEOUT="${SWEAP_AUDITCHECK_TIMEOUT:-28}"

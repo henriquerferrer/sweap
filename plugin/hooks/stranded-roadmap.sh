@@ -9,7 +9,7 @@
 # the PR is closed unmerged, or there never was one, the file is invisible to
 # every reader the pipeline has — the frontier, the board, audit-gate, /roadmap
 # all read main — and nothing is scheduled to relay it. That is the one loss
-# the 2026-08-22 research memo found sweap could not see: consumer A #181 carried
+# the 2026-08-22 research memo found sweap could not see: consumer PR #181 carried
 # three filed items and an index retitle on a code branch, and the only guard
 # was the session diff-verifying them by hand after every rebase.
 #
