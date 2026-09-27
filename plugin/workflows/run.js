@@ -62,6 +62,17 @@ const MILESTONE = typeof ARGS.milestone === 'string' && ARGS.milestone ? ARGS.mi
 // playbook's "Model policy"; the cost basis of the memo is Opus subagents.
 const MODEL = typeof ARGS.model === 'string' && ARGS.model ? ARGS.model : 'opus'
 const SMALL_MODEL = typeof ARGS.small_model === 'string' && ARGS.small_model ? ARGS.small_model : 'sonnet'
+// Every agent names its effort; none inherits the session's (a consumer run,
+// 2026-09-27: the reviewer ran at the session's medium and passed code a
+// high-effort pass flagged). Two levels, refuted 3-0 against xhigh
+// everywhere: xhigh on the steps whose job is to HUNT (the reviewers) and
+// high on the rest, the small model included. The implementer is ~62% of a
+// run's spend; Anthropic's Opus 5.5 guidance reserves xhigh for a measured
+// gain, and Sonnet's xhigh costs 2.41x high for steps that run a script. An
+// `effort` arg sets the hunt level, never below high.
+const EFFORTS = ['high', 'xhigh', 'max']
+const HUNT_EFFORT = EFFORTS.includes(ARGS.effort) ? ARGS.effort : 'xhigh'
+const EFFORT = 'high'
 const MAX_FIX_ROUNDS = 3
 // Review rounds are counted apart from CI fix rounds: two reviews, and a
 // needs-work after the second is answered by cutting the claims its findings
@@ -347,7 +358,7 @@ const securityPrompt = (item, impl) => `Security-review backlog item ${item.id} 
 const reviewFixPrompt = (item, impl, findings, source, last, candidates = []) => `${READ_FIRST} Then read the playbook between \`<!-- worker-brief:begin -->\` and \`<!-- worker-brief:end -->\`: that brief binds you.
 
 You are the REVIEW FIXER for backlog item ${item.id}: ${where(item, impl)}. ${findings.length ? `The ${source} returned these confirmed findings:\n${findings.map((f) => `- ${f.file}: ${f.what}`).join('\n')}` : `The ${source} returned no confirmed finding.`}
-${candidates.length ? `\nIt also raised these UNCONFIRMED candidates. For each, try to reproduce it first — a failing test, or the command that shows it. If it reproduces, fix the root cause and keep the test. If it does not, dismiss it in your summary with the evidence. Never cut a claim, edit the item's acceptance or weaken a test for a candidate:\n${candidates.map((c) => `- ${c.file}: ${c.what}`).join('\n')}\n` : ''}
+${candidates.length ? `\nIt also raised these UNCONFIRMED candidates. For each, try to reproduce it first — a failing test, or the command that shows it. A "would this test still pass with that line reverted?" candidate is checked by reverting the line, running the test, then \`git checkout -- <file>\` to restore it; \`git status --short\` must show only your own intended changes before you go on. If it reproduces, fix the root cause and keep the test. If it does not, dismiss it in your summary with the evidence. Never cut a claim, edit the item's acceptance or weaken a test for a candidate:\n${candidates.map((c) => `- ${c.file}: ${c.what}`).join('\n')}\n` : ''}
 Work only in the worktree. For each finding: reproduce it first (a failing test, or the command that shows it); fix the root cause; or, if the evidence says it is wrong, record why — never weaken a test to close one. Never close an \`acceptance\` or \`security\` finding by cutting a claim, editing the item's acceptance, or recording it as a note: fix it, or show with evidence it is not real (the next reviewer judges that). ${last ? 'This is the LAST round, and none of these findings is an acceptance or security one: for any you cannot fix, cut the claim it names (in code, comments or the item Notes) rather than leave it standing, and list what remains. ' : ''}Verify at the layer each finding names, by name. Commit in one call; \`git status --short\` must then print nothing. If you changed nothing (every item dismissed with evidence), commit nothing and return \`committed\` with \`changed\` false. Do not push, do not open a PR, never dispatch an agent or start a review skill, and leave nothing running in the background. If a finding shows the SPEC itself is wrong or ambiguous, return \`blocked\` with the question verbatim instead of guessing. Return the JSON only.`
 
 // Problems the reviewer found in code this item did not introduce are notes,
@@ -386,7 +397,7 @@ const reviewStage = async (item, impl) => {
     // Effort is named: a workflow agent otherwise inherits the session's, and at
     // medium the reviewer passed code a recall-framed pass flagged (a consumer
     // run, 2026-09-27: 0 findings where /code-review high had found real ones).
-    const rev = await callPlugin('reviewer', reviewPrompt(item, impl, rounds, afterApprove), { label: `review ${item.id} #${r}`, phase: 'Review', schema: REVIEW, model: MODEL, effort: 'high' })
+    const rev = await callPlugin('reviewer', reviewPrompt(item, impl, rounds, afterApprove), { label: `review ${item.id} #${r}`, phase: 'Review', schema: REVIEW, model: MODEL, effort: HUNT_EFFORT })
     if (!rev.ok) return { stop: `${item.id}: ${rev.why}` }
     // An approve over no files is the empty-diff trap (the security reviewer
     // fell in it twice, DV.47 and FP.1): a verdict about nothing.
@@ -405,7 +416,7 @@ const reviewStage = async (item, impl) => {
     const needsWork = rev.value.verdict === 'needs-work'
     const hard = needsWork ? rev.value.findings.filter((f) => UNCUTTABLE.has(f.kind)) : []
     if (r === maxRounds && hard.length) return { notes, blocked: `After ${r} review rounds these confirmed findings are still open, and an acceptance or security finding is never cut (branch ${impl.branch}, unpushed, in ${impl.worktree}): ${hard.map((f) => `[${f.kind}] ${f.file}: ${f.what}`).join('; ')}. Say how to fix them, or change the item's acceptance, then /unblock.` }
-    const fix = await call(reviewFixPrompt(item, impl, needsWork ? rev.value.findings : [], 'reviewer', r === maxRounds, toCheck), { label: `review-fix ${item.id} #${r}`, phase: 'Review', schema: REVIEW_FIX, model: MODEL, agentType: 'general-purpose' })
+    const fix = await call(reviewFixPrompt(item, impl, needsWork ? rev.value.findings : [], 'reviewer', r === maxRounds, toCheck), { label: `review-fix ${item.id} #${r}`, phase: 'Review', schema: REVIEW_FIX, model: MODEL, effort: EFFORT, agentType: 'general-purpose' })
     if (!fix.ok) return { stop: `${item.id}: ${fix.why}` }
     if (!needsWork) {
       // The branch was approved; the fixer only answered candidates. Whatever
@@ -429,11 +440,11 @@ const reviewStage = async (item, impl) => {
   if ((item.reviewDimensions || []).includes('security')) {
     // A hard gate: one fix round and one re-check; a finding still open is the
     // human's, through a blocked flip.
-    const check = async (r) => callPlugin('security-reviewer', securityPrompt(item, impl), { label: `security ${item.id} #${r}`, phase: 'Review', schema: SECURITY, model: MODEL })
+    const check = async (r) => callPlugin('security-reviewer', securityPrompt(item, impl), { label: `security ${item.id} #${r}`, phase: 'Review', schema: SECURITY, model: MODEL, effort: HUNT_EFFORT })
     let sec = await check(1)
     if (!sec.ok) return { stop: `${item.id}: ${sec.why}` }
     if (sec.value.verdict === 'blocking') {
-      const fix = await call(reviewFixPrompt(item, impl, sec.value.findings, 'security reviewer', false), { label: `security-fix ${item.id}`, phase: 'Review', schema: REVIEW_FIX, model: MODEL, agentType: 'general-purpose' })
+      const fix = await call(reviewFixPrompt(item, impl, sec.value.findings, 'security reviewer', false), { label: `security-fix ${item.id}`, phase: 'Review', schema: REVIEW_FIX, model: MODEL, effort: EFFORT, agentType: 'general-purpose' })
       if (!fix.ok) return { stop: `${item.id}: ${fix.why}` }
       if (fix.value.outcome === 'committed') { sec = await check(2); if (!sec.ok) return { stop: `${item.id}: ${sec.why}` } }
     }
@@ -468,7 +479,7 @@ let stopped = null
 if (ARGS.bad_args) return { merged, blocked, needs_human: needsHuman, skipped: [], failed, stopped: `args was a string that is not valid JSON — pass an object: ${ARGS.bad_args.slice(0, 200)}` }
 
 phase('Resume')
-const resumed = await call(resumePrompt(), { label: 'resume', phase: 'Resume', schema: RESUME, model: SMALL_MODEL, effort: 'low', agentType: 'general-purpose' })
+const resumed = await call(resumePrompt(), { label: 'resume', phase: 'Resume', schema: RESUME, model: SMALL_MODEL, effort: EFFORT, agentType: 'general-purpose' })
 if (!resumed.ok) return { merged, blocked, needs_human: needsHuman, skipped: IDS || [], failed, stopped: resumed.why }
 const resume = resumed.value
 if (resume.base_red) {
@@ -488,7 +499,7 @@ log(`resume: ${resume.worktrees.length} worktree(s), ${resume.open_prs.length} o
 
 let count = 0
 while (count < MAX_ITEMS) {
-  const scoped = await call(scopePrompt(), { label: `scope #${count + 1}`, phase: 'Scope', schema: SCOPE, model: SMALL_MODEL, effort: 'low', agentType: 'general-purpose' })
+  const scoped = await call(scopePrompt(), { label: `scope #${count + 1}`, phase: 'Scope', schema: SCOPE, model: SMALL_MODEL, effort: EFFORT, agentType: 'general-purpose' })
   if (!scoped.ok) { stopped = scoped.why; break }
   // An empty frontier because the command did not run is not "drained": the
   // goal would send the session to the milestone audit on nothing.
@@ -505,7 +516,7 @@ while (count < MAX_ITEMS) {
     log(`item ${item.id}: PR #${already.number} is already open — straight to the watcher`)
     impl = { outcome: 'pr-open', pr: already.number, branch: already.branch, worktree: already.worktree, resumed: true, red_green: '', review_rounds: null, report: `resumed open PR #${already.number}` }
   } else {
-    const implemented = await call(implementPrompt(item, resume, priorReports), { label: `implement ${item.id}`, phase: 'Implement', schema: IMPLEMENT, model: MODEL, agentType: 'general-purpose' })
+    const implemented = await call(implementPrompt(item, resume, priorReports), { label: `implement ${item.id}`, phase: 'Implement', schema: IMPLEMENT, model: MODEL, effort: EFFORT, agentType: 'general-purpose' })
     if (!implemented.ok) { stopped = `${item.id}: ${implemented.why}`; break }
     impl = implemented.value
   }
@@ -523,7 +534,7 @@ while (count < MAX_ITEMS) {
     if (reviewed.failed) { failed.push({ id: item.id, why: `${reviewed.failed} (branch ${impl.branch} committed, unpushed, in ${impl.worktree})` }); count++; continue }
     if (reviewed.blocked) { question = reviewed.blocked; flipNotes = reviewed.notes || [] }
     else {
-      const published = await call(publishPrompt(item, impl, reviewed.record, reviewed.notes), { label: `publish ${item.id}`, phase: 'Review', schema: PUBLISH, model: SMALL_MODEL, effort: 'low', agentType: 'general-purpose' })
+      const published = await call(publishPrompt(item, impl, reviewed.record, reviewed.notes), { label: `publish ${item.id}`, phase: 'Review', schema: PUBLISH, model: SMALL_MODEL, effort: EFFORT, agentType: 'general-purpose' })
       if (!published.ok) { stopped = `${item.id}: ${published.why}`; break }
       if (published.value.outcome !== 'pr-open' || !published.value.pr) { failed.push({ id: item.id, why: `reviewed but not published: ${published.value.report}` }); count++; continue }
       impl = { ...impl, outcome: 'pr-open', pr: published.value.pr, review_rounds: reviewed.review_rounds }
@@ -532,7 +543,7 @@ while (count < MAX_ITEMS) {
   if (question !== null) {
     let pr = impl.outcome === 'blocked' ? impl.pr : null
     if (!pr) {
-      const flipped = await call(flipPrompt(item, question, flipNotes), { label: `flip ${item.id}`, phase: 'Review', schema: PUBLISH, model: SMALL_MODEL, effort: 'low', agentType: 'general-purpose' })
+      const flipped = await call(flipPrompt(item, question, flipNotes), { label: `flip ${item.id}`, phase: 'Review', schema: PUBLISH, model: SMALL_MODEL, effort: EFFORT, agentType: 'general-purpose' })
       if (!flipped.ok) { stopped = `${item.id}: ${flipped.why}`; break }
       if (flipped.value.outcome === 'pr-open' && flipped.value.pr) { pr = flipped.value.pr; impl = { outcome: 'blocked', pr, branch: flipped.value.branch || `chore/${slug(item.id)}-blocked`, worktree: flipped.value.worktree || '' } }
       else question = `${question} (the blocked flip did not land: ${flipped.value.report})`
@@ -552,7 +563,7 @@ while (count < MAX_ITEMS) {
   let previous = ''
   let watchMismatch = 0
   while (true) {
-    const watched = await callWatcher(watchPrompt(item, impl, previous), { label: `watch #${impl.pr}`, phase: 'Merge', schema: WATCH })
+    const watched = await callWatcher(watchPrompt(item, impl, previous), { label: `watch #${impl.pr}`, phase: 'Merge', schema: WATCH, effort: EFFORT })
     if (!watched.ok) { stopped = `${item.id}: ${watched.why}`; break }
     watch = watched.value
     // A report about another PR is no word about this one (`tick 1` answered
@@ -565,7 +576,7 @@ while (count < MAX_ITEMS) {
     if (watch.word === 'merged') break
     const fixable = watch.word === 'failed' && (watch.class === 'red' || watch.class === 'starved')
     if (!fixable || rounds.length >= MAX_FIX_ROUNDS) break
-    const fixed = await call(fixPrompt(item, impl, watch, rounds), { label: `fix ${item.id} #${rounds.length + 1}`, phase: 'Fix', schema: FIX, model: MODEL, agentType: 'general-purpose' })
+    const fixed = await call(fixPrompt(item, impl, watch, rounds), { label: `fix ${item.id} #${rounds.length + 1}`, phase: 'Fix', schema: FIX, model: MODEL, effort: EFFORT, agentType: 'general-purpose' })
     if (!fixed.ok) { stopped = `${item.id}: ${fixed.why}`; break }
     rounds.push(fixed.value)
     if (fixed.value.outcome !== 'pushed') { if (fixed.value.outcome === 'blocked') blocked.push({ id: item.id, pr: impl.pr, question: fixed.value.question }); break }

@@ -44,7 +44,9 @@ ok "claude_args disallows Task (Agent's former name)"  grep -qE -- '--disallowed
 ok "claude_args disallows ScheduleWakeup"              grep -qE -- '--disallowedTools "[^"]*\bScheduleWakeup\b' <<< "$args"
 ok "claude_args still allow-lists the posting form"    grep -qF -- 'Bash(gh pr comment:*)' <<< "$args"
 ok "both action steps take the SAME claude_args"       test "$(count 'claude_args: \${{ env.CLAUDE_ARGS }}')" = 2
-ok "both action steps pin the same action sha"         test "$(count 'uses: anthropics/claude-code-action@558b1d6cab4085c7753fe402c10bef0fbb92ac7a')" = 2
+ok "both action steps pin the same action sha"         test "$(count 'uses: anthropics/claude-code-action@756cc22e19660d20e8cc9496b4f242475a7f7790')" = 2
+ok "the pin is a release whose CLI resolves opus to 5.5" grep -qF '# v1.0.235' "$YML"
+ok "the reviewer runs at --effort xhigh"                 grep -qE "CLAUDE_ARGS: '--model opus --effort xhigh " "$YML"
 
 # The prompt: one copy, one-turn rule, sent by both passes.
 ok "the prompt is defined once at job level"           test "$(count '^      REVIEW_PROMPT:')" = 1
@@ -77,7 +79,7 @@ ok "retry skips when there is no OAuth token"          grep -qF "steps.token.out
 ok "first pass is continue-on-error (a crash can be rescued)" awk '/id: reviewer$/{f=1} f && /continue-on-error: true/{found=1} /id: first$/{exit} END{exit !found}' "$YML"
 ok "retry pass is continue-on-error too (the gate is the control)" awk '/id: retry$/{f=1} f && /continue-on-error: true/{found=1} /Upload reviewer transcript/{exit} END{exit !found}' "$YML"
 ok "exactly two action steps: one retry, never more"   test "$(count 'uses: anthropics/claude-code-action@')" = 2
-ok "two passes fit the job timeout"                    awk '/timeout-minutes:/{split($0,a,":"); m=a[2]+0; exit !(m>=45)}' "$YML"
+ok "two passes fit the job timeout"                    awk '/timeout-minutes:/{split($0,a,":"); m=a[2]+0; exit !(m>=60)}' "$YML"
 
 # The reader: every GitHub read is checked, so empty means "none posted".
 ok "each API surface is read through the checked helper" test "$(count '^          read_surface "repos/')" = 3

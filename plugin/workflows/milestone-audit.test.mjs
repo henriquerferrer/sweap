@@ -518,9 +518,9 @@ test("a lost experiment is logged with the ⚠ shape and names the gate key", ()
 });
 
 test("effort is a named tunable stamped into the record, not a literal at the dispatch sites", () => {
-  assert.deepEqual(TUNING.effort, { find: "high", refute: "high", prove: "high" }, "the shipped regime is high on every stage; change it only with a labeled comparison");
+  assert.deepEqual(TUNING.effort, { find: "xhigh", refute: "high", prove: "xhigh" }, "since 2026-09-27 the hunting stages run at xhigh and the refuter at high (records carry find_effort:, so earlier rows stay tellable apart)");
   const code = SRC.split("\n").filter((l) => !l.trimStart().startsWith("//")).join("\n");
-  assert.doesNotMatch(code, /effort: 'high'/, "no dispatch may hard-code effort — the record could not say which regime produced its rows");
+  assert.doesNotMatch(code, /effort: 'x?high'/, "no dispatch may hard-code effort — the record could not say which regime produced its rows");
   for (const stage of ["find", "refute", "prove"]) {
     assert.match(SRC, new RegExp("effort: TUNING\\.effort\\." + stage), `the ${stage} dispatch must read TUNING.effort.${stage}`);
     assert.match(SRC, new RegExp("`" + stage + "_effort: \\$\\{TUNING\\.effort\\." + stage + "\\}`"), `frontmatter must stamp ${stage}_effort:`);

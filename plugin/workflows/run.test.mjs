@@ -350,7 +350,7 @@ test("an acceptance or security finding still open after two review rounds is ne
 // medium effort and its doubts went to an Advisory string nothing read.
 test("the reviewer runs at high effort, named, never inherited from the session", () => {
   const line = SRC.match(/callPlugin\('reviewer',[^\n]*/)[0];
-  assert.match(line, /effort: 'high'/);
+  assert.match(line, /effort: HUNT_EFFORT/);
 });
 
 const cand = (scope, what = "focus lands on the page after close") => ({ file: "patients.tsx:963", what, scope });
@@ -430,4 +430,17 @@ test("after an approve, the candidate fix gets a review scoped to its commits an
 
 test("a drained run that left failed items says so in the same line the goal cites", () => {
   assert.match(SRC, /\$\{failed\.length \? ` with \$\{failed\.length\} failed — relaunch fresh once to retry them` : ''\}/);
+});
+
+test("every agent call names its effort: the hunters at xhigh, everything else at high, nothing inherited or below high", () => {
+  const sites = [...SRC.matchAll(/(?:call|callPlugin|callWatcher)\([^\n]*\{ label:[^\n]*/g)].map((m) => m[0]);
+  assert.ok(sites.length >= 11);
+  for (const site of sites) assert.match(site, /effort: (HUNT_EFFORT|EFFORT)\b/, `no named effort: ${site.slice(0, 80)}`);
+  const hunters = sites.filter((s) => /HUNT_EFFORT/.test(s)).map((s) => s.match(/callPlugin\('([a-z-]+)'/)?.[1]);
+  assert.deepEqual(hunters.sort(), ["reviewer", "security-reviewer"]);
+  assert.match(SRC, /const HUNT_EFFORT = EFFORTS\.includes\(ARGS\.effort\) \? ARGS\.effort : 'xhigh'/);
+  assert.match(SRC, /const EFFORT = 'high'/);
+  const AUDIT = readFileSync(join(HERE, "milestone-audit.js"), "utf8");
+  assert.match(AUDIT, /effort: \{ find: 'xhigh', refute: 'high', prove: 'xhigh' \}/);
+  for (const m of AUDIT.matchAll(/\{ label: [^\n]*/g)) assert.match(m[0], /effort/, `audit agent without effort: ${m[0].slice(0, 60)}`);
 });

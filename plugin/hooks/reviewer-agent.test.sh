@@ -34,5 +34,13 @@ ok "brief: never edit a test to make it pass"                   grep -qF 'Never 
 ok "core: fixes stay local until every reviewer approves"       grep -qF 'keep fixes local' "$PLAYBOOK"
 ok "core: the run-end record's four keys are inline"            grep -qF 'why_not_agent: [<id>=identity|money|terms|taste|authority, ...]' "$PLAYBOOK"
 ok "the Hard rules heading survives (agents navigate to it)"    grep -q '^## Hard rules for unattended runs$' "$PLAYBOOK"
+# The hunt angles (0.37.0): ordered by what a consumer's history says they
+# catch; the reviewer never breaks code itself (a killed reviewer would leave the
+# mutation for the fixer's commit to push).
+hunt="$(sed -n '/^## How you hunt/,/^## What you do/p' "$REVIEWER")"
+first4="$(grep -oE '^- \*\*[^*]+\*\*' <<<"$hunt" | head -4 | tr '\n' '|')"
+ok "hunt: the four highest-yield angles come first"             [ "$first4" = "- **Late and repeated work.**|- **Errors shown as data.**|- **Sibling code.**|- **Cache invalidation.**|" ]
+ok "hunt: the reviewer never breaks code to test a test"        grep -qF 'Never break the code to find out yourself' <<<"$(tr -s ' \n' ' ' <<<"$hunt")"
+ok "hunt: UI angles are one conditional group"                  grep -qF 'When the diff touches UI:' <<<"$hunt"
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

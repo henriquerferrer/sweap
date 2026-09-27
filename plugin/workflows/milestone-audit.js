@@ -223,13 +223,17 @@ const SCOPE = {
   },
 }
 
+// The scope and lens-config agents map the milestone; they name their effort
+// like every other stage (none inherits the session's).
+const SETUP_EFFORT = 'high'
+
 phase('Scope')
 const scope = await agent(
   `In this repo, determine the merged commit range and surface for ${milestone}.` +
     (range ? ` Use the range ${range}.` : ` Infer the range from the milestone's item files at status: done (their merge PR links) and git log --oneline --merges.`) +
     ` Return BOTH ends of the range as full 40-character commit SHAs — run 'git rev-parse' on whatever you resolved, including a range handed to you, and never answer with HEAD, a branch name or a tag.` +
     ` Return: the milestone id you actually resolved, the range, and a summary covering the list of changed files grouped by area (db schema/migrations, server fns, routes, tests), new tables, new permission actions, and the milestone's acceptance criteria copied from its item files.`,
-  { label: 'scope', phase: 'Scope', schema: SCOPE }
+  { label: 'scope', phase: 'Scope', schema: SCOPE, effort: SETUP_EFFORT }
 )
 
 if (requestedMilestone && normalizeMilestoneId(scope?.milestone) !== normalizeMilestoneId(requestedMilestone)) {
@@ -273,7 +277,7 @@ const lensConfig = await agent(
     ` - If set to 'default + [x, y, ...]': return mode 'default-plus'; for each named extra (x, y, ...) draft a lens {key, prompt} — a concrete audit instruction for that domain concern, grounded in this project's actual code/specs and the milestone scope below (not a generic placeholder).\n` +
     ` - If set to an explicit list with no 'default' token: return mode 'explicit' and draft a lens {key, prompt} for each named entry the same way — these REPLACE the generic defaults for this run.\n\n` +
     `Milestone scope (from a prior mapping agent):\n${scopeSummary}`,
-  { label: 'lens-config', phase: 'Scope', schema: LENS_CONFIG }
+  { label: 'lens-config', phase: 'Scope', schema: LENS_CONFIG, effort: SETUP_EFFORT }
 )
 
 // LENSES-START
@@ -427,7 +431,10 @@ const TUNING = {
   // `refuted_votes:`/`proven:` rows are only comparable across audits that ran
   // under the same regime, and a regime change that is not written down turns
   // the labeled set into noise. Change these only with a labeled comparison.
-  effort: { find: 'high', refute: 'high', prove: 'high' },
+  // Since 2026-09-27 the stages that HUNT (find, prove) run at xhigh and the
+  // refuter at high; records before it carry find_effort: high, so rows stay
+  // tellable apart.
+  effort: { find: 'xhigh', refute: 'high', prove: 'xhigh' },
 }
 
 const tally = (refutations, tuning) => {

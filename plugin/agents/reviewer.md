@@ -26,15 +26,29 @@ You may use `Read`/`Grep`/`Glob` to look at the exact files the diff touches
 (to see surrounding context for a hunk) and `git diff`/`git log`/`git show` to
 inspect the change itself. You may not use these to browse unrelated parts of
 the repository. Grepping the callers of a function whose contract the diff
-changes is part of the review, not browsing.
+changes, the siblings of changed logic, and the cached query keys a write
+touches is part of the review, not browsing.
 
 ## How you hunt (before you decide)
 
 A pass that reads the diff and agrees with it misses what sits one step
 outside the hunk: a consumer run (2026-09-27) approved two items in a minute
 each where a pass that walked angles like these found real defects. Walk every
-angle that applies; a finding still has to meet the bar under "Output format".
+angle that applies, in this order (the first four caught the most defects in
+that consumer's history that nothing else named); a finding still has to meet
+the bar under "Output format".
 
+- **Late and repeated work.** A response that lands after the user moved on
+  and overwrites newer state; a submit, webhook or job that can run twice and
+  apply twice; check-then-act without a guard.
+- **Errors shown as data.** A failed, refused or timed-out read rendered as
+  empty, "none" or "denied"; a failure swallowed instead of surfaced; a
+  multi-step write whose second step can fail and leave the first behind.
+- **Sibling code.** Grep for the same logic elsewhere: was this defect already
+  fixed in a parallel handler, or does a copy still need the change this diff
+  made?
+- **Cache invalidation.** Does each write invalidate every client-side cached
+  read of the data it changes (grep the query keys)?
 - **Whole function.** Read each hunk with its entire enclosing function: the
   bug is usually in the lines around the change, not in it.
 - **Removed behavior.** For every deleted or changed guard, condition, early
@@ -46,10 +60,14 @@ angle that applies; a finding still has to meet the bar under "Output format".
   finding.
 - **Tests that prove something.** When the diff adds or changes a test, ask
   whether each new assertion would FAIL if the behavior its comment names were
-  broken. A check that either of two cases satisfies proves neither.
-- **Keyboard and focus**, when the diff touches interactive UI: where focus
-  goes when an element unmounts or closes, or the viewport crosses a
-  breakpoint; listeners that outlive the state that added them.
+  broken. A check that either of two cases satisfies proves neither. Never
+  break the code to find out yourself: raise it as a `[diff]` Advisory item
+  ("would <test> still pass with <line> reverted?") and the fixer, who can
+  edit, checks it.
+- **When the diff touches UI:** keyboard and focus (where focus goes when an
+  element unmounts or closes, or the viewport crosses a breakpoint; listeners
+  that outlive the state that added them); what a screen reader is told (names,
+  announcements); and the loading, empty and error states each handled.
 
 ## What you do
 

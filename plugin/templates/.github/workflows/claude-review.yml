@@ -92,8 +92,10 @@ jobs:
     # longer fan out) and still posts nothing, plus a retry, needs more than
     # the old 30. The action writes its transcript only when a pass ENDS, so
     # a pass killed by this timeout leaves no transcript and no gate output
-    # — the budget has to cover the retry, not just start it.
-    timeout-minutes: 45
+    # — the budget has to cover the retry, not just start it. 60 since the
+    # reviewer runs at --effort xhigh (0.37.0): measured passes took 5-9 min
+    # at default effort, and xhigh can roughly double that per pass.
+    timeout-minutes: 60
     env:
       # The review prompt, defined ONCE at job level so the first pass and the
       # retry pass send identical instructions (the retry adds a preamble).
@@ -169,10 +171,20 @@ jobs:
       # change to every consumer, but each consumer still has to COMMIT and
       # HUMAN-MERGE the resulting workflow diff, so a pinned `claude-opus-5`
       # would still buy that cycle in every repo the day Opus 5 is
-      # superseded. The alias tracks the latest Opus on its own. Cost, for
-      # the record: Opus is ~2.5x Sonnet per token, and a review measured
-      # ~$0.25-0.35 of subscription usage on Sonnet.
-      CLAUDE_ARGS: '--model opus --allowedTools "Read,Grep,Glob,Write,mcp__github_inline_comment__create_inline_comment,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh api:*)" --disallowedTools "Agent,Task,ScheduleWakeup"'
+      # superseded. The alias resolves inside the CLI that the action PINS
+      # (the action installs a fixed CLI version per release), so it tracks
+      # the latest Opus only when the action SHA below moves: on v1.0.165
+      # (CLI 2.1.201) `opus` was claude-opus-4-8 for weeks after 5.5 shipped.
+      # v1.0.235 installs CLI 2.1.283, where `opus` is claude-opus-5-5
+      # (2.1.280) and xhigh no longer fails a turn with thinking off (2.1.283).
+      # Moving to a new Opus is a SHA bump. Cost, for the record: Opus is
+      # ~2.5x Sonnet per token, and a review measured ~$0.25-0.35 of
+      # subscription usage on Sonnet.
+      # EFFORT: --effort xhigh, a CLI flag passed through claude_args (the
+      # action has no effort input). A flag, not the effortLevel setting: a
+      # new model's default-effort hold ignores the setting (CLI 2.1.257).
+      # The reviewer's job is to hunt, the one step sweap runs above high.
+      CLAUDE_ARGS: '--model opus --effort xhigh --allowedTools "Read,Grep,Glob,Write,mcp__github_inline_comment__create_inline_comment,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh api:*)" --disallowedTools "Agent,Task,ScheduleWakeup"'
     steps:
       - name: Check for OAuth token
         id: token
@@ -189,7 +201,7 @@ jobs:
         if: steps.token.outputs.present == 'true'
         with:
           fetch-depth: 0
-      - uses: anthropics/claude-code-action@558b1d6cab4085c7753fe402c10bef0fbb92ac7a # v1.0.165
+      - uses: anthropics/claude-code-action@756cc22e19660d20e8cc9496b4f242475a7f7790 # v1.0.235
         id: reviewer
         if: steps.token.outputs.present == 'true'
         # continue-on-error so a first pass that CRASHES (not just one that
@@ -330,7 +342,7 @@ jobs:
             echo "::warning::First pass ended cleanly with NO verdict — running the retry pass. This is the lost-turn failure the retry exists for; the first pass's transcript is kept as claude-execution-output.pass1.json in the artifact."
           fi
 
-      - uses: anthropics/claude-code-action@558b1d6cab4085c7753fe402c10bef0fbb92ac7a # v1.0.165
+      - uses: anthropics/claude-code-action@756cc22e19660d20e8cc9496b4f242475a7f7790 # v1.0.235
         id: retry
         # The one re-invocation the first pass may have assumed it would get.
         # Runs only when the first pass posted nothing and the PR does not edit
