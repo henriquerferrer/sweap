@@ -33,7 +33,12 @@ export OSA_LOG="$WORK/osa.log"
 export FAKE_CLAUDE_VERSION=2.1.270
 
 R="$WORK/repo"; mkdir -p "$R/.claude"
-payload() { printf '{"session_id":"s1","hook_event_name":"StopFailure","cwd":"%s","error_type":"%s","error":"%s"}' "$R" "$1" "$2"; }
+# The shape a real StopFailure carries (captured on Claude Code 2.1.295): the
+# type is `error`, the text `last_assistant_message`. This fixture used to send
+# `error_type` + `error`, the shape the hook read and the harness never sent,
+# so the suite was green while every real line said "unknown".
+payload() { printf '{"session_id":"s1","hook_event_name":"StopFailure","cwd":"%s","error":"%s","last_assistant_message":"%s"}' "$R" "$1" "$2"; }
+old_payload() { printf '{"session_id":"s1","hook_event_name":"StopFailure","cwd":"%s","error_type":"%s","error":"%s"}' "$R" "$1" "$2"; }
 
 # 1. No run file: nothing happens.
 : > "$OSA_LOG"
@@ -58,6 +63,13 @@ ok "the original run lines are untouched" "milestone: F12" "$(head -1 "$R/.claud
 ok "active run => one notification" 1 "$(wc -l < "$OSA_LOG" | tr -d ' ')"
 has "notification names the hook's subject" "$(cat "$OSA_LOG")" "sweap: run stalled"
 has "stderr tells the human when to look" "$out" "if no turn follows within ~25 min"
+has "stderr names the error type, not unknown" "$out" "on server_error"
+
+# 2b. The older documented shape (`error_type` + `error`) still reads right.
+printf 'milestone: F12\nstarted: 2026-09-08T00:48:00Z\n' > "$R/.claude/sweap-run.md"
+old_payload rate_limit "429 Too many requests" | bash "$HOOK" >/dev/null 2>&1
+has "older shape: the line names the error type" "$(cat "$R/.claude/sweap-run.md")" "stalled: .* rate_limit"
+has "older shape: the line carries the error text" "$(cat "$R/.claude/sweap-run.md")" "429 Too many requests"
 has "the notification says the harness is retrying" "$(cat "$OSA_LOG")" "retrying by itself"
 
 # 3. A second stall appends a second line (append-only, never rewrites).

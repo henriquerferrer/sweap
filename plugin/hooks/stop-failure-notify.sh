@@ -27,8 +27,13 @@ run_file="$cwd/.claude/sweap-run.md"
 [ -f "$run_file" ] || exit 0
 if grep -qE '^ended:' "$run_file" 2>/dev/null; then exit 0; fi
 
-etype="$(printf '%s' "$input" | jq -r '.error_type // "unknown"' 2>/dev/null || echo unknown)"
-emsg="$(printf '%s' "$input" | jq -r '.error // .message // ""' 2>/dev/null | tr '\n' ' ' | cut -c1-160)"
+# The event names the error TYPE `error` (and the text `error_details` /
+# `last_assistant_message`) — witnessed on Claude Code 2.1.295 with a real
+# StopFailure. This hook read `error_type`, which that payload does not carry,
+# so every line said "unknown" with the type in the text slot. `error_type` is
+# still read first for a harness that sends the older documented shape.
+etype="$(printf '%s' "$input" | jq -r '.error_type // .error // "unknown"' 2>/dev/null || echo unknown)"
+emsg="$(printf '%s' "$input" | jq -r 'if .error_type then (.error // .message // "") else (.error_details // .last_assistant_message // .message // "") end' 2>/dev/null | tr '\n' ' ' | cut -c1-160)"
 ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 # WHAT HAPPENS NEXT DEPENDS ON THE HARNESS VERSION, so say which. Claude Code

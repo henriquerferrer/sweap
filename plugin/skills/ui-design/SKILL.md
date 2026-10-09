@@ -1,27 +1,24 @@
 ---
 name: ui-design
-description: Use when building, editing, or reviewing any product-visible UI (routes, components, screens, forms, tables, dashboards). Orchestrates the project's UI process — the project's declared design system (tokens + primitives), the surface contract of cross-screen invariants, a preferred Mobbin archetype seed, a bounded render→critique→fix loop, the a11y + token-reuse + structural hard gates, and the per-milestone UI audit. Composes frontend-design and ui-ux-pro-max for aesthetic craft; do not duplicate them.
+description: Use when building, editing, or reviewing any product-visible UI (routes, components, screens, forms, tables, dashboards). Orchestrates the project's UI process — the project's declared design system (tokens + primitives), the surface contract of cross-screen invariants, a preferred Mobbin archetype seed, a bounded render→critique→fix loop, the a11y + token-reuse + structural hard gates, and the per-milestone UI audit.
 ---
 
 # UI design process
 
 ## Prerequisites (optional)
 
-The `ui` review-dimension composes the `frontend-design` and `ui-ux-pro-max`
-skills for aesthetic craft, and the Mobbin MCP (`mcp__mobbin__*` tools) for
-archetype seeding and comparative reference, when those are available in the
-consuming project/session. None of them are shipped or required by this
-plugin. If they are absent, this skill **degrades gracefully**: the a11y,
+The `ui` review-dimension uses the Mobbin MCP (`mcp__mobbin__*` tools) for
+archetype seeding and comparative reference, when it is available in the
+consuming project/session. It is not shipped or required by this plugin. If
+it is absent, this skill **degrades gracefully**: the a11y,
 structural and interaction-state HARD gates (§6) still run in full — only the
 comparative aesthetic ratchet (§5/§8's ensemble critique against references) is
 reduced to whatever internal exemplar comparison remains possible.
 
 The repeatable process for producing high-quality UI. It exists because,
 undirected, coding agents converge on a generic "AI-slop" aesthetic and invent
-one-off values that make screens drift. This skill is the *process*; it
-**composes** the `frontend-design` and `ui-ux-pro-max` skills for generic
-aesthetic *craft* — load those for typography/color/motion technique, and do not
-restate their content here.
+one-off values that make screens drift. This skill is the *process*; the
+aesthetic itself is the project's own, stated in its surface contract (§2).
 
 ## 1. The design system is the source of truth
 

@@ -33,7 +33,7 @@ turns.default:    160
 - Finishing a branch: open a PR by default. Never discard work autonomously.
 - Merging an unblocked PR whose gate is green is pre-authorized — do not ask.
   Never pass `--admin`/`--repo`/`-R`; never disable or weaken the gate.
-- Plan execution: subagent-driven-development (continuous, no check-ins).
+- Plan execution: `/sweap:run` (the script holds the loop; continuous, no check-ins).
 - TDD, no exceptions in product code. The implementer's report MUST include TDD
   Evidence: the RED (failing) output and the GREEN (passing) output, pasted.
   Never modify a test to make it pass; never skip/quarantine silently.

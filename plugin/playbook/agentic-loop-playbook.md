@@ -1712,8 +1712,8 @@ the human's standing answers — treat them as given, do not re-ask in a session
 - **Finishing a branch:** default to opening a PR (merge only when agentic CI +
   review gates are green). Never discard work autonomously — "discard" always
   requires the human's typed confirmation.
-- **Plan execution mode:** subagent-driven-development (continuous execution,
-  no between-task check-ins), not inline executing-plans.
+- **Plan execution mode:** `/sweap:run` — the script holds the loop and gives
+  each item a fresh implementer (continuous, no between-item check-ins).
 - **TDD:** no exceptions in product code; don't ask for exemptions, just do TDD.
   The implementer's report MUST include TDD Evidence: the RED (failing) output
   and the GREEN (passing) output, pasted.
