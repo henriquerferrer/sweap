@@ -61,7 +61,8 @@ has "on >= 2.1.269 the line says the harness retries first" "$(cat "$R/.claude/s
 has "on >= 2.1.269 the line names the installed version" "$(cat "$R/.claude/sweap-run.md")" "Claude Code 2.1.270"
 ok "the original run lines are untouched" "milestone: F12" "$(head -1 "$R/.claude/sweap-run.md")"
 ok "active run => one notification" 1 "$(wc -l < "$OSA_LOG" | tr -d ' ')"
-has "notification names the hook's subject" "$(cat "$OSA_LOG")" "sweap: run stalled"
+has "notification names the repo and the subject" "$(cat "$OSA_LOG")" "title \"repo: run paused by an API error\""
+has "notification names the error type" "$(cat "$OSA_LOG")" "Error: server_error."
 has "stderr tells the human when to look" "$out" "if no turn follows within ~25 min"
 has "stderr names the error type, not unknown" "$out" "on server_error"
 
@@ -70,7 +71,7 @@ printf 'milestone: F12\nstarted: 2026-09-08T00:48:00Z\n' > "$R/.claude/sweap-run
 old_payload rate_limit "429 Too many requests" | bash "$HOOK" >/dev/null 2>&1
 has "older shape: the line names the error type" "$(cat "$R/.claude/sweap-run.md")" "stalled: .* rate_limit"
 has "older shape: the line carries the error text" "$(cat "$R/.claude/sweap-run.md")" "429 Too many requests"
-has "the notification says the harness is retrying" "$(cat "$OSA_LOG")" "retrying by itself"
+has "the notification says the harness is retrying" "$(cat "$OSA_LOG")" "It retries by itself"
 
 # 3. A second stall appends a second line (append-only, never rewrites).
 out="$(payload overloaded "529 overloaded" | bash "$HOOK" 2>&1)"
@@ -82,7 +83,7 @@ has "second line names its own type" "$(tail -1 "$R/.claude/sweap-run.md")" "ove
 printf 'milestone: F12\n' > "$R/.claude/sweap-run.md"
 out="$(FAKE_CLAUDE_VERSION=2.1.263 payload server_error "500" | FAKE_CLAUDE_VERSION=2.1.263 bash "$HOOK" 2>&1)"
 has "on 2.1.263 the line says nothing retries" "$(cat "$R/.claude/sweap-run.md")" "nothing retries this on Claude Code 2.1.263"
-has "on 2.1.263 the notification asks to resume" "$(cat "$OSA_LOG")" "resume the run"
+has "on 2.1.263 the notification asks to resume" "$(cat "$OSA_LOG")" "Nothing retries it. Open the session and send any message to resume."
 ok "on 2.1.263 no false promise of a retry" 0 "$(grep -c 'retries this on its own' "$R/.claude/sweap-run.md")"
 
 # 3c. Unreadable version: treated as old (tell the human to look, never that the harness will).

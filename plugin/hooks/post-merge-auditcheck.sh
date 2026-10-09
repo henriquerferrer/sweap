@@ -34,6 +34,10 @@ command -v jq >/dev/null 2>&1 || exit 0
 # Shared shell-aware `gh pr merge` detector/parser (see lib-merge-parse.sh).
 # shellcheck source=/dev/null
 . "$(dirname "${BASH_SOURCE[0]}")/lib-merge-parse.sh"
+# shellcheck source=/dev/null
+. "$(dirname "${BASH_SOURCE[0]}")/lib-notify.sh" 2>/dev/null || true
+declare -F sweap_notify >/dev/null 2>&1 || sweap_notify() { return 0; }
+declare -F sweap_run_active >/dev/null 2>&1 || sweap_run_active() { return 1; }
 
 input="$(cat)"
 tool_name="$(printf '%s' "$input" | jq -r '.tool_name // empty' 2>/dev/null)"
@@ -130,6 +134,22 @@ if [ "$rc" = "143" ]; then
   exit 0
 fi
 if [ "$rc" = "0" ]; then
+  # COMPLETE: this merge ADDED an audit record and the whole check is clean, so
+  # the record validates — the milestone is built AND audited. One message says
+  # both (the human asked for "milestone and audit ran successfully"), with the
+  # one number they want.
+  # `defects` is the collapsed count when the record has one, else `confirmed`.
+  for rec in $(git -C "$primary" diff --name-only --diff-filter=A 'HEAD^' HEAD 2>/dev/null | grep -E '(^|/)audits/[A-Za-z0-9._-]+\.md$' || true); do
+    am="$(basename "$rec" .md)"
+    n="$(sed -n 's/^defects: *\([0-9][0-9]*\).*/\1/p' "$primary/$rec" 2>/dev/null | head -1)"
+    [ -n "$n" ] || n="$(sed -n 's/^confirmed: *\([0-9][0-9]*\).*/\1/p' "$primary/$rec" 2>/dev/null | head -1)"
+    case "$n" in
+      "") sweap_notify "$primary" "$am is complete" "Built and audited. Follow-ups, if any, are in the roadmap." ;;
+      0)  sweap_notify "$primary" "$am is complete" "Built and audited. No problems found. Nothing to do." ;;
+      1)  sweap_notify "$primary" "$am is complete" "Built and audited. 1 problem confirmed. Its follow-up is in the roadmap." ;;
+      *)  sweap_notify "$primary" "$am is complete" "Built and audited. $n problems confirmed. The follow-ups are in the roadmap." ;;
+    esac
+  done
   deferred="$(printf '%s\n' "$out" | grep '^DEFERRED:' || true)"
   [ -n "$deferred" ] || exit 0
   due="$(printf '%s\n' "$deferred" | sed -n 's/^DEFERRED: milestone \([^ ]*\) .*/\1/p' | tr '\n' ' ')"
@@ -146,6 +166,14 @@ if [ "$rc" = "0" ]; then
       printf 'Run /milestone-audit for each, land the record + triage follow-ups,\n'
       printf 'then delete this marker.\n'
     } > "$marker_dir/audit-due-$(git -C "$primary" rev-parse --short HEAD 2>/dev/null || echo unknown).flag" 2>/dev/null || true
+  fi
+  # BUILT: the last item of a milestone just merged. A milestone run audits it
+  # by itself when its workflow returns; outside a run the human starts it.
+  due_trim="$(printf '%s' "$due" | sed 's/ *$//')"
+  if sweap_run_active "$primary"; then
+    sweap_notify "$primary" "$due_trim is built" "All its items are merged. The audit starts by itself."
+  else
+    sweap_notify "$primary" "$due_trim is built" "All its items are merged. Next step: /milestone-audit $due_trim"
   fi
   {
     printf '\n################################################################\n'
@@ -182,8 +210,42 @@ if mkdir -p "$marker_dir" 2>/dev/null; then
   } > "$marker_dir/audit-debt-$(git -C "$primary" rev-parse --short HEAD 2>/dev/null || echo unknown).flag" 2>/dev/null || true
 fi
 
-if command -v osascript >/dev/null 2>&1; then
-  osascript -e 'display notification "A merge just landed on top of undischarged audit debt" with title "sweap: audit gate"' >/dev/null 2>&1 || true
+# WHAT THE HUMAN IS TOLD. Two different things reach this point and they used to
+# share one sentence ("A merge just landed on top of undischarged audit debt"),
+# which read as damage in both and told the human nothing to do:
+#   - NOT AUDITED YET: a milestone is built, its audit report has not landed,
+#     and a PR the gate allowed merged meanwhile. Nothing is broken. While a
+#     milestone run is active it audits by itself, so the human is told nothing;
+#     outside a run the audit is theirs to start, so they are told that.
+#   - REPORT INCOMPLETE: the audit report ON the default branch does not
+#     validate (the 2026-08-11 incident this hook exists for), so the milestone
+#     does not count as audited however the file looks.
+# Both still alarm to the SESSION (exit 2, marker); only the words differ.
+due_ms="$(printf '%s\n' "$fails" | sed -nE 's/^FAIL: milestone ([A-Za-z0-9._-]+) is complete but has no audit record.*/\1/p' | tr '\n' ' ' | sed 's/ *$//')"
+invalid="$(printf '%s\n' "$fails" | grep -v 'is complete but has no audit record' || true)"
+if [ -z "$invalid" ] && [ -n "$due_ms" ]; then
+  if ! sweap_run_active "$primary"; then
+    sweap_notify "$primary" "$due_ms is not audited yet" "$due_ms is built but its audit has not run. Next step: /milestone-audit $due_ms"
+  fi
+else
+  bad_recs="$(printf '%s\n' "$invalid" | sed -nE 's/^FAIL: record [^ ]*audits\/([A-Za-z0-9._-]+)\.md:.*/\1/p' | sort -u | tr '\n' ' ' | sed 's/ *$//')"
+  [ -n "$bad_recs" ] || bad_recs="a milestone"
+  sweap_notify "$primary" "$bad_recs audit report is incomplete" "The report that was merged is missing required parts, so $bad_recs does not count as audited. Run /milestone-audit $bad_recs again."
+fi
+
+if [ -z "$invalid" ] && [ -n "$due_ms" ]; then
+  {
+    printf '\n################################################################\n'
+    printf '## AUDIT STILL DUE on the default branch — this merge landed before the audit of: %s\n' "$due_ms"
+    printf '%s\n' "$fails" | sed 's/^/##   /'
+    printf '##\n'
+    printf '## Nothing this merge did is wrong: the gate allowed it. But the milestone\n'
+    printf '## is complete and unaudited, and the gate denies every backlog-advancing\n'
+    printf '## PR until its record lands. Run /milestone-audit for it BEFORE authoring\n'
+    printf '## new backlog items. Re-check: bash %s --check\n' "$GATE"
+    printf '################################################################\n'
+  } >&2
+  exit 2
 fi
 
 {

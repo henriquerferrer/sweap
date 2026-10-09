@@ -17,6 +17,18 @@ HOOK="$HERE/post-merge-auditcheck.sh"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
+# osascript is stubbed on PATH: the suite must not raise real notifications on
+# the maintainer's desktop, and the wording is asserted below.
+BIN="$WORK/bin"; mkdir -p "$BIN"
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "${OSA_LOG:?}"\n' > "$BIN/osascript"
+chmod +x "$BIN/osascript"
+export PATH="$BIN:$PATH"
+export OSA_LOG="$WORK/osa.log"; : > "$OSA_LOG"
+check_note() { # check_note <desc> <grep-pattern> (asserts on the notifications raised since the last reset)
+  if grep -q -- "$2" "$OSA_LOG"; then pass=$((pass+1)); printf '  PASS  %s\n' "$1"
+  else fail=$((fail+1)); printf '  FAIL  %s (no match: %s)\n%s\n' "$1" "$2" "$(cat "$OSA_LOG")"; fi
+}
+
 pass=0; fail=0
 OUT=""; RC=0
 run_hook() { # run_hook <repo> <command>
@@ -73,6 +85,9 @@ commit_all "$R" "PR #122: F9 audit record"
 anchor_main "$R"
 run_hook "$R" "gh pr merge 122 --squash"
 check "record malformed BY this merge => alarms" 2
+check_note "incomplete report: the title names the repo, the milestone and what is wrong" "title \"t2: F9 audit report is incomplete\""
+check_note "incomplete report: the body says what it means and what to do" "F9 does not count as audited. Run /milestone-audit F9 again."
+check_out "invalid record: the banner is the debt banner" "AUDIT DEBT ON MAIN"
 
 # T3: a pre-format record that was ALREADY on the mainline alarms too. There is no
 # grandfathering any more — the exemption let any merged record's failure be
@@ -127,10 +142,72 @@ anchor_main "$R"
 printf 'x\n' > "$R/src.ts"
 commit_all "$R" "PR #131: unrelated code"
 anchor_main "$R"
+: > "$OSA_LOG"
 run_hook "$R" "gh pr merge 131 --squash"
 check "milestone complete BEFORE this merge, no record => alarms" 2
+# The words for this case used to be the invalid-record ones ("landed on top of
+# undischarged audit debt", "MALFORMED record"), which read as damage. The audit
+# is due; nothing is broken.
+check_note "not audited, no run: the title names the repo and the milestone" "title \"t4b: F9 is not audited yet\""
+check_note "not audited, no run: the body gives the next step" "Next step: /milestone-audit F9"
+check_out "audit due: the banner says still due, not malformed" "AUDIT STILL DUE"
+if printf '%s\n' "$OUT" | grep -q "MALFORMED"; then fail=$((fail+1)); printf '  FAIL  %s\n' "audit due: the banner does not call the record malformed"
+else pass=$((pass+1)); printf '  PASS  %s\n' "audit due: the banner does not call the record malformed"; fi
+
+# T4c: the same state while a milestone run is active. The run audits its own
+# milestone when its workflow returns, so telling the human to start the audit
+# is wrong: the session still gets the banner, the human gets no notification.
+R="$(new_repo t4c)"
+mk_done_item "$R" F9.1
+commit_all "$R" "F9 completes"
+anchor_main "$R"
+printf 'x\n' > "$R/src.ts"
+commit_all "$R" "PR #131: unrelated code"
+anchor_main "$R"
+mkdir -p "$R/.claude"; printf 'milestone: F9\nstarted: 2026-10-08T21:05:30Z\n' > "$R/.claude/sweap-run.md"
+: > "$OSA_LOG"
+run_hook "$R" "gh pr merge 131 --squash"
+check "not audited, run active => the session is still told" 2
+if [ -s "$OSA_LOG" ]; then fail=$((fail+1)); printf '  FAIL  %s\n%s\n' "not audited, run active => no notification (the run audits by itself)" "$(cat "$OSA_LOG")"
+else pass=$((pass+1)); printf '  PASS  %s\n' "not audited, run active => no notification (the run audits by itself)"; fi
+# An ENDED run is not an active one.
+printf 'ended: 2026-10-09T00:00:00Z\nreason: awaiting-human\n' >> "$R/.claude/sweap-run.md"
+run_hook "$R" "gh pr merge 131 --squash"
+check_note "not audited, run ended => the human is told the next step" "Next step: /milestone-audit F9"
+
+# T4d: BUILT. The merge that completes a milestone tells the human so, and says
+# who starts the audit: the run when one is active, the human otherwise.
+R="$(new_repo t4d)"
+mk_done_item "$R" F9.1
+commit_all "$R"
+anchor_main "$R"
+: > "$OSA_LOG"
+run_hook "$R" "gh pr merge 130 --squash"
+check_note "built, no run: the title says the milestone is built" "title \"t4d: F9 is built\""
+check_note "built, no run: the body gives the next step" "Next step: /milestone-audit F9"
+mkdir -p "$R/.claude"; printf 'milestone: F9\nstarted: 2026-10-08T21:05:30Z\n' > "$R/.claude/sweap-run.md"
+: > "$OSA_LOG"
+run_hook "$R" "gh pr merge 130 --squash"
+check_note "built, run active: the body says the audit starts by itself" "The audit starts by itself."
+
+# T4e: AUDIT FINISHED. The merge that adds a VALID audit record says so, with
+# the count the record carries. An invalid one never reaches this message (T2).
+R="$(new_repo t4e)"
+base="$(git -C "$R" rev-parse HEAD)"
+mk_done_item "$R" F9.1
+commit_all "$R" "F9 completes"
+anchor_main "$R"
+printf -- '---\nsweap_format: 1\nmilestone: F9\nrange_base: %s\nrange_head: %s\nlens_mode: default\nlenses: [correctness, authz]\nraw: 0\nrefuted: 0\nconfirmed: 0\nfinders_reporting: 6\nworkflow_run: wf_test\njournal_sha256: 0123abcd\n---\n\n# F9 audit\n' "$base" "$(git -C "$R" rev-parse HEAD)" > "$R/roadmap/audits/F9.md"
+commit_all "$R" "PR #140: F9 audit record"
+anchor_main "$R"
+: > "$OSA_LOG"
+run_hook "$R" "gh pr merge 140 --squash"
+check "merge that adds a valid record => quiet for the session" 0
+check_note "complete: the title says the milestone is complete" "title \"t4e: F9 is complete\""
+check_note "complete, zero findings: built and audited, nothing needed" "Built and audited. No problems found. Nothing to do."
 
 # T5: a clean repo stays quiet (no false alarm on the happy path).
+: > "$OSA_LOG"
 R="$(new_repo t5)"
 mk_done_item "$R" F9.1
 printf -- '---\nid: F9.2\ntitle: x\nstatus: todo\ndepends_on: []\nreview-dimensions: []\n---\n' > "$R/roadmap/F9.2.md"
@@ -138,6 +215,8 @@ commit_all "$R"
 anchor_main "$R"
 run_hook "$R" "gh pr merge 131 --squash"
 check "incomplete milestone => no debt, quiet" 0
+if [ -s "$OSA_LOG" ]; then fail=$((fail+1)); printf '  FAIL  %s\n' "an ordinary merge raises no notification"
+else pass=$((pass+1)); printf '  PASS  %s\n' "an ordinary merge raises no notification"; fi
 
 # T6: the alarm leaves a DURABLE marker in .claude/ (same idiom as
 # post-merge-redcheck.sh). A banner reaches one session and can be compacted

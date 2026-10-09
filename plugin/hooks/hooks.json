@@ -40,6 +40,16 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "matcher": "Workflow",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/workflow-start-notify.sh",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "PostToolUse": [
@@ -71,6 +81,17 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/stop-failure-notify.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/run-end-notify.sh",
             "timeout": 10
           }
         ]

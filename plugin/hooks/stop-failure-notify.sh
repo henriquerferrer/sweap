@@ -60,7 +60,13 @@ fi
 # (playbook "pick up cold").
 printf 'stalled: %s %s — turn ended on an API error; the run is not over: %s (%s)\n' "$ts" "$etype" "$next" "$emsg" >> "$run_file" 2>/dev/null || true
 printf 'sweap: run stalled at %s on %s — the orchestrator turn ended on an API error; %s.\n' "$ts" "$etype" "$next" >&2
-if command -v osascript >/dev/null 2>&1; then
-  osascript -e "display notification \"orchestrator turn ended on $etype at $ts — $([ "$retries" = yes ] && echo 'retrying by itself; check in ~25 min' || echo 'resume the run')\" with title \"sweap: run stalled\"" >/dev/null 2>&1 || true
+# shellcheck source=/dev/null
+. "$(dirname "${BASH_SOURCE[0]}")/lib-notify.sh" 2>/dev/null || true
+if declare -F sweap_notify >/dev/null 2>&1; then
+  if [ "$retries" = yes ]; then
+    sweap_notify "$cwd" "run paused by an API error" "Error: $etype. It retries by itself. Look only if nothing moves in 25 min."
+  else
+    sweap_notify "$cwd" "run stopped by an API error" "Error: $etype. Nothing retries it. Open the session and send any message to resume."
+  fi
 fi
 exit 0
