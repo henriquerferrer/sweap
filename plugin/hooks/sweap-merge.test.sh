@@ -286,8 +286,9 @@ case "$sub" in
           ok) printf '✓ Squashed and merged pull request #%s\n' "$2"; exit 0 ;;
           *)  printf 'GraphQL: Head branch was modified. Review and try the merge again. (mergePullRequest)\n' >&2; exit 1 ;;
         esac ;;
-      list)   # post-merge-cleanup.sh: `gh pr list --head <br> --state merged`
-        if [ "${GH_PRLIST_MERGED:-}" = 1 ]; then echo '[{"number":7}]'; else echo '[]'; fi
+      list)   # post-merge-cleanup.sh: `gh pr list --head <br> --state merged --json headRefOid --jq ...`
+        # (the merged PR's head sha, or nothing — what gh's own --jq prints)
+        if [ "${GH_PRLIST_MERGED:-}" = 1 ]; then echo 1111111111111111111111111111111111111111; fi
         exit 0 ;;
     esac ;;
   run)   # the rerun verb: `run list --branch <base> --workflow <file> ...` and `run rerun --failed <id>`

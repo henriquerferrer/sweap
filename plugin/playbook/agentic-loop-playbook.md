@@ -155,7 +155,9 @@ until terminal and can outlive the Bash timeout with nothing printed. A run GitH
   `status: done` (self-reported state is not trusted; a missed flip is fixed
   through the next gated PR, never by committing to main), then `git worktree
   list` / `git branch` / `git branch -r` — the cleanup hook removes merged
-  worktrees and branches, you verify none linger.
+  worktrees and branches, you verify none linger. It never removes the worktree
+  you ran the merge from: leave it, then `git worktree remove <path>` and `git
+  branch -D <branch>` from the primary (its origin branch is already gone).
 - Before opening any PR, sweep both inboxes into it: an untracked file under
   `roadmap/ideas/` or `roadmap/discovered/` dies with its worktree.
   `sweap-stranded` lists backlog files sitting on branches nothing will land.
@@ -786,8 +788,12 @@ may ADD dimensions it judges necessary; it may not remove tagged ones.
   fails to do here). It only ever touches merged-PR branches, never
   `--force`-removes (so a dirty in-flight worktree is safe), and **skips the
   worktree the caller is standing in** — it will not delete the live session's cwd
-  out from under it, so that one is left for the explicit manual step (or the next
-  hook pass once the session has moved on). The hook is belt-and-suspenders: still
+  out from under it, so that worktree and its local branch are left for the
+  explicit manual step (or the next hook pass once the session has moved on). Its
+  origin branch is deleted all the same, as long as origin still holds the merged
+  PR's head (a branch name reused for new commits is kept). A worktree removed by
+  hand before the hook saw its PR merged is invisible to every later pass: delete
+  that origin branch yourself (step 5). The hook is belt-and-suspenders: still
   run/verify the cleanup yourself.
 - Item status updates (the `status:` flip in the item's `roadmap/<ID>.md`) are
   part of the item's PR, not separate commits — conflict-free by construction

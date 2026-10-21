@@ -5,7 +5,8 @@
 # Wired as a PostToolUse(Bash) hook (hooks/hooks.json); it filters itself to a merge.
 # After a PR merges it: (1) fast-forwards the primary checkout so `main` never drifts,
 # (2) prunes stale remote-tracking refs left by `--delete-branch`, (3) removes any
-# worktree whose branch has a MERGED PR and deletes that local branch, and (4) runs
+# worktree whose branch has a MERGED PR, deletes that local branch and its origin
+# branch (the origin branch also for the worktree the caller stands in), and (4) runs
 # stranded-roadmap.sh and, if any branch carries backlog files that nothing is
 # scheduled to land (PR closed unmerged, or no PR), says so to the session as
 # additionalContext with the rescue recipe. (4) is report-only: a hook that opened
@@ -48,6 +49,7 @@ PRIMARY="$(cd "$(dirname "$GITDIR")" 2>/dev/null && pwd)" || exit 0
 # The worktree the caller is standing in. NEVER remove it — deleting the live
 # cwd out from under the session breaks the very next command. It's deferred to a
 # later pass (when the session has moved on) or the explicit manual cleanup step.
+# Its origin branch is not deferred: step 3 deletes that regardless.
 SELF="$(pwd -P 2>/dev/null || true)"
 
 # 1) Keep the primary checkout current (no-ops if it has local changes).
@@ -63,19 +65,24 @@ git -C "$PRIMARY" worktree list --porcelain 2>/dev/null \
       br="${ref#refs/heads/}"
       [ "$path" = "$PRIMARY" ] && continue
       [ "$br" = "main" ] && continue
-      # Skip the worktree the caller is currently inside (path == cwd or an ancestor).
-      case "$SELF" in "$path" | "$path"/*) continue ;; esac
       # Protect in-flight work: only a MERGED PR for this exact branch qualifies.
-      if gh pr list --head "$br" --state merged --limit 1 --json number 2>/dev/null | grep -q '"number"'; then
-        if git -C "$PRIMARY" worktree remove "$path" >/dev/null 2>&1; then
-          git -C "$PRIMARY" branch -D "$br" >/dev/null 2>&1 || true
-          # Backstop for the remote: `gh pr merge --delete-branch` silently skips
-          # the remote delete when run from inside a worktree (its switch-to-main
-          # step aborts first), so the branch can still be on origin. Idempotent —
-          # a no-op if already gone.
-          git -C "$PRIMARY" push origin --delete "$br" >/dev/null 2>&1 || true
-        fi
-      fi
+      merged_sha="$(gh pr list --head "$br" --state merged --limit 1 --json headRefOid --jq '.[0].headRefOid // empty' 2>/dev/null)"
+      case "$merged_sha" in "" | *[!0-9a-f]*) continue ;; esac
+      # The worktree the caller is currently inside (path == cwd or an ancestor)
+      # stays, and so does its local branch; a dirty one refuses removal.
+      case "$SELF" in
+        "$path" | "$path"/*) ;;
+        *) git -C "$PRIMARY" worktree remove "$path" >/dev/null 2>&1 \
+             && git -C "$PRIMARY" branch -D "$br" >/dev/null 2>&1 ;;
+      esac
+      # The remote branch goes either way: deleting it touches no cwd, and the
+      # driver runs this hook from the PR's own worktree, so tying it to the
+      # worktree removal left every such branch on origin (a consumer run: 11 of
+      # 11). `gh pr merge --delete-branch` cannot be relied on for it in a
+      # worktree flow (its switch-to-main step aborts first). The lease deletes
+      # only while origin still holds the merged PR's head, so a branch name
+      # reused for new commits is kept. Idempotent — a no-op if already gone.
+      git -C "$PRIMARY" push origin --force-with-lease="refs/heads/$br:$merged_sha" ":refs/heads/$br" >/dev/null 2>&1 || true
     done
 
 git -C "$PRIMARY" worktree prune >/dev/null 2>&1 || true
