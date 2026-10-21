@@ -102,6 +102,15 @@ jobs:
       # Job-level env is the one place a multi-line string can be shared
       # between two steps without YAML anchors, which Actions does not support.
       # Nothing secret goes in this block: it is visible to every step.
+      # CACHE SEARCH (0.38.0) is the one hunting angle in this prompt.
+      # 0.37.0 kept angles out because a false alarm costs an e2e cycle;
+      # this one was replayed first, read-only, on a consumer's merged PRs
+      # at their head commits (2026-10-09, Opus 5.5, xhigh, one run each).
+      # On two PRs whose audit-confirmed stale-cache defects the unchanged
+      # prompt missed, it blocked both (one left erased clinical notes on
+      # screen). On four PRs with no audit finding it changed no verdict:
+      # approve with and without it. The wording below is the wording that
+      # was replayed; reword it and that evidence no longer covers it.
       REVIEW_PROMPT: |
         Review this pull request (#${{ github.event.pull_request.number }})
         as this repository's reviewer. Read CLAUDE.md first (including the
@@ -127,6 +136,11 @@ jobs:
         PENULTIMATE line of the summary is exactly
         "Findings: important=N nit=M" (N = findings that meet the needs-work
         bar, M = advisory remarks); the LAST line is the verdict.
+        One rule on top of that bar.
+        CACHE SEARCH, every PR. For each cache key, stored column or
+        other derived copy of data this PR adds or changes: grep for every
+        writer and every reader. A write that changes the underlying data
+        without invalidating or updating that copy is a finding.
         Do the ENTIRE review in this one turn. You are running inside a
         GitHub Action, which invokes you exactly once and never again: there
         is no later turn, no wake-up, and no background agent that can report

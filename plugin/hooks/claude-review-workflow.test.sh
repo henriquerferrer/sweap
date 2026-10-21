@@ -55,6 +55,8 @@ ok "the prompt carries the in-session reviewer's needs-work bar"  grep -qF 'any 
 ok "the prompt has an Advisory section that never flips the verdict" grep -qF '"### Advisory" heading' "$YML"
 ok "the prompt asks for the Findings count line, penultimate"      grep -qF '"Findings: important=N nit=M"' "$YML"
 ok "the prompt still makes the verdict the LAST line"              grep -qF 'the LAST line is the verdict' "$YML"
+ok "the prompt carries the replayed cache search"                  grep -qF 'grep for every' "$YML"
+ok "the cache search is the prompt's only added rule"              grep -qF 'One rule on top of that bar.' "$YML"
 ok "both passes post inline comments live (no Haiku buffer)"       test "$(count "classify_inline_comments: 'false'")" = 2
 ok "pull-requests is read (the App token posts, not GITHUB_TOKEN)" grep -qE '^  pull-requests: read$' "$YML"
 ok "no actions: read (nothing in this file uses it)"               bash -c '! grep -qE "^  actions: read" "$1"' _ "$YML"
