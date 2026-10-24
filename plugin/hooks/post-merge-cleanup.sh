@@ -69,11 +69,17 @@ git -C "$PRIMARY" worktree list --porcelain 2>/dev/null \
       merged_sha="$(gh pr list --head "$br" --state merged --limit 1 --json headRefOid --jq '.[0].headRefOid // empty' 2>/dev/null)"
       case "$merged_sha" in "" | *[!0-9a-f]*) continue ;; esac
       # The worktree the caller is currently inside (path == cwd or an ancestor)
-      # stays, and so does its local branch; a dirty one refuses removal.
+      # stays, and so does its local branch; a dirty one refuses removal. So
+      # does a branch holding commits the merged PR never had: a name reused
+      # after an earlier PR merged would otherwise lose its unpushed work to
+      # `branch -D` (a consumer note, 2026-10). An unknown merged head (never
+      # fetched) counts as "not contained" and keeps the branch.
       case "$SELF" in
         "$path" | "$path"/*) ;;
-        *) git -C "$PRIMARY" worktree remove "$path" >/dev/null 2>&1 \
-             && git -C "$PRIMARY" branch -D "$br" >/dev/null 2>&1 ;;
+        *) if git -C "$PRIMARY" merge-base --is-ancestor "refs/heads/$br" "$merged_sha" >/dev/null 2>&1; then
+             git -C "$PRIMARY" worktree remove "$path" >/dev/null 2>&1 \
+               && git -C "$PRIMARY" branch -D "$br" >/dev/null 2>&1
+           fi ;;
       esac
       # The remote branch goes either way: deleting it touches no cwd, and the
       # driver runs this hook from the PR's own worktree, so tying it to the

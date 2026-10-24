@@ -177,13 +177,19 @@ const LENS_CONFIG = {
   },
 }
 
+// A milestone typed with its own quotes (`args: '"F14"'`) reached the Scope
+// prompt and the guard below as ""F14"" and the run refused to audit F14 (a
+// consumer run, 2026-10-18). One pair of surrounding quotes is not part of an id.
+const unquoteMilestone = (id) =>
+  typeof id === 'string' ? id.trim().replace(/^(["'`])(.*)\1$/, '$2').trim() : id
+
 // Loose-equality helper for milestone ids: an LLM-formatted scope response
 // can drift ("Milestone F6", trailing whitespace, case) without actually
 // naming a different milestone. Trim, case-fold, and strip a leading
 // "milestone " label before comparing — genuinely different ids still
 // compare unequal.
 const normalizeMilestoneId = (id) =>
-  typeof id === 'string' ? id.trim().toLowerCase().replace(/^milestone\s+/, '') : id
+  typeof id === 'string' ? unquoteMilestone(id).toLowerCase().replace(/^milestone\s+/, '') : id
 
 // args is either an object {range, milestone}, a bare string (treated as the
 // requested milestone id, e.g. "F6"), or absent/null. A bare string that
@@ -200,7 +206,7 @@ if (typeof args === 'string' && /\.\.|range|^\s*[[{]/i.test(args)) {
   )
 }
 
-const requestedMilestone = typeof args === 'string' ? args : (args?.milestone ?? null)
+const requestedMilestone = unquoteMilestone(typeof args === 'string' ? args : (args?.milestone ?? null)) || null
 const range = typeof args === 'string' ? null : (args?.range ?? null)
 const milestone = requestedMilestone ?? 'the most recently completed milestone'
 

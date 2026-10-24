@@ -80,6 +80,15 @@ a *task* the human performs, not a question; that one is `/handoff`.
      it — it stays findable as the reason the behaviour is what it is, and
      `done` keeps `audit-gate.sh`'s milestone-completeness arithmetic correct.
 
+   **Either path, if the item came out of a milestone audit** (it carries
+   `followup_of: <M>` and `<backlog.dir>audits/<M>.md` has
+   `disposition: blocked <id>` lines): in the same commit, rewrite every one of
+   those lines to `disposition: followup <id>`, and add a dated note above the
+   record's findings saying which blocks moved, that the human answered through
+   `/unblock <id>`, and the answer in one line. `audit-gate.sh` fails a record
+   whose `blocked` disposition names an item that is no longer `status: blocked`,
+   so without this the PR goes red (a consumer: three unblocks in a row).
+
    Open a PR and merge it on green through the normal gate (the
    `pre-merge-gate` hook enforces greenness), then run end-of-run hygiene as
    always.

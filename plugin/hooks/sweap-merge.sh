@@ -1233,6 +1233,20 @@ sm_tick() {
       sm_sleep backoff || break
       continue
     fi
+    # A merge this driver issued can land while its call reports an error and
+    # GitHub still says the PR is OPEN for a few seconds; the base then holds
+    # the PR's own squash commit, and "behind; rebase" was the wrong word for a
+    # merged PR (consumer PR #474, 2026-10-08). After a merge attempt, a base
+    # tip titled "... (#<this PR>)" is that commit: wait for GitHub to catch up.
+    if [ "$behind" -gt 0 ] \
+       && [ "$(printf '%s' "$SM_STATE_JSON" | "$SM_JQ" -r '.merge_attempts // 0')" != "0" ] \
+       && printf '%s' "$BR_OUT" | "$SM_JQ" -r '.base_commit.commit.message // "" | split("\n")[0]' | grep -qE "\(#$SM_PR\)\$"; then
+      SM_REASON="the merge landed on $base as $base_sha but GitHub still reports PR #$SM_PR open; re-checking"
+      sm_lease_renew || sm_finish failed "$SM_REASON"
+      if [ "$SM_MAX_ITER" -gt 0 ] && [ "$iter" -ge "$SM_MAX_ITER" ]; then break; fi
+      sm_sleep normal || break
+      continue
+    fi
     if [ "$behind" -gt 0 ]; then
       sm_set '.base_sha = $s' --arg s "$base_sha"
       sm_transition behind "head is behind $base by $behind commit(s); rebase"

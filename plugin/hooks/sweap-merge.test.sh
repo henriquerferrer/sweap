@@ -287,8 +287,12 @@ case "$sub" in
           *)  printf 'GraphQL: Head branch was modified. Review and try the merge again. (mergePullRequest)\n' >&2; exit 1 ;;
         esac ;;
       list)   # post-merge-cleanup.sh: `gh pr list --head <br> --state merged --json headRefOid --jq ...`
-        # (the merged PR's head sha, or nothing — what gh's own --jq prints)
-        if [ "${GH_PRLIST_MERGED:-}" = 1 ]; then echo 1111111111111111111111111111111111111111; fi
+        # (the merged PR's head sha, or nothing — what gh's own --jq prints).
+        # The head is the local branch's own tip: merged with nothing unpushed.
+        if [ "${GH_PRLIST_MERGED:-}" = 1 ]; then
+          br=""; while [ $# -gt 0 ]; do [ "$1" = --head ] && br="$2"; shift; done
+          git rev-parse -q --verify "refs/heads/$br" 2>/dev/null || echo 1111111111111111111111111111111111111111
+        fi
         exit 0 ;;
     esac ;;
   run)   # the rerun verb: `run list --branch <base> --workflow <file> ...` and `run rerun --failed <id>`
@@ -316,7 +320,8 @@ case "$sub" in
     case "$path" in
       */compare/*)
         if [ -n "$jqf" ]; then printf '%s\n' "${GH_BEHIND:-0}"
-        else printf '{"behind_by":%s,"base_commit":{"sha":"%s"}}\n' "${GH_BEHIND:-0}" "${GH_BASE_SHA:-b1111111}"; fi ;;
+        else jq -cn --argjson b "${GH_BEHIND:-0}" --arg s "${GH_BASE_SHA:-b1111111}" --arg m "${GH_BASE_MSG:-chore: an unrelated commit (#1)}" \
+               '{behind_by:$b, base_commit:{sha:$s, commit:{message:$m}}}'; fi ;;
       */actions/workflows*) cat "$fix/workflows.json" ;;
       */contents/.github/workflows\?ref=*)
         ref="${path##*ref=}"; f="$fix/contents.$ref.json"
@@ -346,7 +351,7 @@ chmod +x "$STUB_BIN/gh"
 # The driver runs the gate and the post-merge hooks under `env -i` (pinned PATH +
 # allowlist); the stub gh's and the fake hooks' knobs reach them only through
 # this test-seam passthrough list (sentinel-gated).
-HOOK_PASS="GH_FIX GH_LOG GH_STUB_SLEEP GH_MERGE GH_RERUN GH_RERUN_FAIL_ID GH_MUTATE_STATE GH_PRLIST_MERGED GH_BEHIND GH_BASE_SHA PM_LOG PM_RED PM_CTX GATE_IN GATE_CWD_FILE GATE_ENV_FILE FAKE_GATE FAKE_GATE_REASON"
+HOOK_PASS="GH_FIX GH_LOG GH_STUB_SLEEP GH_MERGE GH_RERUN GH_RERUN_FAIL_ID GH_MUTATE_STATE GH_PRLIST_MERGED GH_BEHIND GH_BASE_SHA GH_BASE_MSG PM_LOG PM_RED PM_CTX GATE_IN GATE_CWD_FILE GATE_ENV_FILE FAKE_GATE FAKE_GATE_REASON"
 FIX=""
 write_pr() {   # write_pr [file] [state] [head] [rollup: green|failure]
   local f="${1:-pr.json}" st="${2:-OPEN}" h="${3:-$HEAD1}" roll="${4:-green}" mc="null" rollup
@@ -1176,6 +1181,19 @@ XENV="GH_MERGE=fail" drive tick "$PR"; expect "merge: attempt 1 => pending" pend
 write_pr pr.after.json OPEN "$HEAD2"   # (the stub serves pr.after.json once a merge was attempted)
 drive tick "$PR"; expect "merge: head moved => superseded" superseded
 check "merge: superseded resets merge_attempts" [ "$(state .merge_attempts)" = 0 ]
+
+newcase m-landed-still-open
+# the merge call errors but lands; GitHub still says OPEN, and the base's tip is
+# this PR's own squash commit (consumer PR #474): never "behind; rebase"
+write_pr pr.after.json OPEN "$HEAD1"
+XENV="GH_MERGE=fail" drive tick "$PR"; expect "merge: lands but reports an error, PR still open => pending" pending "did not land"
+XENV="GH_BEHIND=1 GH_BASE_MSG=feat(x):_the_change_(#$PR)" drive tick "$PR"
+expect "merge: base tip is this PR's squash commit => pending, not behind" pending "still reports PR #$PR open"
+check "merge: no second merge issued while GitHub catches up" [ "$(merges_in_log)" = 1 ]
+XENV="GH_BEHIND=1" drive tick "$PR"; expect "merge: base moved by an unrelated commit => behind" behind "behind main by 1"
+newcase m-behind-unattempted
+XENV="GH_BEHIND=1 GH_BASE_MSG=feat(x):_the_change_(#$PR)" drive tick "$PR"
+expect "merge: no merge attempted on this head => a tip naming the PR is still behind" behind "behind main by 1"
 
 newcase m-postmerge-alarm
 XENV="PM_RED=1" drive tick "$PR"

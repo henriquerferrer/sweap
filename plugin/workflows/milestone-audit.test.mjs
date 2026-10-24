@@ -547,3 +547,18 @@ test("mergeLenses: default ignores extras; explicit replaces the defaults, and f
   assert.deepEqual(mergeLenses(defaults, [], "explicit"), defaults);
   assert.deepEqual(mergeLenses(defaults, [], undefined), defaults);
 });
+
+// A quoted milestone ("F14" typed with its quotes) is the id inside the quotes.
+// The helpers are pure, so they are lifted out of the source and run.
+test("a milestone passed with its own quotes is the id inside them", () => {
+  const lift = (name) => SRC.match(new RegExp(`const ${name} = \\(id\\) =>\\n[^\\n]*\\n`))?.[0];
+  const unq = lift("unquoteMilestone"), norm = lift("normalizeMilestoneId");
+  assert.ok(unq && norm, "both helpers are one-arrow consts the test can lift");
+  const { unquoteMilestone, normalizeMilestoneId } = new Function(`${unq}${norm}return { unquoteMilestone, normalizeMilestoneId };`)();
+  assert.equal(unquoteMilestone('"F14"'), "F14");
+  assert.equal(unquoteMilestone(" 'F14' "), "F14");
+  assert.equal(unquoteMilestone("F14"), "F14");
+  assert.equal(unquoteMilestone('"F14'), '"F14', "an unbalanced quote is left for the guard to refuse");
+  assert.equal(normalizeMilestoneId('"F14"'), normalizeMilestoneId("Milestone F14"));
+  assert.match(SRC, /const requestedMilestone = unquoteMilestone\(/, "the requested id is unquoted before the Scope prompt sees it");
+});

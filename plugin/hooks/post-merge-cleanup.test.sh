@@ -90,6 +90,12 @@ merged_pr fix/reused "$(mk fix/reused)"
 hook_from "$WORK/wt-fix_reused"
 is "origin moved past the merged head -> the origin branch is kept"  yes "$(on_origin fix/reused)"
 
+merged_pr fix/again "$(mk fix/again)"
+( cd "$WORK/wt-fix_again" && G commit -q --allow-empty -m "unpushed work on a reused name" ) 2>/dev/null
+hook_from "$WORK/primary"
+is "a reused name with unpushed commits -> the worktree is kept"      yes "$([ -d "$WORK/wt-fix_again" ] && echo yes || echo no)"
+is "a reused name with unpushed commits -> the local branch is kept"  yes "$(git -C "$WORK/primary" rev-parse -q --verify refs/heads/fix/again >/dev/null && echo yes || echo no)"
+
 mk fix/open >/dev/null
 hook_from "$WORK/primary"
 is "no merged PR -> the worktree is untouched"                       yes "$([ -d "$WORK/wt-fix_open" ] && echo yes || echo no)"
