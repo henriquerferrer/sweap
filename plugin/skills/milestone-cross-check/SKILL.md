@@ -1,12 +1,12 @@
 ---
 name: milestone-cross-check
-description: Completeness critic for a milestone's drafted item files. Use AFTER an interactive superpowers:brainstorming pass has produced draft items and BEFORE writing them under backlog.dir (roadmap/). Reviews the draft against a fixed lens and surfaces ONLY the net-new forks/gaps the brainstorm missed — it does NOT rewrite items or expand scope; it flags gaps for the human to resolve. Distilled from the product-management write-spec lens (non-goals, persona coverage, success signals, open questions).
+description: Completeness critic for a milestone's drafted item files. Use AFTER /roadmap's interactive decide phase has produced draft items and BEFORE writing them under backlog.dir (roadmap/). Reviews the draft against a fixed lens and surfaces ONLY the net-new forks/gaps the brainstorm missed — it does NOT rewrite items or expand scope; it flags gaps for the human to resolve. Distilled from the product-management write-spec lens (non-goals, persona coverage, success signals, open questions).
 ---
 
 # Milestone cross-check
 
-The second half of a milestone brainstorm. Phase 1 (interactive
-`superpowers:brainstorming`) *decides* — it locks the core with the human
+The second half of a milestone brainstorm. Phase 1 (`/roadmap`'s interactive
+decide phase) *decides* — it locks the core with the human
 answering one question at a time. This skill is the *completeness critic* that
 catches what a decisive pass skips: it reads the drafted items with a fresh,
 breadth-oriented lens and reports the forks the brainstorm never raised.
@@ -61,7 +61,11 @@ check against —
    closure, or already shipped — above all, not by a later item its own
    Out-of-scope names. Otherwise it goes to the first item whose closure holds
    them all (F13.7's archive-count clause needed F13.9's `service_id` and
-   F13.10's picker, both its dependents; it blocked a run until moved).
+   F13.10's picker, both its dependents; it blocked a run until moved). And
+   does any AC, Interfaces line or stated limit contradict another — or itself —
+   within the same item? (An AC required the form to report a failed send while
+   the item's Interfaces ran the send after the response and forbade telling
+   real addresses from unknown ones; it blocked a run until answered.)
 7. **Scope tiering.** Is anything marked core (P0 / `[todo]`) that is really
    cuttable (should be split to a later item), or vice versa? Over-scoped first
    items break the 10–25-turn budget.

@@ -46,7 +46,6 @@ unset in a model-issued Bash call, so it cannot be used in a launch line.
 
 - Per-feature agentic loop with merge gating
 - Automated roadmap, milestone, and audit commands
-- Cron driver for scheduled tasks
 - Integration with Claude Code's hook system
 
 ## Testing

@@ -12,7 +12,10 @@ decided later by `/roadmap` at triage.
 2. **Brainstorm — short.** Socratic, ONE question at a time, 2–4 questions
    max: what problem does this solve, for whom, what's the value / why now.
    Stop as soon as the idea is articulable. Do not expand scope, propose
-   solutions, or draft specs.
+   solutions, or draft specs. When the problem lives on a screen or in a flow,
+   show it on the `explain` skill's live page, unasked: an existing screenshot,
+   or a sketch marked as one — no dev server or Playwright here, at most one
+   section per idea, and the problem as it is, never a mockup of a solution.
 3. **Distill.** A short title (a few plain words) and a 3–6 line body: the
    problem, the value, and any of the human's phrasing worth keeping
    verbatim.

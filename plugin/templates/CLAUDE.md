@@ -46,6 +46,9 @@ turns.default:    160
   only in `/roadmap`. Relabelling stuck work as human work is forbidden (and
   mechanically checked by the audit gate).
 - Honor each backlog item's `review-dimensions` tags.
+- Only when the human is answering in this conversation (never in an
+  unattended run): a decision question gives options as what a user would see
+  and ends with the **explain** line; see the `explain` skill.
 - At the end of an autonomous run: notify with merged-PRs + blocked-items +
   open-hand-offs (`status: attended`) summary.
 <!-- sweap:end -->

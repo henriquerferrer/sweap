@@ -65,7 +65,9 @@ to it, and the two are different modes.
    queue at a boundary gets it satisficed (clinical-decision-support override
    rates run 49–96%), and a rubber-stamped answer is worse than an unanswered
    question because it leaves a record saying it was answered. The human can ask
-   for more.
+   for more. Each question is written and ends as `/unblock` step 2 says (plain
+   options, the **explain** line, and the live page first when the options can
+   be shown).
 5. **`carried: ≥2` is asked, not offered.** The brainstorm does not start until
    each such item is answered, defaulted on the human's explicit say-so (recorded
    as an answer, marked `(default taken)`), or dropped with a `dropped_reason:`.
@@ -93,9 +95,14 @@ reconcile, and the items are then written and merged through the gate by a
 mandatory, fully autonomous 4th step (merge + clean up) — no further human
 review is asked for:
 
-1. **Decide** — use `superpowers:brainstorming` with the human. Socratic, ONE
+1. **Decide** — with the human. Socratic, ONE
    question at a time; ground it in the real repo (the backlog — index + item
-   files, the project's core domain modules, prior `docs/superpowers/specs/`).
+   files, the project's core domain modules, prior specs and design docs).
+   Read before you ask: never ask what the repo already answers. Show, don't
+   tell: a question whose options differ in something a product user would see
+   goes on the `explain` skill's live page first, unasked (the skill's "When to
+   show" trigger), and every question ends with the **explain** line
+   (`/unblock` step 2).
    Lock the core decisions and draft items in the item-file format (frontmatter
    + Spec/Acceptance body — the playbook's "Backlog format (file-per-item)"
    section). Before drafting, surface any outstanding audit follow-ups

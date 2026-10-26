@@ -28,24 +28,37 @@ a *task* the human performs, not a question; that one is `/handoff`.
    once — a question that has outlived two milestones is a different ask from
    one raised this morning.
 
-2. **Prepare the fork — and do not answer it.** Give them, in this order:
-   - the options, stated as the fork actually is, not as a yes/no if it isn't;
-   - a **recommended default** with its rationale, including any house idiom,
-     archetype convention, or locked spec decision that bears on it;
-   - the **double-turn simulation**: write out what the resulting item file
-     looks like under *each* answer — the `## Spec` surface, interfaces, and
-     acceptance each one implies.
-
-   Then classify, out loud, into exactly one of three:
-   - **The premise is invalidated** — shipped code has made the question moot.
-     Say so and **attach the evidence** (the PR, commit, or diff). Propose
-     closing it; do not close it yourself.
-   - **Both branches produce the same item file** — the fork changes nothing
-     downstream, so it was never a direction call. Show the two simulations that
-     came out identical and propose closing it with the default.
-   - **A direction call** — taste, scope, policy, cross-milestone information
-     architecture. **You may not resolve this one.** Recommending a default is
-     the most you may do; the answer is theirs.
+2. **Prepare the fork — and do not answer it.** Work through these in order,
+   and put the question once, at the end:
+   - **The options**, stated as the fork actually is, not as a yes/no if it
+     isn't, each written as what each affected user (by role) would see happen,
+     not in code terms; when no user of the product would see a difference (ops,
+     CI, cost, an internal refactor), say so and say plainly who does and what
+     changes for them.
+   - **A recommended default** with its rationale, including any house idiom,
+     archetype convention, or locked spec decision that bears on it.
+   - **The double-turn simulation**: what the resulting item file looks like
+     under *each* answer — the `## Spec` surface, interfaces, and acceptance
+     each one implies. Identifiers live here, kept apart from the question: in a
+     preview, collapsed, or on the page's technical layer.
+   - **Classify, out loud, into exactly one of three:**
+     - **The premise is invalidated** — shipped code has made the question
+       moot. Say so and **attach the evidence** (the PR, commit, or diff).
+       Propose closing it; do not close it yourself.
+     - **Both branches produce the same item file** — the fork changes nothing
+       downstream, so it was never a direction call. Show the two simulations
+       that came out identical and propose closing it with the default.
+     - **A direction call** — taste, scope, policy, cross-milestone information
+       architecture. **You may not resolve this one.** Recommending a default
+       is the most you may do; the answer is theirs.
+   - **Show it** when the `explain` skill's "When to show" trigger fires: the
+     options go on the session's live page before the question.
+   - **Ask.** One fork per question (one per AskUserQuestion call), the
+     question and options in plain words, the page link if there is one. End it
+     with this line, every time, because the human will not remember the offer
+     otherwise: *"Not sure what this is about? Answer **explain** (in Other, or
+     just type it) and I'll build a page that shows it."* On "explain", follow
+     the `explain` skill, then ask again.
 
    **Never talk yourself out of asking.** Having the repo in context makes it
    easy to decide a direction call is "obvious from the code" — that is the

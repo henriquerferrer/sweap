@@ -31,7 +31,10 @@ touch any other status. A `[blocked]` item is a *question* awaiting a
    the API responds, commit a resulting file change. What you must not do is
    the part that is theirs by nature: hold an identity, accept terms, spend
    money, make the taste call. Ask for exactly what you need, one thing at a
-   time, and never invent a value to keep moving.
+   time, and never invent a value to keep moving. A choice whose options differ
+   in something a product user would see goes on the `explain` skill's live page
+   first (its "When to show" trigger), with the link in the ask; every choice
+   ends with the **explain** line (see `/unblock` step 2).
 
 3. **Check the *Done when* condition.** Run it and show the output. If the item
    has no checkable condition, say so and ask the human to confirm in words —

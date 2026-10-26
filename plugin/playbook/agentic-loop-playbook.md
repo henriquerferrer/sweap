@@ -24,7 +24,8 @@ this section. Commands (`/milestone-audit`, `/unblock`, `/handoff`,
 - Tests are the spec: never edit a failing test to pass; never skip or
   quarantine a test without flagging it.
 - Never touch production or real user data; no irreversible action without
-  explicit human approval.
+  explicit human approval. Never discard work without the human's typed
+  confirmation.
 - Every merge requires CI's verify gates green plus a fresh-context review with
   confirmed findings addressed. Merging a green, reviewed PR is pre-authorized —
   never ask, and never weaken or bypass a gate to get there.
@@ -1195,7 +1196,7 @@ interactive-only, done with the human. It runs in three phases; the pair of a
 decisive pass and an independent completeness critic is the same finder/refuter
 shape as the audit.
 
-1. **Decide** (interactive) — `superpowers:brainstorming` with the human.
+1. **Decide** (interactive) — `/roadmap`'s decide phase, with the human.
    Socratic, one question at a time; it *locks* the core decisions and produces
    draft items in the item-file format (frontmatter + Spec/Acceptance body —
    see **Backlog format (file-per-item)**). This is where the human's
@@ -1219,10 +1220,9 @@ shape as the audit.
    very unit that let the screens drift apart, and yield N individually-plausible
    screens that still disagree; "responsive" and "feels high-end" are dimensions,
    never screens.
-3. **Reconcile** (brief, interactive) — the human answers the net-new forks; then
-   one item file per drafted item is written under `backlog.dir` (plus the
-   index's milestone-list update), each linted by `roadmap-lint.sh`, and it all
-   lands as one PR through the gate.
+3. **Reconcile** (brief, interactive) — the human answers the net-new forks;
+   writing, linting and merging the items is `/roadmap` steps 3–4, which is the
+   source.
 
 Rationale: a single decisive pass is fast but blind-spotted. The A/B that
 motivated this: a decisive pass locked a milestone's core but missed timezone
@@ -1710,28 +1710,17 @@ here is the one recipe too long for the core.
 
 ## Standing preferences (pre-answered skill checkpoints)
 
-The superpowers skills honor declared user preferences without asking. These are
-the human's standing answers — treat them as given, do not re-ask in a session:
+The human's standing answers — treat them as given, do not re-ask in a session.
+Worktree isolation, the PR-only finish and TDD are hard rules and worker-brief
+rules above, not preferences.
 
-- **Workspace isolation:** yes, always work in an isolated worktree/branch;
-  never implement on `main` directly.
-- **Finishing a branch:** default to opening a PR (merge only when agentic CI +
-  review gates are green). Never discard work autonomously — "discard" always
-  requires the human's typed confirmation.
 - **Plan execution mode:** `/sweap:run` — the script holds the loop and gives
   each item a fresh implementer (continuous, no between-item check-ins).
-- **TDD:** no exceptions in product code; don't ask for exemptions, just do TDD.
-  The implementer's report MUST include TDD Evidence: the RED (failing) output
-  and the GREEN (passing) output, pasted.
-- **When a skill says "ask your human partner"** and it's an exception/blocker
-  (not a safety rail above): apply the escalate-don't-guess rule — write the
-  question to the blocked item, notify, move on.
-- **Milestone brainstorm:** three phases — `superpowers:brainstorming` (decide,
-  interactive) → `milestone-cross-check` skill (completeness critic, automated) →
-  reconcile with the human. See the Milestone brainstorm section.
-- **Brainstorming skill:** interactive-only. Use it when the human is present
-  (roadmap/spec authoring). Unattended runs never brainstorm scope — they
-  execute roadmap items that already have approved specs.
+- **Milestone brainstorm:** three phases — decide (interactive) →
+  `milestone-cross-check` skill (completeness critic, automated) → reconcile
+  with the human. See the Milestone brainstorm section. Deciding scope is
+  interactive-only: unattended runs never brainstorm scope — they execute
+  roadmap items that already have approved specs.
 
 ## Build order to full autonomy
 
