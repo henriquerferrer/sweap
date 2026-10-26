@@ -407,13 +407,30 @@ test("every goal template is a list of success states, the How is outside the ch
   assert.match(goals[0].replace(/\s+/g, " "), /\(B\) to \(E\) are successful ends of this run, not failures, and none of them needs the audit/);
 });
 
-test("a candidate never blocks or fails an approved item, whatever the fixer answers", async () => {
+test("a candidate never fails an approved item: a fixer that gives up is a dismissal and the approve publishes", async () => {
   const approveWith = (n) => (n === 1 ? { verdict: "approve", findings: [], files_reviewed: ["a.ts"], candidates: [cand("diff")], verdict_line: "Verdict: approve" } : undefined);
-  for (const answer of [{ outcome: "gave-up", changed: false, summary: "could not reproduce" }, { outcome: "blocked", changed: false, summary: "s", question: "is this intended?" }]) {
-    const r = await simulate({ review: approveWith, "review-fix": () => answer });
-    assert.ok(r.labels.includes("publish F1.1"), `${answer.outcome} on a candidate still publishes the approved branch`);
-    assert.deepEqual([r.out.blocked, r.out.failed], [[], []]);
-    assert.match(r.calls.find((c) => c.label === "publish F1.1").prompt, /as the fixer answered them/);
+  const r = await simulate({ review: approveWith, "review-fix": () => ({ outcome: "gave-up", changed: false, summary: "could not reproduce" }) });
+  assert.ok(r.labels.includes("publish F1.1"), "gave-up on a candidate still publishes the approved branch");
+  assert.deepEqual([r.out.blocked, r.out.failed], [[], []]);
+  assert.match(r.calls.find((c) => c.label === "publish F1.1").prompt, /as the fixer answered them/);
+  assert.match(SRC, /one you could not reproduce is dismissed, never escalated/, "the fixer is told an unreproduced candidate never blocks");
+});
+
+// A consumer PR #470: the round-1 fixer reproduced a candidate, committed a fix
+// and returned blocked with a spec question; the approve stood, the question
+// was dropped and the defect merged.
+test("an approved branch's fixer answering blocked flips the item blocked with its question, never publishes", async () => {
+  const approveWith = (n) => (n === 1 ? { verdict: "approve", findings: [], files_reviewed: ["a.ts"], candidates: [cand("diff"), cand("pre-existing", "old listener")], verdict_line: "Verdict: approve" } : undefined);
+  for (const changed of [false, true]) {
+    const r = await simulate({ review: approveWith, "review-fix": () => ({ outcome: "blocked", changed, summary: "s", question: "does verification replace the name?" }) });
+    assert.deepEqual(r.labels.slice(3, 6), ["review F1.1 #1", "review-fix F1.1 #1", "flip F1.1"], `changed ${changed}: no re-review, no security, no publish`);
+    assert.ok(!r.labels.some((l) => l.startsWith("publish")));
+    assert.equal(r.out.blocked.length, 1);
+    assert.match(r.out.blocked[0].question, /^does verification replace the name\?/);
+    assert.equal(/unpushed and not yet reviewed, in \/wt\/f1-1/.test(r.out.blocked[0].question), changed, "a committed fix is named as unreviewed");
+    const flip = r.calls.find((c) => c.label === "flip F1.1").prompt;
+    assert.match(flip, /does verification replace the name\?/);
+    assert.match(flip, /sweap-note discovered[\s\S]*old listener/, "[pre-existing] notes ride the flip");
   }
 });
 

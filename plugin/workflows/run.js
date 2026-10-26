@@ -358,7 +358,7 @@ const securityPrompt = (item, impl) => `Security-review backlog item ${item.id} 
 const reviewFixPrompt = (item, impl, findings, source, last, candidates = []) => `${READ_FIRST} Then read the playbook between \`<!-- worker-brief:begin -->\` and \`<!-- worker-brief:end -->\`: that brief binds you.
 
 You are the REVIEW FIXER for backlog item ${item.id}: ${where(item, impl)}. ${findings.length ? `The ${source} returned these confirmed findings:\n${findings.map((f) => `- ${f.file}: ${f.what}`).join('\n')}` : `The ${source} returned no confirmed finding.`}
-${candidates.length ? `\nIt also raised these UNCONFIRMED candidates. For each, try to reproduce it first — a failing test, or the command that shows it. A "would this test still pass with that line reverted?" candidate is checked by reverting the line, running the test, then \`git checkout -- <file>\` to restore it; \`git status --short\` must show only your own intended changes before you go on. If it reproduces, fix the root cause and keep the test. If it does not, dismiss it in your summary with the evidence. Never cut a claim, edit the item's acceptance or weaken a test for a candidate:\n${candidates.map((c) => `- ${c.file}: ${c.what}`).join('\n')}\n` : ''}
+${candidates.length ? `\nIt also raised these UNCONFIRMED candidates. For each, try to reproduce it first — a failing test, or the command that shows it. A "would this test still pass with that line reverted?" candidate is checked by reverting the line, running the test, then \`git checkout -- <file>\` to restore it; \`git status --short\` must show only your own intended changes before you go on. If it reproduces, fix the root cause and keep the test. If it does not, dismiss it in your summary with the evidence. A candidate makes the item blocked only when it reproduced and the spec cannot say what the fix is: return \`blocked\` with the question, naming the reproduction; one you could not reproduce is dismissed, never escalated. Never cut a claim, edit the item's acceptance or weaken a test for a candidate:\n${candidates.map((c) => `- ${c.file}: ${c.what}`).join('\n')}\n` : ''}
 Work only in the worktree. For each finding: reproduce it first (a failing test, or the command that shows it); fix the root cause; or, if the evidence says it is wrong, record why — never weaken a test to close one. Never close an \`acceptance\` or \`security\` finding by cutting a claim, editing the item's acceptance, or recording it as a note: fix it, or show with evidence it is not real (the next reviewer judges that). ${last ? 'This is the LAST round, and none of these findings is an acceptance or security one: for any you cannot fix, cut the claim it names (in code, comments or the item Notes) rather than leave it standing, and list what remains. ' : ''}Verify at the layer each finding names, by name. Commit in one call; \`git status --short\` must then print nothing. If you changed nothing (every item dismissed with evidence), commit nothing and return \`committed\` with \`changed\` false. Do not push, do not open a PR, never dispatch an agent or start a review skill, and leave nothing running in the background. If a finding shows the SPEC itself is wrong or ambiguous, return \`blocked\` with the question verbatim instead of guessing. Return the JSON only.`
 
 // Problems the reviewer found in code this item did not introduce are notes,
@@ -406,9 +406,10 @@ const reviewStage = async (item, impl) => {
     const cands = rev.value.candidates || []
     for (const c of cands) if (c.scope === 'pre-existing' && !seen.has(`${c.file}|${c.what}`)) { seen.add(`${c.file}|${c.what}`); notes.push(c) }
     // Unconfirmed [diff] candidates get ONE chance, in round 1: a fixer
-    // reproduces or dismisses each. They never become findings, so they can
-    // never block or fail an item or be cut; later rounds' ones reach only the
-    // PR body.
+    // reproduces or dismisses each. They never become findings, so they are
+    // never cut and never fail an item; one blocks it only when the fixer
+    // reproduced it and the spec cannot say what the fix is. Later rounds'
+    // ones reach only the PR body.
     const toCheck = r === 1 ? cands.filter((c) => c.scope === 'diff') : []
     if (r > 1) unconfirmed = cands.filter((c) => c.scope === 'diff')
     afterApprove = null
@@ -419,10 +420,14 @@ const reviewStage = async (item, impl) => {
     const fix = await call(reviewFixPrompt(item, impl, needsWork ? rev.value.findings : [], 'reviewer', r === maxRounds, toCheck), { label: `review-fix ${item.id} #${r}`, phase: 'Review', schema: REVIEW_FIX, model: MODEL, effort: EFFORT, agentType: 'general-purpose' })
     if (!fix.ok) return { stop: `${item.id}: ${fix.why}` }
     if (!needsWork) {
-      // The branch was approved; the fixer only answered candidates. Whatever
-      // it answers, a candidate never blocks or fails the item: anything but a
-      // committed change is a dismissal, and the approve stands.
+      // The branch was approved; the fixer only answered candidates. `blocked`
+      // is a candidate it reproduced and a spec question it cannot settle, so
+      // the human answers it as any other fixer's (consumer PR #470: the
+      // question was dropped and the approve merged the defect). The resume
+      // after /unblock reviews the whole branch, its commit included. Anything
+      // else but a committed change is a dismissal, and the approve stands.
       candidateFix = fix.value
+      if (fix.value.outcome === 'blocked') return { notes, blocked: `${fix.value.question || fix.value.summary}${fix.value.changed ? ` (the reproduced candidate's fix is committed on branch ${impl.branch}, unpushed and not yet reviewed, in ${impl.worktree})` : ''}` }
       if (!(fix.value.outcome === 'committed' && fix.value.changed)) break
       // Its commits get a review of their own, scoped to them, with room for a
       // fix round after it: the approved branch must not be blocked by a last
