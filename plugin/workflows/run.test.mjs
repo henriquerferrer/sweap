@@ -168,6 +168,14 @@ test("the implementer brief binds to the playbook by its markers and never merge
   assert.match(PLAYBOOK, /<!-- worker-brief:begin -->/);
 });
 
+test("every agent finds the playbook through bin/sweap-playbook, never a docs/ path a consumer may not have", () => {
+  const MILESTONE = readFileSync(join(HERE, "..", "commands", "milestone.md"), "utf8");
+  assert.match(SRC, /\\`sweap-playbook --run-core\\` prints it/);
+  assert.ok(!/docs\/agentic-loop-playbook\.md/.test(SRC), "a consumer without a vendored copy sent 10 run agents searching for it");
+  assert.ok(!/docs\/agentic-loop-playbook\.md/.test(MILESTONE), "the /goal text's Ending-the-run references");
+  assert.ok(!/worker brief names for PRs/.test(SRC), "the worker brief never named a PR line; the attribution reminder supplies it");
+});
+
 test("no wall clock or randomness in the script (a relaunch must replay)", () => {
   assert.ok(!/Date\.now\(|new Date\(|Math\.random\(/.test(SRC));
 });

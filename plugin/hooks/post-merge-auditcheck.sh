@@ -122,9 +122,12 @@ rm -f "$tmp"
 # But it must not go silent either. "F9 completed, nobody ran its audit, three
 # PRs later a whole new milestone was authored on top" IS the 2026-08-11
 # incident. This merge is precisely the moment the audit becomes both possible
-# and mandatory, so it earns the same durable marker as a real alarm — under a
-# distinct name, with a distinct message, at exit 0. A reminder that blocks
-# nothing, and that the next session still sees.
+# and mandatory, so it earns a distinct message at exit 0: a reminder that
+# blocks nothing. What outlasts the session is not a file: the gate denies every
+# backlog-advancing PR until the record lands and validates, a milestone run
+# audits by itself, and the human gets a desktop notification. (This hook used
+# to drop .claude/audit-due-<sha>.flag; nothing ever read it, and it outlived
+# its audit as an untracked file agents kept offering to delete.)
 #
 # rc=0 (a clean run) is required: on a watchdog kill `out` is partial, and a
 # timed-out backstop raises no alarm — but it SAYS it timed out (one stderr
@@ -153,20 +156,6 @@ if [ "$rc" = "0" ]; then
   deferred="$(printf '%s\n' "$out" | grep '^DEFERRED:' || true)"
   [ -n "$deferred" ] || exit 0
   due="$(printf '%s\n' "$deferred" | sed -n 's/^DEFERRED: milestone \([^ ]*\) .*/\1/p' | tr '\n' ' ')"
-  marker_dir="$primary/.claude"
-  if mkdir -p "$marker_dir" 2>/dev/null; then
-    {
-      printf 'AUDIT DUE on main after merge at %s\n' "$(git -C "$primary" rev-parse --short HEAD 2>/dev/null)"
-      printf 'detected at: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)"
-      printf 'merge command: %s\n\n' "$cmd"
-      printf 'This merge COMPLETED milestone(s): %s\n' "$due"
-      printf 'The audit could not run before it (an audit reads the MERGED default\n'
-      printf 'branch). It can now, and it must: the gate will deny every\n'
-      printf 'backlog-advancing PR until each record lands and validates.\n\n'
-      printf 'Run /milestone-audit for each, land the record + triage follow-ups,\n'
-      printf 'then delete this marker.\n'
-    } > "$marker_dir/audit-due-$(git -C "$primary" rev-parse --short HEAD 2>/dev/null || echo unknown).flag" 2>/dev/null || true
-  fi
   # BUILT: the last item of a milestone just merged. A milestone run audits it
   # by itself when its workflow returns; outside a run the human starts it.
   due_trim="$(printf '%s' "$due" | sed 's/ *$//')"
@@ -192,23 +181,11 @@ fi
 fails="$(printf '%s\n' "$out" | grep '^FAIL:' || true)"
 [ -n "$fails" ] || exit 0
 
-# Durable marker, same idiom (and same gitignored location) as
-# post-merge-redcheck.sh's main-red flag. A banner is delivered once, to one
-# session, which may compact it away or simply be the last session of the day —
-# and "nobody noticed for three days" is the failure mode this whole change
-# exists to end. The marker is state: the next session sees it in .claude/.
-marker_dir="$primary/.claude"
-if mkdir -p "$marker_dir" 2>/dev/null; then
-  {
-    printf 'AUDIT DEBT ON MAIN after merge at %s\n' "$(git -C "$primary" rev-parse --short HEAD 2>/dev/null)"
-    printf 'detected at: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)"
-    printf 'merge command: %s\n\n' "$cmd"
-    printf '%s\n\n' "$fails"
-    printf 'Remediation: fix the audit record through the gate BEFORE advancing the\n'
-    printf 'backlog. Re-run: bash %s --check\n' "$GATE"
-    printf 'Delete this marker once --check is clean.\n'
-  } > "$marker_dir/audit-debt-$(git -C "$primary" rev-parse --short HEAD 2>/dev/null || echo unknown).flag" 2>/dev/null || true
-fi
+# No marker file. This hook used to drop .claude/audit-debt-<sha>.flag so "the
+# next session sees it", but nothing in sweap ever read it — the same finding
+# that removed post-merge-redcheck.sh's main-red marker. What outlasts this
+# session is the gate (CI and /milestone pre-flight run --check, and the merge
+# gate denies backlog-advancing PRs) plus the desktop notification below.
 
 # WHAT THE HUMAN IS TOLD. Two different things reach this point and they used to
 # share one sentence ("A merge just landed on top of undischarged audit debt"),
@@ -220,7 +197,7 @@ fi
 #   - REPORT INCOMPLETE: the audit report ON the default branch does not
 #     validate (the 2026-08-11 incident this hook exists for), so the milestone
 #     does not count as audited however the file looks.
-# Both still alarm to the SESSION (exit 2, marker); only the words differ.
+# Both still alarm to the SESSION (exit 2); only the words differ.
 due_ms="$(printf '%s\n' "$fails" | sed -nE 's/^FAIL: milestone ([A-Za-z0-9._-]+) is complete but has no audit record.*/\1/p' | tr '\n' ' ' | sed 's/ *$//')"
 invalid="$(printf '%s\n' "$fails" | grep -v 'is complete but has no audit record' || true)"
 if [ -z "$invalid" ] && [ -n "$due_ms" ]; then

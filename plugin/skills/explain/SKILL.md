@@ -67,8 +67,8 @@ they are in the summary; otherwise start a new page and say so.
 ## The page
 
 One section per question, built while it is fresh so they can ask about it. A
-visual shown unasked needs only the parts that apply; an "explain" section has
-these, in this order:
+visual shown unasked needs only the parts that apply plus the "Still lost?"
+drawer below; an "explain" section has these, in this order:
 
 1. **The question in one plain sentence.** What is being decided, in the words
    of someone who uses the product. No identifiers.
@@ -92,6 +92,16 @@ these, in this order:
 7. **What this page cannot show**: assumptions about the product's real users
    that nobody has checked with one, and the limit that the page holds only what
    the agent knows.
+
+**"Still lost?"** — every section, asked or unasked, ends with a closed
+`<details>` drawer holding 0–4 ELI5 cards: one per term in the user layer that a
+non-specialist would stop at (why a DNS lookup can answer `127.0.0.1`, what a
+browser's same-site check compares). No such term, no drawer. Each card is at
+most 80 words, is labelled general background rather than from this project,
+and ends with where its analogy breaks. Build it with the body: a few short
+cards cost seconds, and the question is never held for anything bigger. When
+the section is a sequence, the drawer's last line is "Want to watch it play out?
+Answer animate." — the animation is built only on that answer.
 
 ## The media, by what the question needs
 
@@ -120,7 +130,10 @@ above.
 - Every fact on the page comes from the item file, the code or a reproduction,
   in both layers: the technical layer cites it, and the user story points to the
   item line, test or reproduction it rests on. A scenario the agent assumed is
-  marked as assumed. When the agent is unsure, the page says so.
+  marked as assumed. When the agent is unsure, the page says so. The one
+  exception is the "Still lost?" cards, which are general background: there,
+  each claim about the outside world (a CVE, a browser's or router's behaviour)
+  carries a link or says "from memory, unverified".
 - Then ask the question (again, after "explain"). Answer follow-ups first; do
   not re-ask until they are done reading. Use the same options, unless building
   the page showed one is misdescribed or the premise is moot: then say so,

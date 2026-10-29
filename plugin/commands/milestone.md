@@ -470,7 +470,7 @@ if you can (a red default branch: rerun its failed job once), verify it is gone
 (sweap-fleet prints ok; the default branch is green) and only then relaunch it
 fresh with the same args; if you cannot verify that, stop and say which cause —
 that is (C). When you stop, record it as the playbook's "Ending the run"
-section says (docs/agentic-loop-playbook.md): (A) is goal-met; (B) is
+section says (`sweap-playbook` prints its path): (A) is goal-met; (B) is
 awaiting-human with every blocked or attended id in needs:, or frontier-empty
 when there is none; (E) is turns-exhausted.
 ```
@@ -510,7 +510,7 @@ default branch is green) and only then relaunch it fresh with the same args;
 if you cannot verify that, stop and say which cause. When it returns drained
 with items under failed, relaunch it fresh once; if they fail again, that is
 (B). When you stop, record it as the playbook's "Ending the run" section says
-(docs/agentic-loop-playbook.md): (A) is awaiting-human with the open hand-offs
+(`sweap-playbook` prints its path): (A) is awaiting-human with the open hand-offs
 and every blocked or attended id in needs:, never goal-met.
 ```
 
@@ -533,7 +533,7 @@ default branch is green) and only then relaunch it fresh with the same args;
 if you cannot verify that, stop and say which cause. When it returns drained
 with items under failed, relaunch it fresh once; if they fail again, that is
 (B). When you stop, record it as the playbook's "Ending the run" section says
-(docs/agentic-loop-playbook.md): (A) is goal-met when every follow-up is done,
+(`sweap-playbook` prints its path): (A) is goal-met when every follow-up is done,
 else awaiting-human with every blocked or attended id in needs:.
 ```
 

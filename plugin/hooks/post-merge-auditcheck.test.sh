@@ -110,9 +110,10 @@ check "a pre-format record already on the mainline => alarms (no grandfathering)
 # T4: a complete milestone with no record, where THIS merge is what completed it.
 # Not an alarm: the audit reads the MERGED branch, so it could not have run
 # before now, and the pre-merge gate allowed this merge deliberately (audit-gate,
-# "the milestone boundary"). It is a REMINDER — exit 0, distinct banner, distinct
-# durable marker — because "milestone completed, nobody audited, a new milestone
-# authored on top" is the 2026-08-11 incident itself.
+# "the milestone boundary"). It is a REMINDER — exit 0, distinct banner — because
+# "milestone completed, nobody audited, a new milestone authored on top" is the
+# 2026-08-11 incident itself. It leaves no file: nothing read the audit-due
+# marker it used to write, and the gate is what outlasts the session.
 R="$(new_repo t4)"
 mk_done_item "$R" F9.1
 commit_all "$R"
@@ -122,9 +123,9 @@ check "merge that COMPLETES a milestone => reminder, not alarm" 0
 check_out "reminder names the milestone" "AUDIT DUE — this merge completed milestone(s): F9"
 check_out "reminder does not cry debt" "Not debt and not a failure"
 if ls "$R/.claude"/audit-due-*.flag >/dev/null 2>&1; then
-  pass=$((pass+1)); printf '  PASS  %s\n' "reminder leaves a durable audit-due marker"
+  fail=$((fail+1)); printf '  FAIL  %s\n' "reminder leaves no audit-due marker"
 else
-  fail=$((fail+1)); printf '  FAIL  %s\n' "reminder leaves a durable audit-due marker"
+  pass=$((pass+1)); printf '  PASS  %s\n' "reminder leaves no audit-due marker"
 fi
 if ls "$R/.claude"/audit-debt-*.flag >/dev/null 2>&1; then
   fail=$((fail+1)); printf '  FAIL  %s\n' "reminder must NOT leave an alarm marker"
@@ -218,9 +219,10 @@ check "incomplete milestone => no debt, quiet" 0
 if [ -s "$OSA_LOG" ]; then fail=$((fail+1)); printf '  FAIL  %s\n' "an ordinary merge raises no notification"
 else pass=$((pass+1)); printf '  PASS  %s\n' "an ordinary merge raises no notification"; fi
 
-# T6: the alarm leaves a DURABLE marker in .claude/ (same idiom as
-# post-merge-redcheck.sh). A banner reaches one session and can be compacted
-# away; "nobody noticed for three days" is the failure this ends.
+# T6: the alarm leaves NO marker in .claude/ (nothing read the audit-debt flag
+# it used to write; post-merge-redcheck.sh dropped its marker for the same
+# reason). The exit and banner are asserted too, or a hook that quit early would
+# pass the absence check.
 R="$(new_repo t6)"
 mk_done_item "$R" F9.1
 commit_all "$R" "F9 done"
@@ -229,10 +231,12 @@ printf '# F9 audit\n\nprose only.\n' > "$R/roadmap/audits/F9.md"
 commit_all "$R" "bad record"
 anchor_main "$R"
 run_hook "$R" "gh pr merge 122 --squash"
+check "malformed record on the mainline => alarm" 2
+check_out "alarm banner" "AUDIT DEBT ON MAIN after this merge"
 if ls "$R"/.claude/audit-debt-*.flag >/dev/null 2>&1; then
-  pass=$((pass+1)); printf '  PASS  %s\n' "alarm writes a durable .claude/ marker"
+  fail=$((fail+1)); printf '  FAIL  %s\n' "alarm writes no .claude/ marker"
 else
-  fail=$((fail+1)); printf '  FAIL  %s\n' "alarm writes a durable .claude/ marker"
+  pass=$((pass+1)); printf '  PASS  %s\n' "alarm writes no .claude/ marker"
 fi
 
 

@@ -297,11 +297,13 @@ const callPlugin = async (name, prompt, opts) => {
 const callWatcher = (prompt, opts) => callPlugin('merge-watcher', prompt, opts)
 
 // ---------------------------------------------------------------------------
-// Prompts. Every agent gets CLAUDE.md injected, and the project's CLAUDE.md
-// names the playbook; the Run core is what a driver reads and the worker brief
-// is what an implementer reads. Neither is pasted here — the file is the spec.
+// Prompts. Every agent gets CLAUDE.md injected, and bin/sweap-playbook prints
+// the playbook's path (the consumer's vendored copy, else the installed
+// plugin's — a consumer without a copy sent its agents searching the disk); the
+// Run core is what a driver reads and the worker brief is what an implementer
+// reads. Neither is pasted here — the file is the spec.
 
-const READ_FIRST = `Read CLAUDE.md's "sweap config" block and the playbook it names (docs/agentic-loop-playbook.md unless it says otherwise). Read the playbook from its top to the line \`<!-- run-core:end -->\` — the Run core — in full. Read nothing else of it up front; the Run core's closing table says which section to read when a situation arrives.`
+const READ_FIRST = `Read CLAUDE.md's "sweap config" block, then the playbook's Run core in full: \`sweap-playbook --run-core\` prints it (the playbook from its top to the line \`<!-- run-core:end -->\`), and \`sweap-playbook\` prints the playbook's path. Never search the disk for the playbook. Read nothing else of it up front; the Run core's closing table says which section to read when a situation arrives.`
 
 const resumePrompt = () => `${READ_FIRST}
 
@@ -369,7 +371,7 @@ const notesStep = (item, notes, dir, branch) => notes.length ? `First, inside \`
 
 const publishPrompt = (item, impl, review, notes = []) => `Publish backlog item ${item.id}'s reviewed branch: ${where(item, impl)}.
 ${notesStep(item, notes, impl.worktree, impl.branch)}1. Push in its own call, plainly: \`git -C ${impl.worktree} push -u origin ${impl.branch}\` and nothing else in that command.
-2. If \`gh pr view ${impl.branch} --json number,state\` shows an OPEN PR for the branch, that is the PR: return its number. Otherwise, from the worktree, \`gh pr create\` (never \`--repo\`/\`-R\`): the title is the branch's first commit subject; the body summarises the change from \`git log\` and the diff stat, then states the review record below verbatim, and ends with the line the playbook's worker brief names for PRs.
+2. If \`gh pr view ${impl.branch} --json number,state\` shows an OPEN PR for the branch, that is the PR: return its number. Otherwise, from the worktree, \`gh pr create\` (never \`--repo\`/\`-R\`): the title is the branch's first commit subject; the body summarises the change from \`git log\` and the diff stat, then states the review record below verbatim.
 Review record: ${review}
 Return the JSON only: outcome \`pr-open\` with the PR number, or \`failed\` with what refused.`
 
@@ -378,7 +380,7 @@ Return the JSON only: outcome \`pr-open\` with the PR number, or \`failed\` with
 // the default branch, so the item reads blocked (the frontier stops listing it,
 // the goal can stop, /unblock accepts it) and no unreviewed code rides along.
 // The item's work branch stays in its worktree for the resume after /unblock.
-const flipPrompt = (item, question, notes = []) => `Land a BLOCKED flip for backlog item ${item.id}, and nothing else. From the primary checkout: \`git fetch origin\`, then \`git worktree add <the worktree path CLAUDE.md or the playbook names for this project>-blocked -b chore/${slug(item.id)}-blocked origin/${CTX.base}\`. In that worktree edit ONLY \`${CTX.backlog}/${item.id}.md\`: \`status: blocked\` and a \`blocked:\` key holding the question below verbatim; keep every other key and section. Commit only that file (one call).${notes.length ? ` Then, in that same -blocked worktree: ${notesStep(item, notes, '<that -blocked worktree>', `chore/${slug(item.id)}-blocked`).replace(/^First, inside [^,]*, /, '')}` : ''} Push in its own call, plainly: \`git push -u origin chore/${slug(item.id)}-blocked\`. Then \`gh pr create\` (never \`--repo\`/\`-R\`) titled \`chore(${item.id}): blocked — <the question, shortened>\`, the body stating the question verbatim and ending with the line the playbook's worker brief names for PRs. Never touch the item's work branch or its worktree.
+const flipPrompt = (item, question, notes = []) => `Land a BLOCKED flip for backlog item ${item.id}, and nothing else. From the primary checkout: \`git fetch origin\`, then \`git worktree add <the worktree path CLAUDE.md or the playbook names for this project>-blocked -b chore/${slug(item.id)}-blocked origin/${CTX.base}\`. In that worktree edit ONLY \`${CTX.backlog}/${item.id}.md\`: \`status: blocked\` and a \`blocked:\` key holding the question below verbatim; keep every other key and section. Commit only that file (one call).${notes.length ? ` Then, in that same -blocked worktree: ${notesStep(item, notes, '<that -blocked worktree>', `chore/${slug(item.id)}-blocked`).replace(/^First, inside [^,]*, /, '')}` : ''} Push in its own call, plainly: \`git push -u origin chore/${slug(item.id)}-blocked\`. Then \`gh pr create\` (never \`--repo\`/\`-R\`) titled \`chore(${item.id}): blocked — <the question, shortened>\`, the body stating the question verbatim. Never touch the item's work branch or its worktree.
 Question: ${question}
 Return the JSON only: outcome \`pr-open\` with the PR number, branch and worktree; or \`failed\` with what refused.`
 

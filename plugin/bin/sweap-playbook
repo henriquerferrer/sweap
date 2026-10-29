@@ -1,0 +1,35 @@
+#!/bin/sh
+# sweap-playbook — the path of the playbook a session or run agent should read.
+#
+#   sweap-playbook              print the playbook's absolute path
+#   sweap-playbook --run-core   print the Run core: the top of the file down to
+#                               the line `<!-- run-core:end -->`
+#
+# Why this file exists. Run prompts and the /goal text named
+# docs/agentic-loop-playbook.md, but scaffold.sh syncs that copy only into a
+# consumer that already vendors one. A consumer without it sent its agents
+# searching (a consumer's two runs: 10 agents, some with `find /`), and a search
+# can land on the marketplace clone, whose text need not match the installed
+# version. This prints the consumer's vendored copy when the current checkout
+# has one (scaffold keeps it in sync with this plugin), else the copy beside
+# this script — the installed, version-pinned plugin, never the marketplace
+# clone. Same root resolution as bin/sweap-merge (read its header).
+set -u
+
+self=$0
+case $self in
+  */*) ;;
+  *) self=$(command -v -- "$self") || exit 127 ;;
+esac
+n=0
+while [ -L "$self" ] && [ "$n" -lt 40 ]; do
+  link=$(readlink "$self") || break
+  case $link in
+    /*) self=$link ;;
+    *) self=$(dirname "$self")/$link ;;
+  esac
+  n=$((n + 1))
+done
+root=$(CDPATH='' cd -P -- "$(dirname "$self")/.." && pwd -P) || exit 1
+
+exec /bin/sh "$root/tools/sweap-playbook.sh" "$@"

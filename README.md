@@ -31,6 +31,7 @@ PATH, so a session (and you, in a session's terminal) can run these by name:
 | `sweap-roadmap-lint <file>` | The per-item spec gate — a failing `todo` item is not runnable |
 | `sweap-stranded` | Lists not-merged branches carrying backlog files nothing will land |
 | `sweap-note discovered …` / `sweap-note idea …` | Writes a discovered note / an idea into the capture inboxes |
+| `sweap-playbook` / `sweap-playbook --run-core` | The playbook's path — the project's vendored `docs/agentic-loop-playbook.md` when it has one, else the installed plugin's — or its Run core (the top of the file down to `run-core:end`); what run agents read instead of searching the disk for it |
 | `sweap-frontier` | The runnable `todo` items in drain order, as JSON (what `/sweap:run` picks from, recomputed before every item) |
 | `sweap-fleet` | Can the self-hosted runner fleet run this repo's CI (`ok` / `fleet-down` / `unknown`, with the missing label sets and runner versions retiring within a week), as JSON. Exit 1 on `fleet-down` |
 | `sweap-usage-tap install` / `sweap-usage-tap report` | Records the subscription meter (5-hour and 7-day `used_percentage`, timestamped) from the status line; `install` prints the `statusLine` setting to paste, `report` prints the readings |
