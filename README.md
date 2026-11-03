@@ -1,13 +1,48 @@
 # sweap
 
-SWE Agentic Pipeline — an agentic-dev loop for per-feature development, merge-greenness gates, and automated roadmap/milestone/audit commands.
+A Claude Code plugin that turns a roadmap into merged pull requests. You write the backlog and answer the questions that need a human; sweap drives each item through implementation, review, CI and merge, and refuses to merge anything that isn't green.
+
+## How it works
+
+`/roadmap` turns a goal into item files. `/sweap:run` then drains them one at a time through a script, not a long-lived agent:
+
+1. **Scope:** recompute what is runnable, because every merge changes that.
+2. **Implement:** a fresh agent per item, which exits once its branch is committed.
+3. **Review:** a fresh reviewer, plus a security reviewer when the item is tagged for one.
+4. **Merge:** a small watcher drives `sweap-merge` until it reaches a terminal state.
+5. **Fix:** a fresh fixer per failure, with every earlier attempt in hand.
+
+Hooks enforce the rules mechanically. `pre-merge-gate.sh` denies a merge when the PR's checks aren't all green or its head is behind its base, so an agent can't talk its way past a red build. When a milestone completes, `/milestone-audit` runs an adversarial cross-feature audit, and a gate blocks further merges until a valid audit record lands.
+
+## Decisions worth reading
+
+Each of these started as something that went wrong or a claim that needed testing:
+
+- [**The merge gate is a hook, not an instruction.**](plugin/hooks/pre-merge-gate.sh) A `gh pr checks | tail` pipe once hid a failed e2e run and a broken PR reached main. A pipe returns `tail`'s exit code, so no prompt could have fixed that.
+- [**The loop lives in a script.**](docs/research/2026-09-22-run-cost-and-24-7.md) Measuring one run showed that long-lived agents waiting on CI paid half its cost in cache rewrites. The script now holds the loop, and agents hold context only while they work.
+- [**Did review actually catch anything?**](docs/research/2026-10-24-f13-attribution/README.md) Tracing a milestone's audit findings back to their PRs showed which review catches were fixed and which leaked, and led to a fix in the run loop.
+
+Most ideas don't survive here. Proposals go through hostile review by three independent agents before anything is built. [`docs/`](docs/README.md) has the full record, including what was killed and why.
+
+## In real use
+
+sweap runs on three of my projects, called consumer A, B and C in these docs. In one consumer A milestone run it merged 15 PRs in 22.5 hours, and 14 of them passed CI on the first try.
+
+## Known limitations
+
+- **Claude Code only.** It depends on Claude Code's hooks and Workflow tool.
+- **One item at a time, by design.** Parallel lanes were tried and removed: two reviewers or two gate runs in one worktree destroy each other's databases.
+- **No hosted CI for sweap itself.** A green `./test.sh` is the merge bar.
+- **A human still answers real decisions.** Items marked `attended` wait for you, and a run stops rather than guess.
+
+Built with Claude Code, so commits carry a co-author trailer. This history was migrated from a private repository in 2026: commit dates are original, while pull request dates show the migration.
 
 ## Install
 
 ### Once Per Machine
-Add the sweap plugin to your Claude Code marketplace:
+Add the sweap marketplace to Claude Code:
 ```
-/plugin marketplace add ~/Documents/sweap
+/plugin marketplace add henriquerferrer/sweap
 ```
 
 ### Per Project
@@ -43,15 +78,9 @@ run routes around the driver. These are the plugin's only model-facing entry
 points: `${CLAUDE_PLUGIN_ROOT}` is exported for *hook* execution only and is
 unset in a model-issued Bash call, so it cannot be used in a launch line.
 
-## Features
-
-- Per-feature agentic loop with merge gating
-- Automated roadmap, milestone, and audit commands
-- Integration with Claude Code's hook system
-
 ## Testing
 
-sweap has no hosted CI (billing-blocked), so a green `./test.sh` is the merge
+sweap has no hosted CI, so a green `./test.sh` is the merge
 bar — run it before every PR:
 
 ```sh
@@ -68,3 +97,7 @@ minutes; `pre-merge-gate.test.sh` is the slow one (it sleeps through real
 gh-timeout paths), which is what the per-suite seconds are for. Run one suite
 alone with `bash plugin/hooks/<x>.test.sh` or
 `node --test plugin/tools/sweap-board.test.mjs`.
+
+## License
+
+MIT
