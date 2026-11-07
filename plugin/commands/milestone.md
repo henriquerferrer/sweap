@@ -238,10 +238,10 @@ If it names a milestone with `sessions: 0`, print **one line** before the goal,
 next to any runner-retirement line. It is a reminder, not a question:
 
 ```
-Reminder: <Mprev> shipped <n> items and nobody has walked it. Run /walkthrough <Mprev> (~35 min) when you have time; its findings go to discovered/ for the next /milestone to triage.
+Reminder: <Mprev> shipped <n> items and nobody has walked it. Run /sweap:walkthrough <Mprev> (~35 min) when you have time, or /sweap:demo <Mprev> to film what it delivered; walkthrough findings go to discovered/ for the next /milestone to triage.
 ```
 
-Do not ask, do not wait for an answer, and never start `/walkthrough` from here.
+Do not ask, do not wait for an answer, and never start `/walkthrough` or `/sweap:demo` from here.
 The kickoff goes straight on to the goal. This used to be a "test it now or
 later?" question; the maintainer cut it to a reminder (2026-11-05) because a
 question at kickoff holds the run for something that is optional.
