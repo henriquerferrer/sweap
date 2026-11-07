@@ -75,7 +75,7 @@ done
 run_suite node node --test plugin/tools/*.test.mjs plugin/workflows/*.test.mjs
 
 if command -v shellcheck >/dev/null 2>&1; then
-  run_suite shellcheck shellcheck -S warning plugin/hooks/*.sh plugin/hooks/*.test.sh plugin/bin/* scripts/*.sh test.sh
+  run_suite shellcheck shellcheck -S warning plugin/hooks/*.sh plugin/hooks/*.test.sh plugin/bin/* plugin/skills/*/*.sh scripts/*.sh test.sh
 else
   echo "skip: shellcheck not installed (brew install shellcheck)"
 fi

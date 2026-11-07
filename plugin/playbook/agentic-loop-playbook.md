@@ -236,7 +236,10 @@ rather than another turn — if you cannot name why, do it yourself. Do not writ
 the commands the human should run; the board derives them. Then notify (when
 `notify: push`): merged PRs, each blocked item with `/unblock <id>`, each open
 hand-off with `/handoff <id>`. Delete the run file on `goal-met`,
-`frontier-empty` or `turns-exhausted`; keep it on `awaiting-human`.
+`frontier-empty` or `turns-exhausted`; keep it on `awaiting-human`. When the run
+finished a milestone (every item under it done), end your report to the human
+with one reminder line, never a question: `<M> is done: /sweap:walkthrough <M>
+to walk it with me, or /sweap:demo <M> to film what it delivered.`
 
 ### When this happens, read that
 

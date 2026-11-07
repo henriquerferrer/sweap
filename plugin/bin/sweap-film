@@ -1,0 +1,26 @@
+#!/bin/sh
+# sweap-film — record a project's demo tours into MP4s (the demo skill's recorder).
+#
+#   sweap-film <e2e-package-dir> [playwright filter ...]
+#
+# A wrapper so a session can call the recorder by name: plugin bin/ is on PATH for
+# enabled plugins, while the skill's own folder path is only known to the model when
+# the skill loads. Same root resolution as bin/sweap-merge (read its header).
+set -u
+self=$0
+case $self in
+  */*) ;;
+  *) self=$(command -v -- "$self") || exit 127 ;;
+esac
+n=0
+while [ -L "$self" ] && [ "$n" -lt 40 ]; do
+  link=$(readlink "$self") || break
+  case $link in
+    /*) self=$link ;;
+    *) self=$(dirname "$self")/$link ;;
+  esac
+  n=$((n + 1))
+done
+root=$(CDPATH='' cd -P -- "$(dirname "$self")/.." && pwd -P) || exit 1
+
+exec /bin/sh "$root/skills/demo/film.sh" "$@"
