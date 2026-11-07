@@ -220,8 +220,8 @@ Two exits from this, both narrow:
   command's steps by name rather than copying its templates, so this file is
   the only place the goal text lives.
 
-Acceptance offer (see `/walkthrough`). After the hand-off fork resolves and before any
-goal is printed, ask the lib whether a shipped milestone has never been walked:
+Walkthrough reminder (see `/walkthrough`). Before printing any goal, ask the lib
+whether a shipped milestone has never been walked:
 
 ```bash
 node --input-type=module -e '
@@ -234,37 +234,30 @@ console.log(JSON.stringify({ target: t, stats: lib.sessionStats(sessions) }, nul
 ' "${CLAUDE_PLUGIN_ROOT}/tools/sweap-board.lib.mjs"
 ```
 
-If it names a milestone with `sessions: 0`, **offer once**, with the cost stated
-on both arms, and take either answer without argument:
+If it names a milestone with `sessions: 0`, print **one line** before the goal,
+next to any runner-retirement line. It is a reminder, not a question:
 
 ```
-<Mprev> shipped <n> items and nobody has looked at it.
-
-  Test it now  → ~35 min. Findings with a harm class drain FIRST in this run;
-                 the rest wait for you at /roadmap.
-  Later        → the run starts now; <Mprev>'s findings, if any, arrive a
-                 milestone late and cost a second drain.
+Reminder: <Mprev> shipped <n> items and nobody has walked it. Run /walkthrough <Mprev> (~35 min) when you have time; its findings go to discovered/ for the next /milestone to triage.
 ```
 
-The timing is the whole argument: a finding caught before the run becomes that
-run's debt and drains at the front of the frontier; caught after, it is a
-milestone late. On "now", run `/walkthrough <Mprev>` inline here, then re-resolve from
-the top (every scan above is stateless) and print the goal that then applies.
+Do not ask, do not wait for an answer, and never start `/walkthrough` from here.
+The kickoff goes straight on to the goal. This used to be a "test it now or
+later?" question; the maintainer cut it to a reminder (2026-11-05) because a
+question at kickoff holds the run for something that is optional.
 
-**Offer it every time and escalate never.** This is deliberately NOT the
-`carried: ≥2` shape the blocked queue uses, and the difference is evidenced: a
-mandate is the one variable with a large null result against it (an identical
-checklist mandated across 101 hospitals and 215,711 procedures moved outcomes at
-P = 0.13), and checklist *completion* decays invisibly beneath stable *usage*
-(81.7% → 53.2%) — so the presence of a session sheet, the only thing an
-escalation could key on, is exactly the signal that cannot detect the failure.
-What is watched instead is yield: if `stats.dry` reaches 3, say so and recommend
-cutting `/walkthrough` back to a UI-only spot-check rather than offering it harder.
+**Remind every time and escalate never.** A mandate is the one variable with a
+large null result against it (an identical checklist mandated across 101
+hospitals and 215,711 procedures moved outcomes at P = 0.13), and checklist
+*completion* decays invisibly beneath stable *usage* (81.7% → 53.2%), so the
+presence of a session sheet, the only thing an escalation could key on, is
+exactly the signal that cannot detect the failure. What is watched instead is
+yield: if `stats.dry` reaches 3, add to the reminder that the last 3 walkthroughs
+found nothing, and recommend cutting `/walkthrough` back to a UI-only spot-check.
 
-Non-interactive kickoffs — any headless driver — skip this
-entirely and name the skip in their notification, exactly as they do for
-`/handoff`; `/walkthrough` requires a human in the session and must never run
-unattended.
+Non-interactive kickoffs (any headless driver) put the reminder in their
+notification instead; `/walkthrough` requires a human in the session and must
+never run unattended.
 
 Environment pre-flight (parity — see the playbook's "Environment parity"
 section). Do this **yourself** — the user should never bring up services by
