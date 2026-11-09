@@ -6,7 +6,9 @@
 # The human asked for the three moments of a milestone's end as notifications
 # (2026-10-10): built, audit started, audit finished. Built and finished are
 # merges, so post-merge-auditcheck.sh raises them. Started is not a merge: it is
-# the session launching the `sweap:milestone-audit` workflow, and a PreToolUse
+# the session launching the `sweap:milestone-audit-workflow` workflow (named
+# `milestone-audit` up to 0.42.0, still matched for a session on an older
+# build), and a PreToolUse
 # hook on the Workflow tool is the only mechanical place that sees it (witnessed
 # on Claude Code 2.1.295: the hook fires with the call's `name` and `args`).
 #
@@ -19,7 +21,7 @@ input="$(cat 2>/dev/null || true)"
 [ "$(printf '%s' "$input" | jq -r '.tool_name // empty' 2>/dev/null)" = "Workflow" ] || exit 0
 name="$(printf '%s' "$input" | jq -r '.tool_input.name // empty' 2>/dev/null)"
 case "$name" in
-  sweap:milestone-audit|milestone-audit) ;;
+  sweap:milestone-audit-workflow|milestone-audit-workflow|sweap:milestone-audit|milestone-audit) ;;
   *) exit 0 ;;
 esac
 # args is an object ({milestone, range}) or, from an older call, a bare id.

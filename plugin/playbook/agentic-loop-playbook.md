@@ -1477,7 +1477,7 @@ migrate the merged records in the same PR.
 **Enforcing the audit gate in CI (consumer repos).** This is SCAFFOLDED, not
 copy-pasted: `.github/workflows/audit-gate.yml` ships in `templates/` and
 `scaffold.sh` installs it — including into repos that adopted sweap before the
-control existed. Run `/agentic-loop-init` to force it. What you do with it then
+control existed. Run `/sweap:init` to force it. What you do with it then
 depends on your GitHub plan — read the plan paragraphs below before assuming you
 can make it a required check.
 

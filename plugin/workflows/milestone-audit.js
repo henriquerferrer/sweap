@@ -1,5 +1,5 @@
 export const meta = {
-  name: 'milestone-audit',
+  name: 'milestone-audit-workflow',
   description: 'Adversarial cross-feature audit of a merged milestone (finders → refuters → confirmed findings)',
   whenToUse: 'After the last item of a milestone merges, before the next milestone brainstorm. Pass {range: "<base>..<head>", milestone: "F#"} (a bare milestone-id string is also accepted, e.g. "F6") or omit args and let the Scope stage infer the range from the item files at status: done under backlog.dir (roadmap/ by default; backlog.file is the index). The workflow throws if the resolved milestone does not match a requested one — it never silently falls back to auditing whatever merged most recently.',
   phases: [

@@ -236,7 +236,7 @@ fi
   printf '## FIX THE RECORD FIRST, through the gate — do not author new backlog\n'
   printf '## items on top of this. Run: bash %s --check\n' "$GATE"
   printf '## If this repo has no audit-gate CI job, that is the real bug: run\n'
-  printf '## /agentic-loop-init to install it and make it a required check.\n'
+  printf '## /sweap:init to install it and make it a required check.\n'
   printf '################################################################\n'
 } >&2
 exit 2

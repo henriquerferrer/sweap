@@ -1,4 +1,4 @@
-# Scaffolded by sweap's /agentic-loop-init (copy-generalized from the
+# Scaffolded by sweap's /sweap:init (copy-generalized from the
 # agentic-ci convention). Single source of truth for "how to run X" — both
 # locally and in CI. Recipe NAMES are the contract the pipeline (CLAUDE.md's
 # sweap config, .github/workflows/*.yml) depends on — keep them stable. Recipe

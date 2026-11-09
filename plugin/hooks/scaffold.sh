@@ -2,13 +2,13 @@
 #
 # scaffold.sh — deterministic, idempotent scaffold of sweap's project-owned
 # files (CLAUDE.md config, ROADMAP, justfile, .github). Mirrors the mechanical
-# half of commands/agentic-loop-init.md; that command's checklist is the human
+# half of commands/init.md; that command's checklist is the human
 # fill-in half and now RUNS this same script for the mechanical part, so there
 # is exactly one implementation.
 #
 # Wired as a SessionStart hook (see hooks/hooks.json) — fires on every session
 # start (source = startup/resume/clear/compact/fork, or `init-command` when run
-# by /agentic-loop-init). SessionStart BLOCKS session start, so
+# by /sweap:init). SessionStart BLOCKS session start, so
 # this script must stay fast: the very first thing it does after resolving
 # the project dir is an idempotency fast-guard that makes every session after
 # the first a near-instant no-op.
@@ -107,7 +107,7 @@ fi
 [ -e "$proj/.git" ] || exit 0
 
 # SessionStart `source` (startup/resume/clear/compact/fork, or `init-command`
-# from /agentic-loop-init). Deny-list: compact|clear skip the managed-file sync
+# from /sweap:init). Deny-list: compact|clear skip the managed-file sync
 # (step 3b); fork, init-command, empty and unknown values still sync.
 src=""
 if [ "$have_jq" = "1" ]; then
@@ -568,7 +568,7 @@ if [ "${#healed_workflows[@]}" -gt 0 ]; then
   msg="$msg Installed sweap-managed CI controls (stamped, kept in lockstep with the plugin): $(printf '%s, ' "${healed_workflows[@]}" | sed 's/, $//'). Commit them with the workflows — audit-gate.yml calls .github/scripts/audit-gate.sh and fails without it."
 fi
 
-msg="$msg TODO before this is a working pipeline: (0) decide how the audit gate is ENFORCED: on a private Free repo rulesets are unavailable, so pre-merge-gate.sh (which requires an all-green check rollup) is the enforcement and there is nothing to configure; on a public/org/Pro repo make 'audit-gate' a REQUIRED check pinned to the GitHub Actions app (id 15368), never 'any source'; (1) fill in verify.typecheck / verify.lint / verify.e2e in CLAUDE.md's '## sweap config' block (verify.e2e is what CI runs in full as the merge gate — unit+integration+e2e; agents run only what a change touches locally); (2) fill in the '# <fill in for your stack>' recipe bodies in justfile (lint, typecheck, test, e2e, optionally services-up/services-down); (3) fill in the '<fill in for your stack>' steps in .github/workflows/ci.yml (toolchain setup, e2e prerequisites, e2e artifact path); (4) write the first milestone with /roadmap (one file per item under roadmap/ — see the playbook's 'Backlog format' section). Run /agentic-loop-init any time to re-run or repair the scaffold."
+msg="$msg TODO before this is a working pipeline: (0) decide how the audit gate is ENFORCED: on a private Free repo rulesets are unavailable, so pre-merge-gate.sh (which requires an all-green check rollup) is the enforcement and there is nothing to configure; on a public/org/Pro repo make 'audit-gate' a REQUIRED check pinned to the GitHub Actions app (id 15368), never 'any source'; (1) fill in verify.typecheck / verify.lint / verify.e2e in CLAUDE.md's '## sweap config' block (verify.e2e is what CI runs in full as the merge gate — unit+integration+e2e; agents run only what a change touches locally); (2) fill in the '# <fill in for your stack>' recipe bodies in justfile (lint, typecheck, test, e2e, optionally services-up/services-down); (3) fill in the '<fill in for your stack>' steps in .github/workflows/ci.yml (toolchain setup, e2e prerequisites, e2e artifact path); (4) write the first milestone with /roadmap (one file per item under roadmap/ — see the playbook's 'Backlog format' section). Run /sweap:init any time to re-run or repair the scaffold."
 
 if [ "$have_jq" = "1" ]; then
   jq -n --arg ctx "$msg" '{hookSpecificOutput:{hookEventName:"SessionStart",additionalContext:$ctx}}' 2>/dev/null || printf '%s\n' "$msg"
