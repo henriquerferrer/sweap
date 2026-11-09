@@ -1,6 +1,6 @@
 name: audit-gate
 
-# Scaffolded by sweap (scaffold.sh / /agentic-loop-init). This is the ONLY
+# Scaffolded by sweap (scaffold.sh / /sweap:init). This is the ONLY
 # surface that validates an audit record against the state it will actually
 # land in — the local pre-merge hook cannot, because the record being
 # discharged is by definition not merged yet (see hooks/audit-gate.sh, "WHY
@@ -87,7 +87,7 @@ jobs:
           set -euo pipefail
           GATE=.github/scripts/audit-gate.sh
           if [ ! -f "$GATE" ]; then
-            echo "::error::$GATE is missing — the audit gate cannot run. Start a Claude Code session in this repo (sweap's scaffold vendors it) or run /agentic-loop-init."
+            echo "::error::$GATE is missing — the audit gate cannot run. Start a Claude Code session in this repo (sweap's scaffold vendors it) or run /sweap:init."
             exit 1
           fi
 

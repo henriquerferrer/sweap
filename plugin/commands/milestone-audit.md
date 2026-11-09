@@ -30,7 +30,7 @@ running an old plugin build — stop and say so rather than improvising the
 format, because a record written to a stale format is exactly the failure this
 step exists to prevent.
 
-Run the saved **`sweap:milestone-audit`** Workflow (`Workflow({name: "sweap:milestone-audit", args: {...}})` — the plugin-scoped name; the bare `milestone-audit` is "not found", a consumer, 2026-09-02) with `args: {milestone: "<id>", range: "<base>..<head>"}` —
+Run the saved **`sweap:milestone-audit-workflow`** Workflow (`Workflow({name: "sweap:milestone-audit-workflow", args: {...}})` — the plugin-scoped name; the bare `milestone-audit-workflow` is "not found", a consumer, 2026-09-02. Up to 0.42.0 the workflow was named `milestone-audit`, the same as this command, so the `/` menu listed `/sweap:milestone-audit` twice) with `args: {milestone: "<id>", range: "<base>..<head>"}` —
 resolve `<id>` from the argument (the milestone this invocation is auditing,
 e.g. `F6`) and, if a range was also given as an argument, pass it too; if the
 range is unknown, omit it and let the Workflow's Scope stage infer it from the

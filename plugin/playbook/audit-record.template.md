@@ -156,4 +156,4 @@ The BINDING verification is the `audit-gate` required check in CI
 (`.github/workflows/audit-gate.yml`), which re-runs the same script against the
 PR's own checkout where no session can vouch for it. If that job is missing from
 a repo, the record is unverified no matter what any transcript claims — install
-it with `/agentic-loop-init` and make it required.
+it with `/sweap:init` and make it required.

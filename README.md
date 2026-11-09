@@ -49,7 +49,7 @@ Add the sweap marketplace to Claude Code:
 Install sweap in your current project:
 ```
 /plugin install sweap
-/agentic-loop-init
+/sweap:init
 ```
 
 This initializes the agentic-dev loop, enabling per-feature isolation and automated gating.

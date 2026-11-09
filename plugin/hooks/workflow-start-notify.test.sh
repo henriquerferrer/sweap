@@ -24,7 +24,7 @@ fire() { : > "$OSA_LOG"; OUT="$(printf '%s' "$1" | bash "$HOOK" 2>&1)"; RC=$?; N
 
 echo "workflow-start-notify.test.sh:"
 
-fire "{\"tool_name\":\"Workflow\",\"tool_input\":{\"name\":\"sweap:milestone-audit\",\"args\":{\"milestone\":\"F14\"}},\"cwd\":\"$R\"}"
+fire "{\"tool_name\":\"Workflow\",\"tool_input\":{\"name\":\"sweap:milestone-audit-workflow\",\"args\":{\"milestone\":\"F14\"}},\"cwd\":\"$R\"}"
 ok "audit launch => exit 0" 0 "$RC"
 ok "audit launch => silent" "" "$OUT"
 ok "audit launch => one notification" 1 "$N"
@@ -34,8 +34,11 @@ has "the body says another note follows" "$(cat "$OSA_LOG")" "You get another no
 fire "{\"tool_name\":\"Workflow\",\"tool_input\":{\"name\":\"sweap:milestone-audit\",\"args\":\"F13\"},\"cwd\":\"$R\"}"
 has "a bare-id args string still names the milestone" "$(cat "$OSA_LOG")" 'title "shop: F13 audit started"'
 
-fire '{"tool_name":"Workflow","tool_input":{"name":"sweap:milestone-audit","args":"{\"milestone\":\"F12\"}"},"cwd":"'"$R"'"}'
+fire '{"tool_name":"Workflow","tool_input":{"name":"sweap:milestone-audit-workflow","args":"{\"milestone\":\"F12\"}"},"cwd":"'"$R"'"}'
 has "a JSON-string args still names the milestone" "$(cat "$OSA_LOG")" 'title "shop: F12 audit started"'
+
+fire "{\"tool_name\":\"Workflow\",\"tool_input\":{\"name\":\"milestone-audit-workflow\",\"args\":{\"milestone\":\"F11\"}},\"cwd\":\"$R\"}"
+has "the bare workflow name => notifies" "$(cat "$OSA_LOG")" 'title "shop: F11 audit started"'
 
 fire "{\"tool_name\":\"Workflow\",\"tool_input\":{\"name\":\"milestone-audit\"},\"cwd\":\"$R\"}"
 has "no milestone given => still says an audit started" "$(cat "$OSA_LOG")" 'title "shop: audit started"'

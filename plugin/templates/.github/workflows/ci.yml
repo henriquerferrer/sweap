@@ -1,6 +1,6 @@
 name: CI
 
-# Scaffolded by sweap's /agentic-loop-init (copy-generalized from the
+# Scaffolded by sweap's /sweap:init (copy-generalized from the
 # agentic-ci convention). Job names (lint, typecheck, test, e2e) and the
 # ci-status JSON convention (see CLAUDE.md's CI section) are the contract the
 # rest of the pipeline reads — keep them stable. Every step marked
