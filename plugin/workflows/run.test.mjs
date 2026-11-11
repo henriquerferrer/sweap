@@ -457,6 +457,39 @@ test("a drained run that left failed items says so in the same line the goal cit
   assert.match(SRC, /\$\{failed\.length \? ` with \$\{failed\.length\} failed — relaunch fresh once to retry them` : ''\}/);
 });
 
+test("a frontier that still lists an item this run merged as done stops the run; it never reads as drained", async () => {
+  // The frontier is todo-only, so a merged-as-done id on it means the files
+  // sweap-frontier read are not the default branch's (a refused pull in the
+  // primary checkout). A consumer run ended "drained" on exactly that
+  // (2026-11-09): 20 of 21 scopes were stale and the item a merge unblocked
+  // was never listed.
+  const item = { id: "F1.1", followupOf: null, reviewDimensions: [] };
+  const stale = await simulate({ scope: () => ({ frontier: [item] }) });
+  assert.deepEqual(stale.out.merged.map((m) => m.id), ["F1.1"]);
+  assert.match(stale.out.stopped, /^sweap-frontier still lists F1\.1, which this run merged as done: the backlog files it reads in the primary checkout are not the default branch's/);
+  assert.match(stale.out.stopped, /restore one only when its content equals the default branch's copy, and leave any other to the human/);
+  assert.match(stale.out.next, /^relaunch this workflow fresh[\s\S]*a frontier listing a merged item: after the primary checkout is on the default branch and level with origin/);
+  assert.ok(!/drained/.test(stale.out.next), "the goal cites the word drained: a stale frontier must never produce it");
+
+  // Not a stop: a healthy run, an id the run did not merge, and a merge whose
+  // status the watcher could not read (`unknown` — a forgotten flip is still
+  // todo on the base, so its id on the frontier proves nothing).
+  const clean = await simulate();
+  assert.equal(clean.out.stopped, null);
+  assert.equal(clean.out.next, "batch drained");
+  const other = await simulate({ scope: (n) => ({ frontier: n === 1 ? [item] : [{ id: "F9.9", followupOf: null, reviewDimensions: [] }] }) });
+  assert.equal(other.out.stopped, null);
+  const unknown = await simulate({ scope: () => ({ frontier: [item] }), watch: () => ({ word: "merged", reason: "merged", pr: 42, watch_calls: 1, status_done: "unknown", cleanup: "clean" }) });
+  assert.deepEqual(unknown.out.merged.map((m) => m.status_done), ["unknown"]);
+  assert.equal(unknown.out.stopped, null, "only a merge the watcher read as done on the default branch proves the frontier stale");
+  assert.match(SRC, /a frontier that still lists an item the run merged as done/, "whenToUse names every stop");
+  // The stop rests on the watcher reading the status from the default
+  // branch's ref: a grep of the file on disk reads todo on a stale primary,
+  // the item goes to needs_human, and the stop never sees it.
+  assert.match(WATCHER, /git show origin\/<default branch>:<backlog dir>\/<ID>\.md \| grep '\^status:'/);
+  assert.ok(!/\ngrep '\^status:' <backlog dir>\/<ID>\.md/.test(WATCHER), "never the file on disk");
+});
+
 test("every agent call names its effort: the hunters at xhigh, everything else at high, nothing inherited or below high", () => {
   const sites = [...SRC.matchAll(/(?:call|callPlugin|callWatcher)\([^\n]*\{ label:[^\n]*/g)].map((m) => m[0]);
   assert.ok(sites.length >= 11);

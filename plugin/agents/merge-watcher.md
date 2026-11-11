@@ -89,9 +89,14 @@ Then decide, in this order:
 
 ```
 cd <primary checkout> && git pull --ff-only
-grep '^status:' <backlog dir>/<ID>.md      # must read: status: done
+git show origin/<default branch>:<backlog dir>/<ID>.md | grep '^status:'   # must read: status: done
 git worktree list; git branch; git branch -r
 ```
+
+Read the status from the default branch's ref as above, never from the file on
+disk: when the pull is refused the file on disk is stale and still reads
+`todo`. A refused pull is not yours to fix (no stash, no restore): put git's
+reason in `cleanup` as `lingering: primary checkout behind — <reason>`.
 
 Report whether the item file on the default branch reads `status: done`, and
 whether the item's worktree, local branch and remote branch are gone (the

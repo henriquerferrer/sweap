@@ -62,7 +62,7 @@ PATH, so a session (and you, in a session's terminal) can run these by name:
 | Command | What it does |
 | --- | --- |
 | `sweap-merge watch <n>` / `sweap-merge status [<n>]` | The merge driver: waits on the base branch's expected checks pinned to the head, runs the merge gate, merges, runs the post-merge hooks |
-| `sweap-merge rerun <n> --reason "<why>"` | A hand rerun of a failed PR's red run, recorded in the PR's state file (one per head SHA and workflow, ever; refused when the base tip is red on the same workflow); a rerun that turns green files a `flaky:` discovered note. Prints one line: `pending` (recorded, exit 0), `refused` (nothing written, exit 1), `failed` (issued but not all, or not recorded, exit 1); a missing `--reason` is a usage error (exit 2) |
+| `sweap-merge rerun <n> --reason "<why>"` | A hand rerun of a failed PR's red run, recorded in the PR's state file (one per head SHA and workflow, ever; refused when the base tip is red on the same workflow); a rerun that turns green files a `flaky:` discovered note, once per workflow (later occurrences stay in the state files). Prints one line: `pending` (recorded, exit 0), `refused` (nothing written, exit 1), `failed` (issued but not all, or not recorded, exit 1); a missing `--reason` is a usage error (exit 2) |
 | `sweap-roadmap-lint <file>` | The per-item spec gate — a failing `todo` item is not runnable |
 | `sweap-stranded` | Lists not-merged branches carrying backlog files nothing will land |
 | `sweap-note discovered …` / `sweap-note idea …` | Writes a discovered note / an idea into the capture inboxes |
