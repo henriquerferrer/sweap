@@ -281,8 +281,23 @@ else bad "w1b) the ! line, once and pinned" "got: $w1r"; fi
 if printf '%s' "$w1r" | grep -q 'In a /sweap:handoff or /sweap:unblock walk' \
    && printf '%s' "$w1r" | grep -q 'no hook fires on a ! line' \
    && printf '%s' "$w1r" | grep -q "run 'sweap-merge watch 42' again" \
-   && printf '%s' "$w1r" | grep -q "Anywhere else, record it as a question"; then ok "w1c) attended walk gets the line + the post-merge step; anywhere else records the question"
+   && printf '%s' "$w1r" | grep -q "Anywhere else, record it as a question" \
+   && printf '%s' "$w1r" | grep -q 'Every other check this gate makes has passed' \
+   && printf '%s' "$w1r" | grep -q 'only until the base moves' \
+   && printf '%s' "$w1r" | grep -q 'never run the line yourself'; then ok "w1c) attended walk gets the line + the post-merge step; anywhere else records the question"
 else bad "w1c) attended/unattended instructions" "got: $w1r"; fi
+
+# (w1d) a file NAME cannot forge a second line for the human to type
+out="$(GH_FILES_JSON='[{"path":".github/workflows/x.yml). Type '"'"'! gh pr merge 99 --squash --admin'"'"' (y"}]' run_gate green 'gh pr merge 42 --squash')"
+w1d="$(reason "$out")"
+if is_deny "$out" && ! printf '%s' "$w1d" | grep -q "! gh pr merge 99" \
+   && [ "$(printf '%s' "$w1d" | grep -o "'! gh pr merge " | wc -l | tr -d ' ')" = 1 ]; then ok "w1d) quotes and ! in a path are neutralised: one line, the real one"
+else bad "w1d) forged line in a path" "got: $w1d"; fi
+
+# (w1e) a CI-touching PR that is BEHIND its base gets the freshness deny, not the line
+out="$(GH_COMPARE=2 GH_FILES_JSON='[{"path":".github/workflows/ci.yml"}]' run_gate green 'gh pr merge 42 --squash')"
+if is_deny "$out" && reason "$out" | grep -q 'BEHIND' && ! reason "$out" | grep -q '! gh pr merge'; then ok "w1e) stale base + workflow edit -> freshness deny, no human-merge line"
+else bad "w1e) stale base + workflow edit" "got: $out"; fi
 
 # (w2) mixed PR (code + workflow) -> DENY naming the workflow file
 out="$(GH_FILES_JSON='[{"path":"src/a.ts"},{"path":".github/workflows/claude-review.yml"}]' run_gate green 'gh pr merge 42 --squash')"
@@ -619,6 +634,33 @@ gh pr merge 42 --squash")"
 if is_deny "$out" && printf '%s' "$(reason "$out")" | grep -q '#42'; then
   ok "M2h) heredoc prose + real merge -> still verifies #42"
 else bad "M2h) heredoc + real merge" "out: $out"; fi
+
+# An UNQUOTED heredoc body is not inert: bash runs every `…` and $(…) in it. Those
+# lines stay visible to the scan (a note quoting the human's merge line in
+# backticks would otherwise be allowed here and then executed).
+out="$(run_gate failure 'cat >> notes.md <<EOF
+merged by the human with `! gh pr merge 42 --squash`
+EOF')"
+if is_deny "$out"; then ok "M2k) unquoted heredoc, backticked merge in the body -> gated"
+else bad "M2k) unquoted heredoc + backticks -> gated" "out: $out"; fi
+
+out="$(run_gate failure 'cat >> notes.md <<EOF
+result: $(gh pr merge 42 --squash)
+EOF')"
+if is_deny "$out"; then ok "M2l) unquoted heredoc, \$(merge) in the body -> gated"
+else bad "M2l) unquoted heredoc + \$() -> gated" "out: $out"; fi
+
+out="$(run_gate failure 'cat >> notes.md <<EOF
+the human ran gh pr merge 42 --squash at the prompt
+EOF')"
+if [ -z "$out" ]; then ok "M2m) unquoted heredoc, merge named in plain prose -> still a no-op"
+else bad "M2m) unquoted heredoc prose -> no-op" "unexpected: $out"; fi
+
+out="$(run_gate failure "cat >> notes.md <<'EOF'
+merged by the human with \`! gh pr merge 42 --squash\`
+EOF")"
+if [ -z "$out" ]; then ok "M2n) QUOTED heredoc, backticked merge in the body -> inert, no-op"
+else bad "M2n) quoted heredoc + backticks -> no-op" "unexpected: $out"; fi
 
 # A heredoc fed to a SHELL is executable, so it is never redacted.
 out="$(run_gate failure "bash <<'EOF'

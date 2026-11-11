@@ -33,9 +33,10 @@ this section. Commands (`/sweap:milestone-audit`, `/sweap:unblock`, `/sweap:hand
   `--admin`, never a bare `gh run rerun`.
 - Never commit in the primary checkout and never push to the default branch:
   work happens in the item's worktree and reaches it only through the item's PR.
-- A PR that touches `.github/workflows/` or `.github/scripts/` is a human's to
-  merge (the gate refuses it). In a run, if the work needs one, escalate; do
-  not route around it. `/sweap:handoff` says what a walk with the human does.
+- A PR that touches `.github/` is a human's to merge (the gate refuses one
+  that changes `.github/workflows/` or `.github/scripts/`). In a run, if the
+  work needs one, escalate; do not route around it. `/sweap:handoff` says
+  what a walk with the human does.
 - When blocked: write the question down, notify, move on. A stalled item must
   never stall the loop; a guess must never resolve ambiguity.
 - Work you discover is filed, not built — as a discovered note, never an item

@@ -43,7 +43,10 @@ touch any other status. A `[blocked]` item is a *question* awaiting a
    `.github/scripts/` ends there with the gate's "edits the CI controls"
    refusal, because it ran its own copy of the checks. That refusal comes only
    after every other check has passed; any other refusal means the PR is not
-   ready, so fix that first. The merge is then theirs. Say in plain words what
+   ready, so fix that first. (If the driver stops before the gate because the PR
+   removes or renames a workflow, or it cannot decide the check set, there is
+   no line: they read the diff and merge it from the web UI.) The merge is
+   then theirs. Say in plain words what
    the diff changes in CI, then give them the line the refusal printed,
    exactly as printed:
 
