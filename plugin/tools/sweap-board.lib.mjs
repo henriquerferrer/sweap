@@ -88,7 +88,7 @@ export function readMilestoneIndex(projectDir, backlogFile) {
 }
 
 // --- the run file (.claude/sweap-run.md) ---------------------------------------
-// `/milestone` resolves a milestone and a run SHAPE at kickoff and, before this,
+// `/sweap:milestone` resolves a milestone and a run SHAPE at kickoff and, before this,
 // forgot both the moment it printed the goal. This file is that memory: the one
 // thing no other file on disk records. Gitignored and ephemeral, exactly like
 // `.claude/sweap-board.md`, and ABSENT is a normal state — a run started before
@@ -186,7 +186,7 @@ export function resumePlan(items, needs = [], { whyNotAgent = {}, lintWhyNotAgen
       id, kind,
       subject: it.title,
       ask: (kind === "handoff" ? it.handoff : it.blocked) || null,
-      command: kind === "handoff" ? `/handoff ${id}` : `/unblock ${id}`,
+      command: kind === "handoff" ? `/sweap:handoff ${id}` : `/sweap:unblock ${id}`,
       purpose: kind === "handoff" ? "do the work only you can do, and close it" : "answer the question the run could not",
       // rustc's Applicability, and for the same reason: a step whose own
       // dependencies are unmet cannot be run yet, so it must not be offered as
@@ -304,8 +304,8 @@ export function loadIdeas(projectDir, backlogDir) {
 // and relayed later by a triage step that is idempotent on the filename.
 // `kind:` is the ONE judgment the capturing session makes, on the line the
 // playbook's audit triage already draws: `gap` = the spec promised it (a bug, a
-// race, infra) — agent work, triaged against the harm bar by the next /milestone;
-// `direction` = not in the spec — a human's call, surfaced by /roadmap.
+// race, infra) — agent work, triaged against the harm bar by the next /sweap:milestone;
+// `direction` = not in the spec — a human's call, surfaced by /sweap:roadmap.
 // The hash suffix is what lets the same title be captured twice from two
 // branches without the create-only write failing on the second.
 export const DISCOVERED_KINDS = ["gap", "direction"];
@@ -479,7 +479,7 @@ export function reverseDeps(items, byId, byMilestone) {
 }
 
 // Every not-yet-done item transitively waiting on `id`. This is the number that
-// makes the /milestone kickoff fork a real choice ("this hand-off gates 3 of 7
+// makes the /sweap:milestone kickoff fork a real choice ("this hand-off gates 3 of 7
 // items") instead of a nag.
 export function gatedItems(id, rev, byId) {
   const seen = new Set();
@@ -533,7 +533,7 @@ export function deriveBacklog(items) {
 
 // --- the running-milestone card -------------------------------------------------
 // The board could always answer "which items are moving"; it could never answer
-// --- the acceptance pass (session sheets, and what /walkthrough should walk) --------
+// --- the acceptance pass (session sheets, and what /sweap:walkthrough should walk) --------
 // A session sheet is the record that a HUMAN exercised a shipped milestone.
 // It lives at <backlogDir>sessions/<M>-<YYYY-MM-DD>.md and is deliberately a
 // third inbox subdir rather than an item: audit-gate.sh's "other subdirs" arm
@@ -543,7 +543,7 @@ export function deriveBacklog(items) {
 //
 // Why a durable record at all, when the blocked-queue research
 // (docs/research/2026-08-16-blocked-question-queue.md §7) is explicit that
-// "more surfacing" changes nothing: because a CONTROL reads it. /milestone's
+// "more surfacing" changes nothing: because a CONTROL reads it. /sweap:milestone's
 // kickoff fork decides off it. That is the same test the playbook applies to
 // .claude/sweap-run.md, which it demotes precisely because "nothing in the loop
 // reads it to decide anything".
@@ -603,7 +603,7 @@ export function loadSessions(projectDir, backlogDir) {
 }
 
 // The instrumentation A13 demanded, and the only number that decides whether
-// /walkthrough keeps existing. Urbach (mandating an identical checklist across 215,711
+// /sweap:walkthrough keeps existing. Urbach (mandating an identical checklist across 215,711
 // procedures moved outcomes at P=0.13) and Sendlhofer (usage held ~90% while
 // COMPLETION fell 81.7%→53.2%) are the same finding twice: "did it happen?" is
 // the one signal that decays invisibly, and a hollow session satisfies it
@@ -629,7 +629,7 @@ export function sessionStats(sessions = []) {
   };
 }
 
-// Which milestone /walkthrough should walk, and — always — WHY it picked that one.
+// Which milestone /sweap:walkthrough should walk, and — always — WHY it picked that one.
 // There is no existing implementation of "the most recently completed
 // milestone" to borrow: workflows/milestone-audit.js falls back to that literal
 // phrase inside an LLM prompt, and the playbook records that this once audited
@@ -675,14 +675,14 @@ export function resolveTestTarget({ items = [], index = [], sessions = [] } = {}
 // disk recorded that, so nothing could show it. This derives it.
 //
 // Which milestone is running, in order of authority:
-//   1. `.claude/sweap-run.md` — what /milestone actually resolved (exact: it
+//   1. `.claude/sweap-run.md` — what /sweap:milestone actually resolved (exact: it
 //      knows the run SHAPE, which no amount of item-file reading can recover).
 //      Ignored once that milestone has no unfinished items: the run ended and
 //      the file is just litter.
 //   2. otherwise the milestone of the earliest IN-FLIGHT item that is not an
 //      audit follow-up — a follow-up belongs to the milestone that was audited,
 //      not to the one being run, so leading with it would name the wrong one.
-//   3. otherwise the next runnable milestone — the same rule /milestone
+//   3. otherwise the next runnable milestone — the same rule /sweap:milestone
 //      resolves by: first in index order holding a todo item whose deps are all
 //      satisfied. This is a guess about the future, so `state` says "next".
 // `source` rides along on every card: an inference must never be readable as a
@@ -716,7 +716,7 @@ export function buildMilestoneCard({ items, index = [], runFile = null, inFlight
   const readyIds = new Set(frontier.filter((i) => !i.followupOf).map((i) => i.id));
   const nextRunnable = incomplete.find((m) => byMilestone.get(m).some((i) => readyIds.has(i.id))) || null;
   // ...and a milestone whose every item is GATED — the hand-offs-outstanding
-  // shape — is still the milestone being run. It is the shape /milestone models
+  // shape — is still the milestone being run. It is the shape /sweap:milestone models
   // explicitly, and it is the state a consumer sat in for this whole run: DS.5's
   // nine todo items all wait on DS.5.3, an attended hand-off. Requiring a READY
   // item here is what made the card render nothing at all on the one project
@@ -771,8 +771,8 @@ export function buildMilestoneCard({ items, index = [], runFile = null, inFlight
     // would read as the whole one.
     detail = "audit-gate --check did not run here" + (notDue ? ` · ${notDue}` : "");
   } else if (audit) {
-    if (audit.debt.includes(id)) { state = "debt"; detail = `${id} is complete but has no valid audit record — run /milestone-audit ${id}`; }
-    else if (audit.deferred.includes(id)) { state = "deferred"; detail = `${id} completes in the state under review, so its audit cannot have run yet — land it, then run /milestone-audit ${id}`; }
+    if (audit.debt.includes(id)) { state = "debt"; detail = `${id} is complete but has no valid audit record — run /sweap:milestone-audit ${id}`; }
+    else if (audit.deferred.includes(id)) { state = "deferred"; detail = `${id} completes in the state under review, so its audit cannot have run yet — land it, then run /sweap:milestone-audit ${id}`; }
     else if (audit.debt.length) { state = "blocked-by-debt"; detail = `audit debt on ${audit.debt.join(", ")} — no backlog-advancing PR merges until it is discharged`; }
     else if (notDue) { state = "not-due"; detail = notDue; }
     else state = "clean";
@@ -965,10 +965,10 @@ export async function buildState(projectDir, { git, gh, audit = null, stranded: 
   // things. consumer PR #290/#292 (2026-09-09): two notes hand-written on a code PR
   // against the playbook's "never write the file by hand" (the CLI writer has
   // always rejected a bad kind) sat invisible until someone happened to look.
-  // Surfaced here, in the channel the page header and /milestone already read,
+  // Surfaced here, in the channel the page header and /sweap:milestone already read,
   // and never coerced (see loadDiscovered): the file is wrong, not its label.
   const unknownKind = discovered.filter((d) => d.kind === "unknown").length;
-  if (unknownKind) notes.push(`${unknownKind} discovered note(s) carry a kind neither /milestone nor /roadmap reads — set kind: to gap or direction (the sweap-note writer would have refused it; the file was written by hand)`);
+  if (unknownKind) notes.push(`${unknownKind} discovered note(s) carry a kind neither /sweap:milestone nor /sweap:roadmap reads — set kind: to gap or direction (the sweap-note writer would have refused it; the file was written by hand)`);
   if (items.length === 0) notes.push(`no backlog items found under ${backlogDir}`);
   const { frontier, attended, blocked, backlog, edges } = deriveBacklog(items);
   const byId = new Map(items.map((i) => [i.id, i]));

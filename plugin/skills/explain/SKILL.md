@@ -6,7 +6,7 @@ description: Build an explainer page for a question the human does not understan
 # Explain a decision
 
 Every decision question put to the human ends with one line reminding them this
-exists (see `/unblock` step 2). This skill is what happens when they take it up,
+exists (see `/sweap:unblock` step 2). This skill is what happens when they take it up,
 and what happens before a question whose options can be shown.
 
 It exists because a question written for the agent that raised it is often
@@ -55,7 +55,7 @@ this session, it is the page; do not build a second one.
 
 ## One live page per command run
 
-One page per command run (`/roadmap`, `/unblock`, `/handoff`, `/idea`), at one
+One page per command run (`/sweap:roadmap`, `/sweap:unblock`, `/sweap:handoff`, `/sweap:idea`), at one
 fixed file path in the scratchpad (for example `explain-<command>.html`): a new
 path makes a new URL. Each new visual is a new section on top, earlier ones kept
 below, added with the publish's `edits` rather than a rewrite. Screenshots and
@@ -137,5 +137,5 @@ above.
 - Then ask the question (again, after "explain"). Answer follow-ups first; do
   not re-ask until they are done reading. Use the same options, unless building
   the page showed one is misdescribed or the premise is moot: then say so,
-  correct the options, and redo `/unblock` step 2's classification before
+  correct the options, and redo `/sweap:unblock` step 2's classification before
   asking. Never treat the page as the answer.

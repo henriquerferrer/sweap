@@ -1,7 +1,7 @@
 #!/bin/sh
 # sweap-fleet — bare-name entry point for tools/sweap-fleet.mjs: can the
 # self-hosted runner fleet run this repo's CI? JSON, read-only. The `/sweap:run`
-# workflow's Resume stage, the merge-watcher and `/milestone` run it. Same resolution mechanism
+# workflow's Resume stage, the merge-watcher and `/sweap:milestone` run it. Same resolution mechanism
 # as bin/sweap-merge (read its header): the plugin root is recovered from this
 # script's own real path because ${CLAUDE_PLUGIN_ROOT} is unset in a
 # model-issued Bash call.

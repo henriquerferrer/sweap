@@ -1,11 +1,11 @@
 ---
-description: "Capture one idea into the roadmap/ideas/ inbox — short business brainstorm, then a formatted idea file (triaged later by /roadmap)."
+description: "Capture one idea into the roadmap/ideas/ inbox — short business brainstorm, then a formatted idea file (triaged later by /sweap:roadmap)."
 argument-hint: "[rough idea text] — optional; you'll be asked if omitted"
 ---
 
 Capture ONE idea into the project's idea inbox. This is **capture, not
 design**: no specs, no dependencies, no milestone placement — all of that is
-decided later by `/roadmap` at triage.
+decided later by `/sweap:roadmap` at triage.
 
 1. **Input.** Treat `$ARGUMENTS` as the raw idea. If empty, ask the human
    what the idea is.
@@ -47,7 +47,7 @@ decided later by `/roadmap` at triage.
      carries it (the playbook's sweep rule, End-of-run hygiene).
 6. **Confirm.** Report the created path (the snippet prints it), where it
    landed (PR number, or "riding on the next PR"), and that it surfaces at the
-   next `/roadmap` run.
+   next `/sweap:roadmap` run.
 
 Never EDIT an existing idea file and never write one by hand — `writeIdea` is
 create-only and owns the format. Committing one is not editing it.

@@ -7,7 +7,7 @@
 # does nothing when they match ("already at the latest version"). So a merged
 # change under plugin/ that does not bump that version never reaches a consumer,
 # silently and indefinitely. That trap has fired three times — an 18-day hooks
-# outage, #32's arm-time checkpoint, and #36-#38's /walkthrough and board work.
+# outage, #32's arm-time checkpoint, and #36-#38's /sweap:walkthrough and board work.
 # "Remember to bump" demonstrably failed, so it is a gate instead.
 #
 # Run:  bash scripts/version-bump-check.sh     (from anywhere inside the repo)

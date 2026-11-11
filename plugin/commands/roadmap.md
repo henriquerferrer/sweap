@@ -24,7 +24,7 @@ Resolve the milestone:
   CI is worse than none — it trains you to wave off `FAIL:` lines.
  A `DEFERRED:` line is not debt — the state you are in is what completed that
   milestone, so its audit is due but could not yet have run. Land it, then
-  `/milestone-audit` that milestone before drafting the next one.
+  `/sweap:milestone-audit` that milestone before drafting the next one.
  A `FAIL: hand-off <id> ...` line is not debt either — it means an item was
   transitioned into `status: attended` rather than authored as one. Fix that
   item (archive-and-re-author) before drafting; no audit discharges it.
@@ -49,7 +49,7 @@ answering accumulated questions inside the new milestone's narrative anchors the
 to it, and the two are different modes.
 
 1. Read every `status: blocked` item file, for any configured prefix.
-2. **Triage** each into one of three, using `/unblock`'s classification (read
+2. **Triage** each into one of three, using `/sweap:unblock`'s classification (read
    that command's step 2 — the same rules apply here):
    - *premise invalidated* by shipped code — propose closing, **with the
      evidence**;
@@ -65,7 +65,7 @@ to it, and the two are different modes.
    queue at a boundary gets it satisficed (clinical-decision-support override
    rates run 49–96%), and a rubber-stamped answer is worse than an unanswered
    question because it leaves a record saying it was answered. The human can ask
-   for more. Each question is written and ends as `/unblock` step 2 says (plain
+   for more. Each question is written and ends as `/sweap:unblock` step 2 says (plain
    options, the **explain** line, and the live page first when the options can
    be shown).
 5. **`carried: ≥2` is asked, not offered.** The brainstorm does not start until
@@ -83,9 +83,9 @@ Below `carried: 2` this is a **soft** gate — surface, offer, record the skip �
 unlike the audit-debt check above it, which is hard. Audit debt is never
 legitimately deferrable; a direction call is, up to a point, and that point is
 what `carried:` measures. Answered items flip `blocked → todo` with a spec
-authored (or to `done` when the answer produces no work) exactly as `/unblock`
+authored (or to `done` when the answer produces no work) exactly as `/sweap:unblock`
 defines, and then rejoin the frontier like any other item — that is how a
-question you answer here gets built in the next `/milestone` run. All of step 0's
+question you answer here gets built in the next `/sweap:milestone` run. All of step 0's
 writes ride in the milestone PR the brainstorm produces; do not open a second one.
 
 Run the **milestone brainstorm** exactly as the playbook's "Milestone brainstorm"
@@ -102,7 +102,7 @@ review is asked for:
    tell: a question whose options differ in something a product user would see
    goes on the `explain` skill's live page first, unasked (the skill's "When to
    show" trigger), and every question ends with the **explain** line
-   (`/unblock` step 2).
+   (`/sweap:unblock` step 2).
    Lock the core decisions and draft items in the item-file format (frontmatter
    + Spec/Acceptance body — the playbook's "Backlog format (file-per-item)"
    section). Before drafting, surface any outstanding audit follow-ups
@@ -112,8 +112,8 @@ review is asked for:
    (A frontmatter scan — no header matching needed.) This scan covers pending
    *fixes* only; pending *questions* are step 0's job and are already resolved
    or carried by the time you get here. Do NOT drain or reschedule
-   them here — `/roadmap` stays a pure direction-loop command; execution
-   scheduling is `/milestone`'s job.
+   them here — `/sweap:roadmap` stays a pure direction-loop command; execution
+   scheduling is `/sweap:milestone`'s job.
    Likewise surface every **`status: deferred`** item with its `premise:` — parked
    work only a human un-parks (playbook "Deferred items"): flip it to `todo` with a
    real spec, re-spec it, or drop it; never archive a follow-up an audit record
@@ -124,7 +124,7 @@ review is asked for:
    And the **discovered inbox** (`<backlog.dir>discovered/*.md`): every
    `kind: direction` note is THIS command's to decide — it is a scope question
    a worker correctly refused to answer alone mid-run — and any `kind: gap`
-   note `/milestone` left for you (no resolvable milestone, or you filed it and it
+   note `/sweap:milestone` left for you (no resolvable milestone, or you filed it and it
    has no harm class) waits here too.
    Each becomes an item, a line in an item's spec, or a `declined:` — never
    silently nothing.
@@ -209,4 +209,4 @@ review is asked for:
    hand: `git worktree remove` → `git branch -D` → `git push origin --delete`.
 
 Stop after the milestone PR is **merged and cleaned up**. Do not start
-implementing — that's a separate `/milestone` run.
+implementing — that's a separate `/sweap:milestone` run.

@@ -314,7 +314,7 @@ test("security: tagged items get the security reviewer after the reviewer; a fin
   assert.deepEqual(clear.labels.slice(3, 6), ["review F1.1 #1", "security F1.1 #1", "publish F1.1"]);
   const blocking = await simulate({ security: () => ({ verdict: "blocking", findings: [{ file: "api.ts:3", what: "reads another org's rows", kind: "security" }], files_reviewed: ["api.ts"], verdict_line: "Security verdict: blocking" }), "security-fix": () => ({ outcome: "committed", summary: "tried" }) }, sec);
   assert.ok(!blocking.labels.some((l) => l.startsWith("publish")), "a blocking security verdict is never pushed");
-  assert.equal(blocking.out.blocked[0].pr, 77, "an open security finding becomes a blocked flip, so the frontier stops re-picking it and /unblock accepts it");
+  assert.equal(blocking.out.blocked[0].pr, 77, "an open security finding becomes a blocked flip, so the frontier stops re-picking it and /sweap:unblock accepts it");
   assert.match(blocking.out.blocked[0].question, /api\.ts:3/);
   const nodiff = await simulate({ security: () => ({ verdict: "no-diff", findings: [], files_reviewed: [], verdict_line: "" }) }, sec);
   assert.ok(!nodiff.labels.some((l) => l.startsWith("publish")), "no diff collected is not a clear (DV.47, FP.1)");

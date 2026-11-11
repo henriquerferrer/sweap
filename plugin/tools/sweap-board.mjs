@@ -22,7 +22,7 @@ const run = (cmd, cwd, opts = {}) => (args) => new Promise((resolve) => {
 const localHost = (h) => /^(127\.0\.0\.1|localhost)(:\d+)?$/i.test(String(h || ""));
 
 // The audit verdict for the running-milestone card. Prefers the repo's VENDORED
-// gate when it exists, exactly like /milestone's and /roadmap's pre-flights do:
+// gate when it exists, exactly like /sweap:milestone's and /sweap:roadmap's pre-flights do:
 // the vendored copy is what CI runs, and the plugin path can be a stale cache
 // build. `--check` is read-only against the repo (its only write is a mktemp dir
 // it removes), so this stays inside the board's read-only mandate.
@@ -154,7 +154,7 @@ export function frontierReport(projectDir) {
       id: i.id, title: i.title, followupOf: i.followupOf, dependsOn: i.dependsOn,
       reviewDimensions: i.reviewDimensions, lane: i.lane, file: i.file,
       // A todo item may still carry `blocked:` — the ANSWERED question that
-      // /unblock left in place. It is runnable; a reader that treats the key as
+      // /sweap:unblock left in place. It is runnable; a reader that treats the key as
       // "blocked" skips the first item of a drain (a consumer's FP.2, 2026-09-22).
       answeredQuestion: i.blocked || null,
     })),

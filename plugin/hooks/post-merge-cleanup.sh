@@ -115,7 +115,7 @@ msg=""
 [ -n "$ff_msg" ] && msg="sweap: the $ff_msg"
 if [ -n "$stranded" ]; then
   msg="${msg}${msg:+
-}sweap: backlog files are STRANDED on branch(es) that nothing will land — they are invisible to the frontier, the board's backlog, audit-gate and /roadmap until they reach main:"
+}sweap: backlog files are STRANDED on branch(es) that nothing will land — they are invisible to the frontier, the board's backlog, audit-gate and /sweap:roadmap until they reach main:"
   while IFS=$'\t' read -r br state age paths; do
     [ -n "$br" ] || continue
     msg="$msg
@@ -124,7 +124,7 @@ if [ -n "$stranded" ]; then
 $stranded
 STRANDED_EOF
   msg="$msg
-Rescue (docs-only, rides the roadmap-only lane): git checkout -b roadmap/rescue-<6hex> origin/main && git checkout <branch> -- <the discovered/ and ideas/ paths above> && commit && open a PR. Top-level item files and index edits found here need /roadmap judgement before they land — list them for the human instead of relaying blindly. Then delete the dead branch so this stops firing."
+Rescue (docs-only, rides the roadmap-only lane): git checkout -b roadmap/rescue-<6hex> origin/main && git checkout <branch> -- <the discovered/ and ideas/ paths above> && commit && open a PR. Top-level item files and index edits found here need /sweap:roadmap judgement before they land — list them for the human instead of relaying blindly. Then delete the dead branch so this stops firing."
 fi
 if [ -n "$msg" ]; then
   if command -v jq >/dev/null 2>&1; then

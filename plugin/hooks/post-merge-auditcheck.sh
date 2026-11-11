@@ -165,7 +165,7 @@ if [ "$rc" = "0" ]; then
   if sweap_run_active "$primary"; then
     sweap_notify "$primary" "$due_trim is built" "All its items are merged. The audit starts by itself."
   else
-    sweap_notify "$primary" "$due_trim is built" "All its items are merged. Next step: /milestone-audit $due_trim"
+    sweap_notify "$primary" "$due_trim is built" "All its items are merged. Next step: /sweap:milestone-audit $due_trim"
   fi
   {
     printf '\n################################################################\n'
@@ -173,7 +173,7 @@ if [ "$rc" = "0" ]; then
     printf '## Not debt and not a failure: the audit reads the MERGED branch, so it\n'
     printf '## could not have run before now. It can now, and the gate will deny the\n'
     printf '## next backlog-advancing PR until its record lands.\n'
-    printf '## Run /milestone-audit for each BEFORE authoring new backlog items.\n'
+    printf '## Run /sweap:milestone-audit for each BEFORE authoring new backlog items.\n'
     printf '################################################################\n'
   } >&2
   exit 0
@@ -187,7 +187,7 @@ fails="$(printf '%s\n' "$out" | grep '^FAIL:' || true)"
 # No marker file. This hook used to drop .claude/audit-debt-<sha>.flag so "the
 # next session sees it", but nothing in sweap ever read it — the same finding
 # that removed post-merge-redcheck.sh's main-red marker. What outlasts this
-# session is the gate (CI and /milestone pre-flight run --check, and the merge
+# session is the gate (CI and /sweap:milestone pre-flight run --check, and the merge
 # gate denies backlog-advancing PRs) plus the desktop notification below.
 
 # WHAT THE HUMAN IS TOLD. Two different things reach this point and they used to
@@ -205,12 +205,12 @@ due_ms="$(printf '%s\n' "$fails" | sed -nE 's/^FAIL: milestone ([A-Za-z0-9._-]+)
 invalid="$(printf '%s\n' "$fails" | grep -v 'is complete but has no audit record' || true)"
 if [ -z "$invalid" ] && [ -n "$due_ms" ]; then
   if ! sweap_run_active "$primary"; then
-    sweap_notify "$primary" "$due_ms is not audited yet" "$due_ms is built but its audit has not run. Next step: /milestone-audit $due_ms"
+    sweap_notify "$primary" "$due_ms is not audited yet" "$due_ms is built but its audit has not run. Next step: /sweap:milestone-audit $due_ms"
   fi
 else
   bad_recs="$(printf '%s\n' "$invalid" | sed -nE 's/^FAIL: record [^ ]*audits\/([A-Za-z0-9._-]+)\.md:.*/\1/p' | sort -u | tr '\n' ' ' | sed 's/ *$//')"
   [ -n "$bad_recs" ] || bad_recs="a milestone"
-  sweap_notify "$primary" "$bad_recs audit report is incomplete" "The report that was merged is missing required parts, so $bad_recs does not count as audited. Run /milestone-audit $bad_recs again."
+  sweap_notify "$primary" "$bad_recs audit report is incomplete" "The report that was merged is missing required parts, so $bad_recs does not count as audited. Run /sweap:milestone-audit $bad_recs again."
 fi
 
 if [ -z "$invalid" ] && [ -n "$due_ms" ]; then
@@ -221,7 +221,7 @@ if [ -z "$invalid" ] && [ -n "$due_ms" ]; then
     printf '##\n'
     printf '## Nothing this merge did is wrong: the gate allowed it. But the milestone\n'
     printf '## is complete and unaudited, and the gate denies every backlog-advancing\n'
-    printf '## PR until its record lands. Run /milestone-audit for it BEFORE authoring\n'
+    printf '## PR until its record lands. Run /sweap:milestone-audit for it BEFORE authoring\n'
     printf '## new backlog items. Re-check: bash %s --check\n' "$GATE"
     printf '################################################################\n'
   } >&2

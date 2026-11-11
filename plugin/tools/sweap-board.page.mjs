@@ -94,7 +94,7 @@ export function renderPage() {
     </div>
   </section>
   <section><h2>Backlog</h2><div id="backlog"></div></section>
-  <section><h2>Ideas (inbox — triaged by /roadmap)</h2>
+  <section><h2>Ideas (inbox — triaged by /sweap:roadmap)</h2>
     <form id="idea-form">
       <input id="idea-title" placeholder="idea title" maxlength="200" required/>
       <button type="submit">Capture</button><span id="idea-msg"></span>
@@ -102,7 +102,7 @@ export function renderPage() {
     </form>
     <div class="col" id="ideas"></div>
   </section>
-  <section><h2>Discovered (captured mid-run — <code>gap</code> is triaged at the next /milestone, <code>direction</code> waits for /roadmap)</h2>
+  <section><h2>Discovered (captured mid-run — <code>gap</code> is triaged at the next /sweap:milestone, <code>direction</code> waits for /sweap:roadmap)</h2>
     <div class="col" id="discovered"></div>
   </section>
   <section><h2>Roadmap changes on branches, not on main</h2>
@@ -118,7 +118,7 @@ const agoText = (ms) => { const t = Math.round(ms/1000); if (t < 90) return t+"s
 const plural = (n, w) => n + " " + w + (n === 1 ? "" : "s");
 // Where the card's milestone came from. Spelled out on every render: a derived
 // milestone is a good guess, and a good guess still must not read as a fact.
-const SOURCE = { "run-file": "resolved by /milestone", "in-flight": "inferred from what is in flight", derived: "next runnable in index order", gated: "next in index order — every item of it is gated" };
+const SOURCE = { "run-file": "resolved by /sweap:milestone", "in-flight": "inferred from what is in flight", derived: "next runnable in index order", gated: "next in index order — every item of it is gated" };
 const AUDIT_ICON = { clean: "✓", debt: "✗", deferred: "⏳", "blocked-by-debt": "✗", "not-due": "—", unknown: "?" };
 // The resume plan: what the human does next, in the lib's order. Only a
 // machine-applicable step earns a copy button — rustc's Applicability rule,
@@ -180,9 +180,9 @@ function milestoneCard(m) {
     + ' <span class="badge ci-'+esc(i.ci)+'">'+esc(i.ci)+'</span></div></div>';
   const readyRow = (i) => '<div class="row"><b>'+esc(i.id)+'</b> '+esc(i.title)+(i.lane?' <span class="meta">lane:'+esc(i.lane)+'</span>':'')+'</div>';
   const stopRow = (h) => '<div class="row"><span class="task">🙋 <b>'+esc(h.id)+'</b> '+esc(h.title)+'</span><div class="meta">'
-    + esc(h.task) + (h.gates && h.gates.length ? ' · gates '+plural(h.gates.length, "item") : '') + ' · ' + (h.ready ? '/handoff '+esc(h.id) : 'waiting on a dependency') + '</div></div>';
+    + esc(h.task) + (h.gates && h.gates.length ? ' · gates '+plural(h.gates.length, "item") : '') + ' · ' + (h.ready ? '/sweap:handoff '+esc(h.id) : 'waiting on a dependency') + '</div></div>';
   const blockRow = (b) => '<div class="row"><span class="q">⛔ <b>'+esc(b.id)+'</b> '+esc(b.title)+'</span><div class="meta">'
-    + esc(b.question) + (b.carried ? ' · carried '+b.carried+' boundar'+(b.carried>1?'ies':'y') : '') + ' · /unblock '+esc(b.id)+'</div></div>';
+    + esc(b.question) + (b.carried ? ' · carried '+b.carried+' boundar'+(b.carried>1?'ies':'y') : '') + ' · /sweap:unblock '+esc(b.id)+'</div></div>';
   const stops = m.handoffs.map(stopRow).concat(m.blocked.map(blockRow));
 
   // Never render the claim alone — always the claim AND the verdict on it.
@@ -205,7 +205,7 @@ function milestoneCard(m) {
     + '<div class="bar"><i style="width:'+pct+'%"></i></div>'
     + '<div class="meta">'+esc(tally.join(" · "))+'</div>'
     + '<div class="card-grid">'
-    +   col("Right now", m.inFlight.map(flightRow), running ? "nothing in flight" : "nothing in flight — paste the /milestone goal to start")
+    +   col("Right now", m.inFlight.map(flightRow), running ? "nothing in flight" : "nothing in flight — paste the /sweap:milestone goal to start")
     +   col("Next ready", m.ready.map(readyRow), "nothing ready in " + m.id)
     +   col("Blocking completion", stops, c.todo ? "nothing in the way — " + plural(c.todo, "item") + " to go" : "nothing in the way")
     + '</div>'
@@ -223,8 +223,8 @@ function draw(s) {
   renderList(document.getElementById("frontier"), s.frontier, i => '<div class="item"><b>'+esc(i.id)+'</b> '+esc(i.title)+(i.lane?' <span class="meta">lane:'+esc(i.lane)+'</span>':'')+'</div>', "nothing ready");
   renderList(document.getElementById("inflight"), s.inFlight, i => '<div class="item"><b>'+esc(i.id)+'</b> '+esc(i.title)+'<div class="meta">'+esc(i.step||"working")+(i.branch?' · '+esc(i.branch):'')+(i.pr?' · PR #'+i.pr:'')+' <span class="badge ci-'+esc(i.ci)+'">'+esc(i.ci)+'</span></div></div>', "nothing in flight");
   renderList(document.getElementById("mergequeue"), s.mergeQueue, q => '<div class="item">PR #'+q.pr+' '+esc(q.title)+' <span class="badge ci-'+esc(q.ci)+'">'+esc(q.ci)+'</span></div>', "none open");
-  renderList(document.getElementById("attended"), s.attended, a => '<div class="item"><b>'+esc(a.id)+'</b> '+esc(a.title)+'<div class="task">'+esc(a.task)+'</div><div class="meta">'+(a.ready?'/handoff '+esc(a.id):'waiting on a dependency')+(a.gates&&a.gates.length?' · gates '+a.gates.length+' item'+(a.gates.length>1?'s':'')+': '+a.gates.map(esc).join(", "):'')+'</div></div>', "no hand-offs 🎉");
-  renderList(document.getElementById("blocked"), s.blocked, b => '<div class="item"><b>'+esc(b.id)+'</b> '+esc(b.title)+'<div class="q">'+esc(b.question)+'</div><div class="meta">'+(b.carried?'<span class="badge carried">carried '+b.carried+' boundar'+(b.carried>1?'ies':'y')+(b.carried>=2?' · asked at the next /roadmap':'')+'</span> · ':'')+'/unblock '+esc(b.id)+'</div></div>', "none blocked 🎉");
+  renderList(document.getElementById("attended"), s.attended, a => '<div class="item"><b>'+esc(a.id)+'</b> '+esc(a.title)+'<div class="task">'+esc(a.task)+'</div><div class="meta">'+(a.ready?'/sweap:handoff '+esc(a.id):'waiting on a dependency')+(a.gates&&a.gates.length?' · gates '+a.gates.length+' item'+(a.gates.length>1?'s':'')+': '+a.gates.map(esc).join(", "):'')+'</div></div>', "no hand-offs 🎉");
+  renderList(document.getElementById("blocked"), s.blocked, b => '<div class="item"><b>'+esc(b.id)+'</b> '+esc(b.title)+'<div class="q">'+esc(b.question)+'</div><div class="meta">'+(b.carried?'<span class="badge carried">carried '+b.carried+' boundar'+(b.carried>1?'ies':'y')+(b.carried>=2?' · asked at the next /sweap:roadmap':'')+'</span> · ':'')+'/sweap:unblock '+esc(b.id)+'</div></div>', "none blocked 🎉");
   const runningMs = s.milestone ? s.milestone.id : null;
   document.getElementById("backlog").innerHTML = (s.backlog||[]).map(g => '<div class="ms'+(g.milestone===runningMs?' running':'')+'"><h3>'+esc(g.milestone)+(g.milestone===runningMs?' <span class="chip '+(s.milestone.state==="running"?"running":"next")+'">'+(s.milestone.state==="running"?"running":"next up")+'</span>':'')+'</h3>'+g.items.map(i => '<div class="item'+(i.malformed?' malformed':'')+'"><span class="st-'+esc(i.status)+'">●</span> <b>'+esc(i.id)+'</b> '+esc(i.title)+' <span class="meta">'+esc(i.status)+(i.dependsOn&&i.dependsOn.length?' · deps: '+i.dependsOn.map(esc).join(", "):'')+'</span></div>').join("")+'</div>').join("") || '<div class="empty">no items</div>';
   renderList(document.getElementById("ideas"), s.ideas, i => '<div class="item"><b>'+esc(i.title)+'</b> <span class="meta">'+esc(i.file)+(i.created?' · '+esc(i.created.slice(0,10)):'')+'</span></div>', "inbox empty");

@@ -1,7 +1,7 @@
 #!/bin/sh
 # sweap-note — bare-name entry point for the two capture inboxes: the
 # discovered-note writer (the playbook's three-lane rule) and the idea writer
-# (`/idea`). Both were spelled as `node --input-type=module -e '…'` one-liners
+# (`/sweap:idea`). Both were spelled as `node --input-type=module -e '…'` one-liners
 # whose last argument was `${CLAUDE_PLUGIN_ROOT}/tools/sweap-board.lib.mjs` —
 # UNSET in a model-issued Bash call, so both wrote nothing.
 #

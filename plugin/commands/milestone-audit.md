@@ -114,13 +114,13 @@ yourself — the Workflow does not):
 1. **Bug** (the code fails its own spec) — open a follow-on fix-PR through the
    gate. Hands-off in an unattended run; still a separate gated PR, never an
    edit made by the audit itself.
-2. **Small gap / non-urgent** (races, infra) — apply `/milestone`'s **harm bar**
+2. **Small gap / non-urgent** (races, infra) — apply `/sweap:milestone`'s **harm bar**
    (its "Discovered-items triage" step owns the four classes and the
    weak-check rule; do not restate them here).
    - **Has a class → a follow-up:** a new item file under `backlog.dir` with
      `followup_of: <milestone>`, `harm: <class>` and a `## Harm` section
      (`status: todo`, tagged, lint-clean). It folds, debt-first, into the next
-     `/milestone` run.
+     `/sweap:milestone` run.
    - **No class → parked.** ALL such findings of this audit share ONE item:
      `<id> — <milestone> audit: parked findings`, `status: deferred`,
      `followup_of: <milestone>`, `depends_on: []`, `premise: parked <date> — no

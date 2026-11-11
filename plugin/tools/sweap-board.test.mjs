@@ -336,7 +336,7 @@ test("buildState: a hand-off surfaces in attended with its gated items, not in-f
     "roadmap/F1.2.md": "---\nid: F1.2\ntitle: checkout\nstatus: todo\ndepends_on: [F1.1]\n---\n",
   });
   // A worktree/branch naming the hand-off must NOT drag it into the in-flight
-  // column: /handoff's status-flip PR is human work, not a dispatched worker.
+  // column: /sweap:handoff's status-flip PR is human work, not a dispatched worker.
   const git = async () => ({ stdout: "worktree /x/F1.1\nbranch refs/heads/handoff-F1.1\n\n", code: 0 });
   const s = await buildState(dir, { git, gh: async () => ({ stdout: "[]", code: 0 }), now: 4 });
   assert.deepEqual(s.attended.map((a) => [a.id, a.gates]), [["F1.1", ["F1.2"]]]);
@@ -588,7 +588,7 @@ test("readRunFile: a junk turns: value reads as null, never NaN on the card", ()
 
 test("classifyAudit sorts audit-gate --check lines by their documented prefixes", () => {
   const out = [
-    "FAIL: milestone F3 is complete but has no audit record (roadmap/audits/F3.md) — run /milestone-audit for it",
+    "FAIL: milestone F3 is complete but has no audit record (roadmap/audits/F3.md) — run /sweap:milestone-audit for it",
     "FAIL: record roadmap/audits/F2.md: raw (3) != refuted (1) + confirmed (1)",
     "FAIL: hand-off F4.8: status: attended was introduced by abc123 but the item file was added by def456 — ...",
     "DEFERRED: milestone F5 becomes complete in the state under review, so its audit cannot have run yet ...",
@@ -722,7 +722,7 @@ test("buildState: exposes the milestone card and folds the audit runner's verdic
   });
   const git = async () => ({ stdout: "", code: 0 });
   const gh = async () => ({ stdout: "[]", code: 0 });
-  const audit = async () => ({ stdout: "FAIL: milestone F0 is complete but has no audit record (roadmap/audits/F0.md) — run /milestone-audit for it", code: 1 });
+  const audit = async () => ({ stdout: "FAIL: milestone F0 is complete but has no audit record (roadmap/audits/F0.md) — run /sweap:milestone-audit for it", code: 1 });
   const s = await buildState(dir, { git, gh, audit, now: 1 });
   assert.equal(s.milestone.id, "F1");
   assert.equal(s.milestone.goal, "login and session");
@@ -988,10 +988,10 @@ test("resumePlan builds the command from the item's STATUS, and only for human-o
   ];
   const { steps } = resumePlan(items, ["DS.5.3", "FM.10"]);
   const by = new Map(steps.map((s) => [s.id, s]));
-  assert.equal(by.get("DS.5.3").command, "/handoff DS.5.3");
+  assert.equal(by.get("DS.5.3").command, "/sweap:handoff DS.5.3");
   assert.equal(by.get("DS.5.3").kind, "handoff");
   assert.match(by.get("DS.5.3").doneWhen, /status: done/);
-  assert.equal(by.get("FM.10").command, "/unblock FM.10");
+  assert.equal(by.get("FM.10").command, "/sweap:unblock FM.10");
   assert.match(by.get("FM.10").doneWhen, /> ANSWER:/);
 });
 
@@ -1048,7 +1048,7 @@ test("buildMilestoneCard: derives the plan even when the run recorded NOTHING", 
   ];
   const c = card(items);
   assert.equal(c.end.verdict, "derived");
-  assert.deepEqual(c.end.plan.steps.map((s) => s.command), ["/handoff DS.5.3", "/unblock FM.10"]);
+  assert.deepEqual(c.end.plan.steps.map((s) => s.command), ["/sweap:handoff DS.5.3", "/sweap:unblock FM.10"]);
   assert.equal(c.end.plan.steps[0].rank, 2);           // DS.5.4 -> DS.5.5
 });
 
@@ -1221,15 +1221,15 @@ test("the page renders an ENDED run instead of reporting it as disconnected", as
   assert.match(u.textContent, /^updated \d+s ago/);
   assert.equal(u.className, "");
   const html = p.el("milestone").innerHTML;
-  for (const needle of ["run ended", "awaiting-human", 'class="plan"', "To resume", "/handoff DS.5.3",
-                        'data-cmd="/handoff DS.5.3"', "why not an agent: taste", "done when:", "/unblock DS.5.9",
+  for (const needle of ["run ended", "awaiting-human", 'class="plan"', "To resume", "/sweap:handoff DS.5.3",
+                        'data-cmd="/sweap:handoff DS.5.3"', "why not an agent: taste", "done when:", "/sweap:unblock DS.5.9",
                         "not yet", '<details class="dropped"', "already done", "no such item"]) {
     assert.ok(html.includes(needle), `card lacks ${needle}`);
   }
-  assert.match(html, /<button type="button" class="copy" data-cmd="\/handoff DS\.5\.3">/);
-  assert.match(html, /<code class="cmd pending">\/unblock DS\.5\.9<\/code>/);
-  assert.ok(!/data-cmd="\/unblock DS\.5\.9"/.test(html), "a has-placeholders step must not get a copy button");
-  assert.ok(html.indexOf("/handoff DS.5.3") < html.indexOf("/unblock DS.5.9"), "steps keep the lib's rank order");
+  assert.match(html, /<button type="button" class="copy" data-cmd="\/sweap:handoff DS\.5\.3">/);
+  assert.match(html, /<code class="cmd pending">\/sweap:unblock DS\.5\.9<\/code>/);
+  assert.ok(!/data-cmd="\/sweap:unblock DS\.5\.9"/.test(html), "a has-placeholders step must not get a copy button");
+  assert.ok(html.indexOf("/sweap:handoff DS.5.3") < html.indexOf("/sweap:unblock DS.5.9"), "steps keep the lib's rank order");
   assert.equal(p.errors.length, 0);
   rmSync(dir, { recursive: true });
 });
@@ -1460,7 +1460,7 @@ test("writeSession rejects a missing milestone, a bad date, and a bogus verdict"
 
 test("a discovered note with an unreadable kind is announced in the card's notes, never coerced and never dropped", async () => {
   // consumer PR #290/#292: two hand-written notes with a kind the triage paths do not
-  // read sat invisible on main. The page header and /milestone both read
+  // read sat invisible on main. The page header and /sweap:milestone both read
   // `notes`, so one line there is the whole fix.
   const dir = fixture({
     "CLAUDE.md": "## sweap config\n",
@@ -1471,7 +1471,7 @@ test("a discovered note with an unreadable kind is announced in the card's notes
   });
   const s = await buildState(dir, { git: async () => ({ stdout: "", code: 0 }), gh: async () => ({ stdout: "[]", code: 0 }), stranded: async () => ({ stdout: "", code: 0 }), now: 3 });
   assert.deepEqual(s.discovered.map((d) => [d.title, d.kind]), [["A gap", "gap"], ["Odd", "unknown"], ["Odder", "unknown"]], "unknown kinds stay unknown and stay listed");
-  const note = s.notes.find((n) => /discovered note\(s\) carry a kind neither \/milestone nor \/roadmap reads/.test(n));
+  const note = s.notes.find((n) => /discovered note\(s\) carry a kind neither \/sweap:milestone nor \/sweap:roadmap reads/.test(n));
   assert.ok(note, "the card must announce unknown-kind notes");
   assert.match(note, /^2 discovered note/, "the count is the number of unreadable notes");
   assert.match(note, /set kind: to gap or direction/, "the note says what to fix");

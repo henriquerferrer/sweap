@@ -1,11 +1,11 @@
 ---
 name: milestone-cross-check
-description: Completeness critic for a milestone's drafted item files. Use AFTER /roadmap's interactive decide phase has produced draft items and BEFORE writing them under backlog.dir (roadmap/). Reviews the draft against a fixed lens and surfaces ONLY the net-new forks/gaps the brainstorm missed — it does NOT rewrite items or expand scope; it flags gaps for the human to resolve. Distilled from the product-management write-spec lens (non-goals, persona coverage, success signals, open questions).
+description: Completeness critic for a milestone's drafted item files. Use AFTER /sweap:roadmap's interactive decide phase has produced draft items and BEFORE writing them under backlog.dir (roadmap/). Reviews the draft against a fixed lens and surfaces ONLY the net-new forks/gaps the brainstorm missed — it does NOT rewrite items or expand scope; it flags gaps for the human to resolve. Distilled from the product-management write-spec lens (non-goals, persona coverage, success signals, open questions).
 ---
 
 # Milestone cross-check
 
-The second half of a milestone brainstorm. Phase 1 (`/roadmap`'s interactive
+The second half of a milestone brainstorm. Phase 1 (`/sweap:roadmap`'s interactive
 decide phase) *decides* — it locks the core with the human
 answering one question at a time. This skill is the *completeness critic* that
 catches what a decisive pass skips: it reads the drafted items with a fresh,

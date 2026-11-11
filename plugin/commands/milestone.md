@@ -16,11 +16,11 @@ Resolve the run:
   or `F, DS`) — these are the prefixes used below.
 - Run `bash "$([ -f .github/scripts/audit-gate.sh ] && echo .github/scripts/audit-gate.sh || echo "${CLAUDE_PLUGIN_ROOT}/hooks/audit-gate.sh")" --check`
   from the repo root — the repo's VENDORED gate when present, falling back to
-  the plugin's (same reason as `/roadmap`: the vendored copy is what CI runs;
+  the plugin's (same reason as `/sweap:roadmap`: the vendored copy is what CI runs;
   the plugin path can be a stale cache build).
  A `DEFERRED:` line is NOT debt: it means the state you are standing in is what
   completed that milestone, so its audit could not have run yet (an audit reads
-  the merged default branch). Land that merge, then run `/milestone-audit` for
+  the merged default branch). Land that merge, then run `/sweap:milestone-audit` for
   the named milestone before resolving anything new — the gate will deny the
   next backlog-advancing PR until its record is in.
  A `FAIL: hand-off <id> ...` line is NOT debt either: it is a backlog-integrity
@@ -30,13 +30,13 @@ Resolve the run:
   failure message) before running anything.
  `AGING:` lines are informational and never fail: an open blocked question and
   how many milestone boundaries it has survived. This run does not drain them —
-  the boundary does, in `/roadmap`'s step 0 — but list them with the run's open
+  the boundary does, in `/sweap:roadmap`'s step 0 — but list them with the run's open
   hand-offs so the human sees both needs-me-now queues at kickoff, and offer
-  `/unblock <id>` for any that gate work in this run's scope.
+  `/sweap:unblock <id>` for any that gate work in this run's scope.
  Any OTHER `FAIL:` output (`FAIL: milestone ...` / `FAIL: record ...`) means
   **audit debt**: a completed milestone lacks a
   valid audit record. The ONLY permitted work while debt exists is discharging
-  it (run `/milestone-audit` for the named milestone; land its record PR) —
+  it (run `/sweap:milestone-audit` for the named milestone; land its record PR) —
   do not resolve a new milestone past unaudited work. This **record-debt** is
   distinct from the outstanding `followup_of:` items ("Audit debt `D`"
   below): draining `D` never clears the gate — only landing the audit record
@@ -75,7 +75,7 @@ Then pick the run shape:
 - **No runnable `M` but `D` is non-empty** → **debt-only run**: scope = `D`. Do
   NOT run a milestone-audit for a debt-only run — you don't audit a debt-drain.
 - **Nothing runnable but `H` is non-empty** → there is no goal to print: the
-  milestone cannot start until a hand-off is closed. Print the `/handoff`
+  milestone cannot start until a hand-off is closed. Print the `/sweap:handoff`
   command and stop.
 - **Neither** → nothing to run; say so and stop.
 
@@ -119,10 +119,10 @@ already enforces, does not.
   backlogDir, <file>, { declined: "parked: <one-line reason>" })`. The note
   stays in `discovered/archive/`, greppable by `declined: parked`; moving it
   back re-opens it.
-- **No class, and a human filed it** (a `/walkthrough` or `/handoff` session —
+- **No class, and a human filed it** (a `/sweap:walkthrough` or `/sweap:handoff` session —
   its `discovered_by:` or its body says so) **→ leave it in the inbox** and list
   it with the `direction` notes below. The bar filters what agents noticed,
-  never what the owner asked for; `/roadmap` decides it with them.
+  never what the owner asked for; `/sweap:roadmap` decides it with them.
 
 **The same pass, over follow-ups already in the backlog**: every unblocked
 `status: todo` item with `followup_of:` set and no `harm:` — what an older
@@ -137,7 +137,7 @@ whose file is gone.
 Notes with no resolvable target, every `kind: direction` note, and every note
 the board lib reports as `kind: unknown` are NOT triaged here — list them
 alongside the hand-offs and blocked questions so the human sees them at kickoff,
-and leave them for `/roadmap`. Land the whole pass as ONE PR,
+and leave them for `/sweap:roadmap`. Land the whole pass as ONE PR,
 `chore(backlog): triage — promote <p> of <n> discovered note(s)`, its body
 listing each promotion (class + harm sentence) and each park (reason), through
 the gate, in a worktree like any other: it IS backlog-advancing, so during
@@ -170,7 +170,7 @@ For each one compute what it **gates**: the items that transitively depend on it
 That number is what makes this a decision rather than a nag.
 
 If `H` is non-empty, **ask before printing any goal** — a human is standing here
-to paste it, which is the whole reason this fork lives in `/milestone` and
+to paste it, which is the whole reason this fork lives in `/sweap:milestone` and
 nowhere else. Show, compactly:
 
 ```
@@ -182,11 +182,11 @@ nowhere else. Show, compactly:
   Do them now   → frontier of <x>, <M> can finish end to end this run (audit included).
   Do them later → frontier of <y>. <the gated items> stay unreachable, the milestone
                   can't complete, so <M>'s audit isn't due and won't run this run.
-                  You'd close the hand-offs afterwards and re-run /milestone.
+                  You'd close the hand-offs afterwards and re-run /sweap:milestone.
 ```
 
 Then **walk the most-gating one immediately** — do not print a goal first, and
-do not offer "later" as an equal option. Run `/handoff <id>` inline, here, in
+do not offer "later" as an equal option. Run `/sweap:handoff <id>` inline, here, in
 this session: brief the human, take the steps, and close it on their
 confirmation exactly as that command specifies. Then re-resolve from the top
 (the debt and hand-off scans are all stateless, so re-running them is
@@ -211,16 +211,16 @@ Two exits from this, both narrow:
 - **The human declines** (they want the run started anyway, or the hand-off
   genuinely cannot be done now — a third party has to verify, hardware is in the
   post). Then print the **hand-offs-outstanding** template, with the cost
-  restated in one line. `/handoff` step 5 covers recording a started-but-unfinished
+  restated in one line. `/sweap:handoff` step 5 covers recording a started-but-unfinished
   hand-off.
-- **Non-interactive** — any headless driver (`claude -p`, a scheduled agent). `/handoff`
+- **Non-interactive** — any headless driver (`claude -p`, a scheduled agent). `/sweap:handoff`
   requires a human in the session and must never run unattended, so these skip
   it entirely and use the hand-offs-outstanding template directly, naming the
   skipped hand-offs in their notification. These drivers reference this
   command's steps by name rather than copying its templates, so this file is
   the only place the goal text lives.
 
-Walkthrough reminder (see `/walkthrough`). Before printing any goal, ask the lib
+Walkthrough reminder (see `/sweap:walkthrough`). Before printing any goal, ask the lib
 whether a shipped milestone has never been walked:
 
 ```bash
@@ -238,10 +238,10 @@ If it names a milestone with `sessions: 0`, print **one line** before the goal,
 next to any runner-retirement line. It is a reminder, not a question:
 
 ```
-Reminder: <Mprev> shipped <n> items and nobody has walked it. Run /sweap:walkthrough <Mprev> (~35 min) when you have time, or /sweap:demo <Mprev> to film what it delivered; walkthrough findings go to discovered/ for the next /milestone to triage.
+Reminder: <Mprev> shipped <n> items and nobody has walked it. Run /sweap:walkthrough <Mprev> (~35 min) when you have time, or /sweap:demo <Mprev> to film what it delivered; walkthrough findings go to discovered/ for the next /sweap:milestone to triage.
 ```
 
-Do not ask, do not wait for an answer, and never start `/walkthrough` or `/sweap:demo` from here.
+Do not ask, do not wait for an answer, and never start `/sweap:walkthrough` or `/sweap:demo` from here.
 The kickoff goes straight on to the goal. This used to be a "test it now or
 later?" question; the maintainer cut it to a reminder (2026-11-05) because a
 question at kickoff holds the run for something that is optional.
@@ -253,10 +253,10 @@ hospitals and 215,711 procedures moved outcomes at P = 0.13), and checklist
 presence of a session sheet, the only thing an escalation could key on, is
 exactly the signal that cannot detect the failure. What is watched instead is
 yield: if `stats.dry` reaches 3, add to the reminder that the last 3 walkthroughs
-found nothing, and recommend cutting `/walkthrough` back to a UI-only spot-check.
+found nothing, and recommend cutting `/sweap:walkthrough` back to a UI-only spot-check.
 
 Non-interactive kickoffs (any headless driver) put the reminder in their
-notification instead; `/walkthrough` requires a human in the session and must
+notification instead; `/sweap:walkthrough` requires a human in the session and must
 never run unattended.
 
 Environment pre-flight (parity — see the playbook's "Environment parity"
@@ -422,10 +422,10 @@ MUST carry the "…and the `<MILESTONE>` milestone-audit has run and been
 triaged" clause. A milestone is not complete until its audit has run — a run
 that drains every item but stops before the audit has stopped early. This
 holds whether the goal is printed here or hand-written: if a milestone `/goal`
-is ever hand-written rather than printed by `/milestone` (or the user pastes
+is ever hand-written rather than printed by `/sweap:milestone` (or the user pastes
 one), the audit-and-triage clause is part of the definition of done, not
 optional. For a UI-heavy milestone (its `review.dimensions` tags include `ui`)
-the audit clause covers **both** the `/milestone-audit` code pass **and** the
+the audit clause covers **both** the `/sweap:milestone-audit` code pass **and** the
 Tier-2 UI audit (see the playbook's "Milestone audit" section and the
 `ui-design` skill §8) — whose scope is every route carrying surface-contract
 debt, not only the screens this milestone touched. Two run shapes carry no audit clause, and both are
@@ -440,7 +440,7 @@ travels with the completing run instead).
 ```
 /goal This goal is MET when ANY ONE of these is shown in the conversation: (A)
 every outstanding audit follow-up item and every <MILESTONE> item is [done] per its
-definition of done, and /milestone-audit <MILESTONE> (plus the Tier-2 UI audit for
+definition of done, and /sweap:milestone-audit <MILESTONE> (plus the Tier-2 UI audit for
 a UI-heavy milestone) has run and been triaged; (B) the sweap:run workflow
 returned "batch and <MILESTONE> frontier drained" with no item under failed,
 while <MILESTONE> items remain open because every
@@ -454,7 +454,7 @@ item with the sweap:run workflow and never by hand — launch it now with
 Workflow({name: "sweap:run", args: {"ids": [<D, in drain order>], "milestone":
 "<MILESTONE>"}}), args as an object; while it runs, end your turn and wait for
 its result, never poll it. When it returns drained and every <MILESTONE> item is
-[done], run /milestone-audit <MILESTONE> and triage — that is (A). When it
+[done], run /sweap:milestone-audit <MILESTONE> and triage — that is (A). When it
 returns drained with items still open, that is (B): stop; the audit waits for
 the run that completes the milestone. When it returns drained with items under
 failed, relaunch it fresh once with the same args; if they fail again, that is
@@ -556,7 +556,7 @@ core, which the run reads at start (other sections by heading, when their
 situation arrives) — the goal only states the end condition.
 
 The whole ritual for the user is just: `claude --permission-mode auto` →
-`/milestone` → paste the printed goal, one line, nothing else. Then `/goal`
+`/sweap:milestone` → paste the printed goal, one line, nothing else. Then `/goal`
 with no argument shows the condition when it took; "No goal set" means the line
 landed as a prompt (the run still starts — the driver sentence is read either
 way — but nothing re-drives the session after a turn that ends idle). Two
@@ -569,4 +569,4 @@ default in user settings, and a project file that sets it turns it OFF. If
 `services.up` is declared, services come up automatically above — the user
 never runs it themselves. When the milestone has hand-offs, one question comes
 first (do them now or later), and answering "now" replaces the paste step with
-a `/handoff` walk-through.
+a `/sweap:handoff` walk-through.

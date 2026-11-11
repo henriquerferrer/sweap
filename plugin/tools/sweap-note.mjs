@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // sweap-note.mjs — the capture-inbox writer behind `bin/sweap-note`. It is the
-// same two library calls the playbook and `/idea` used to spell as a
+// same two library calls the playbook and `/sweap:idea` used to spell as a
 // `node --input-type=module -e '…'` one-liner: writeDiscovered() for a
 // discovered note, writeIdea() for an idea. Both are create-only writes under
 // <backlogDir>/{discovered,ideas}/ — this file adds no behaviour of its own,

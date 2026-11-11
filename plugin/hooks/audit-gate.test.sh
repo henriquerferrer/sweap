@@ -899,7 +899,7 @@ commit_all "$R" relabel
 run_gate "$R" --check
 check "blocked later flipped to attended fails provenance" 1
 
-# T47: an UNCOMMITTED hand-off is skipped, not failed — /roadmap lints items in
+# T47: an UNCOMMITTED hand-off is skipped, not failed — /sweap:roadmap lints items in
 # the working tree before they are ever committed.
 R="$(new_repo t47)"
 mk_attended "$R" F1.1
@@ -947,7 +947,7 @@ commit_all "$R" blocked-question
 run_gate "$R" --check
 check "a blocked question never fails the gate" 0
 check_out "AGING line names the item" "AGING: blocked F1\.1 "
-check_out "AGING line points at /unblock" "/unblock F1\.1"
+check_out "AGING line points at /sweap:unblock" "/sweap:unblock F1\.1"
 
 # T51: absent carried: reads as 0, not as an error or a blank.
 check_out "absent carried: reads as 0" "carried 0 milestone boundary"

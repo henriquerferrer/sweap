@@ -7,7 +7,7 @@
 # committed on a feature branch (a discovered note, an idea, an item file that
 # rode along) is durable only as long as that branch is headed for main. When
 # the PR is closed unmerged, or there never was one, the file is invisible to
-# every reader the pipeline has — the frontier, the board, audit-gate, /roadmap
+# every reader the pipeline has — the frontier, the board, audit-gate, /sweap:roadmap
 # all read main — and nothing is scheduled to relay it. That is the one loss
 # the 2026-08-22 research memo found sweap could not see: consumer PR #181 carried
 # three filed items and an index retitle on a code branch, and the only guard
