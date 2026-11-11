@@ -1451,7 +1451,13 @@ check "flake: body names the head SHA, the failed run id, both attempts, the bas
 check "flake: body ends with the occurrence line" grep -q "^- PR #$PR head $HEAD1 run 101 at 2026-08-25T10:03:00Z$" "$NOTE"
 check "flake: the rerun entry is marked noted (never filed twice)" [ "$(state '.reruns[0].flake_noted')" = true ]
 check "flake: filing is reported on stderr, not stdout (stdout stays one line)" grep -q '^\[sweap-merge\] flake: .*filed roadmap/discovered/' "$FIX/stderr" -- [ "$(printf '%s\n' "$OUT" | wc -l | tr -d ' ')" = 1 ]
-# a second PR with the same workflow flake APPENDS to that note, never a second file
+# a second PR with the same workflow flake writes NOTHING to the repo: the note
+# is tracked by then, and an edit to a tracked file in the primary checkout has
+# no carrier into a PR (10 such lines were hand-carried in one consumer, and
+# nothing read them). The occurrence is the state file's reruns[] entry.
+git -C "$REPO" add -- "$INBOX" >/dev/null 2>&1; git -C "$REPO" -c user.name=t -c user.email=t@t commit -q -m "the first flake note lands" >/dev/null 2>&1
+check "flake: fixture — the first note is tracked and clean before the second flake" [ -z "$(git -C "$REPO" status --short -- "$INBOX")" ] -- git -C "$REPO" ls-files --error-unmatch "$NOTE"
+cp "$NOTE" "$WORK/note.before"
 PR=8
 newcase r-flake-second
 red_ci
@@ -1460,10 +1466,12 @@ drive rerun "$PR" --reason "same e2e timeout"
 check "flake: second PR's rerun accepted" [ "$RC" = 0 ] -- word_is pending
 green_ci_attempt2
 drive tick "$PR"; expect "flake: second PR turns green on the rerun and merges" merged
-check "flake: still exactly one note (appended, not a second file)" [ "$(ls "$INBOX"/*.md 2>/dev/null | wc -l | tr -d ' ')" = 1 ]
-check "flake: the second occurrence is one appended line" grep -q "^- PR #8 head $HEAD1 run 101 at " "$NOTE" -- [ "$(grep -c '^- PR #' "$NOTE" | tr -d ' ')" = 2 ]
-check "flake: the append left the title and the first occurrence intact" grep -q "^title: flaky: $CI went red then green on rerun for PR #7 " "$NOTE" -- grep -q "^- PR #7 head" "$NOTE"
-check "flake: append reported on stderr" grep -q '^\[sweap-merge\] flake: .*appended to roadmap/discovered/' "$FIX/stderr"
+check "flake: still exactly one note (no second file)" [ "$(ls "$INBOX"/*.md 2>/dev/null | wc -l | tr -d ' ')" = 1 ]
+check "flake: the existing note is byte-identical (nothing appended)" cmp -s "$NOTE" "$WORK/note.before" -- [ "$(grep -c '^- PR #' "$NOTE" | tr -d ' ')" = 1 ]
+check "flake: the second occurrence leaves no uncommitted change in the primary's inbox" [ -z "$(git -C "$REPO" status --short -- "$INBOX")" ]
+check "flake: the second occurrence is recorded in the PR's state file (head, run, path, reason, flake_noted)" \
+  [ "$(state '.reruns[0] | "\(.head) \(.run_ids[0]) \(.runs[0].path) \(.reason) \(.flake_noted)"')" = "$HEAD1 101 $CI same e2e timeout true" ]
+check "flake: stderr says it is already noted and where the record is" grep -q '^\[sweap-merge\] flake: .*again (run 101); already noted in roadmap/discovered/.*recorded in this PR.s state file$' "$FIX/stderr"
 PR=7
 # (f') no discovered inbox => skip with a log line, never a merge blocker
 newcase r-no-inbox

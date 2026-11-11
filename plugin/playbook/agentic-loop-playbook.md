@@ -775,7 +775,12 @@ may ADD dimensions it judges necessary; it may not remove tagged ones.
      The driver ENDS THE TURN while it waits, so read its terminal word as the
      result. (Its inner merge omits `--delete-branch`, the no-op footgun here.)
   2. **Fast-forward the primary** (`git -C <primary-checkout> pull --ff-only`) so
-     `main` never drifts (`--ff-only` no-ops on local changes).
+     `main` never drifts. Git refuses it only when an uncommitted file is among
+     the paths the pull changes, identical bytes or not; the post-merge hook
+     then restores the files that already hold the incoming content and pulls
+     again, and otherwise touches nothing and names what is in the way. A
+     primary left behind makes the backlog on disk stale — the frontier is read
+     from it — so a refused pull is a finding, never a cleanup remark.
   3. **`git worktree remove <path>`** — this frees the branch from its worktree.
   4. **`git branch -D <branch>`** — now succeeds (force `-D`: squash-merged branches
      aren't ancestors of `main`, so `-d` refuses them; safe, the PR is merged).
@@ -953,9 +958,11 @@ may ADD dimensions it judges necessary; it may not remove tagged ones.
   (head, run ids, reason, who, when) in the PR's state file, re-arms the
   deadlines, and the next `sweap-merge watch <n>` waits as usual. If that head
   then reaches green, the driver files ONE discovered note (`flaky: <workflow>
-  went red then green on rerun for PR #<n> (<reason>)`, kind gap) and appends
-  a line to it for each later flake of the same workflow — so the flake rate
-  is on record instead of in someone's memory. The driver still never reruns
+  went red then green on rerun for PR #<n> (<reason>)`, kind gap). A later
+  flake of an already-noted workflow writes nothing to the repo: each
+  occurrence is the `reruns[]` entry with `flake_noted: true` (head, run id,
+  reason, when) in that PR's state file under `.claude/sweap-merge/`, which is
+  local to the machine. The driver still never reruns
   on its own. Consumers must allowlist it in project `.claude/settings.json`:
   **`Bash(sweap-merge:*)`** — the `:*` suffix is the documented equivalent of a
   trailing ` *`, so it matches `sweap-merge watch 12` and bare `sweap-merge`,

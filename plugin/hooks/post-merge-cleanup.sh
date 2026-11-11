@@ -52,8 +52,22 @@ PRIMARY="$(cd "$(dirname "$GITDIR")" 2>/dev/null && pwd)" || exit 0
 # Its origin branch is not deferred: step 3 deletes that regardless.
 SELF="$(pwd -P 2>/dev/null || true)"
 
-# 1) Keep the primary checkout current (no-ops if it has local changes).
-git -C "$PRIMARY" pull --ff-only >/dev/null 2>&1 || true
+# 1) Keep the primary checkout current. git refuses the fast-forward when an
+#    uncommitted file is among the paths the incoming commits change, identical
+#    bytes or not; primary_ff (lib-primary-ff.sh) then fast-forwards past the
+#    files that already hold the incoming content, without writing the working
+#    tree, or leaves everything alone and says what is in the way. That line is
+#    handed to the session at the end (step 4's channel): a refusal used to be
+#    discarded here, and the primary sat stale for a whole run.
+ff_msg=""
+ff_lib="$(dirname "${BASH_SOURCE[0]}")/lib-primary-ff.sh"
+if [ -r "$ff_lib" ]; then
+  # shellcheck source=/dev/null
+  . "$ff_lib"
+  primary_ff "$PRIMARY" || ff_msg="${PRIMARY_FF_MSG:-}"
+else
+  git -C "$PRIMARY" pull --ff-only >/dev/null 2>&1 || true
+fi
 # 2) Drop remote-tracking refs for branches deleted on merge (`--delete-branch`).
 git -C "$PRIMARY" fetch --prune >/dev/null 2>&1 || true
 
@@ -97,8 +111,11 @@ git -C "$PRIMARY" worktree prune >/dev/null 2>&1 || true
 #    so the branch that just landed is never reported. Only closed/none states
 #    are alarming: an open PR is a rider, which the board shows without alarm.
 stranded="$(cd "$PRIMARY" && bash "$(dirname "${BASH_SOURCE[0]}")/stranded-roadmap.sh" 2>/dev/null | awk -F'\t' '$2=="closed" || $2=="none"')"
+msg=""
+[ -n "$ff_msg" ] && msg="sweap: the $ff_msg"
 if [ -n "$stranded" ]; then
-  msg="sweap: backlog files are STRANDED on branch(es) that nothing will land — they are invisible to the frontier, the board's backlog, audit-gate and /roadmap until they reach main:"
+  msg="${msg}${msg:+
+}sweap: backlog files are STRANDED on branch(es) that nothing will land — they are invisible to the frontier, the board's backlog, audit-gate and /roadmap until they reach main:"
   while IFS=$'\t' read -r br state age paths; do
     [ -n "$br" ] || continue
     msg="$msg
@@ -108,6 +125,8 @@ $stranded
 STRANDED_EOF
   msg="$msg
 Rescue (docs-only, rides the roadmap-only lane): git checkout -b roadmap/rescue-<6hex> origin/main && git checkout <branch> -- <the discovered/ and ideas/ paths above> && commit && open a PR. Top-level item files and index edits found here need /roadmap judgement before they land — list them for the human instead of relaying blindly. Then delete the dead branch so this stops firing."
+fi
+if [ -n "$msg" ]; then
   if command -v jq >/dev/null 2>&1; then
     jq -n --arg ctx "$msg" '{hookSpecificOutput:{hookEventName:"PostToolUse",additionalContext:$ctx}}' 2>/dev/null || printf '%s\n' "$msg"
   else

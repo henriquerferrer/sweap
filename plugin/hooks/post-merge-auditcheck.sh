@@ -63,8 +63,11 @@ primary="$(cd "$(dirname "$gitdir")" 2>/dev/null && pwd)" || exit 0
 # Bring the primary current so we check the state that actually landed, not a
 # stale main. Idempotent and best-effort — post-merge-cleanup.sh does the same
 # pull, and the two must not depend on each other's ordering. If the pull fails
-# (dirty tree, no network) we still check whatever main we have; a false quiet is
-# acceptable here because CI is the primary control.
+# (an uncommitted file among the incoming paths, no network) we still check
+# whatever main we have; a false quiet is acceptable here because CI is the
+# primary control. The heal for a refused pull lives in post-merge-cleanup.sh
+# (lib-primary-ff.sh) and is deliberately not repeated here: on a by-hand merge
+# the two hooks run at the same time.
 git -C "$primary" pull --ff-only >/dev/null 2>&1 || true
 
 GATE="$(dirname "${BASH_SOURCE[0]}")/audit-gate.sh"

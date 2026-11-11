@@ -1589,8 +1589,14 @@ sm_rerun() {
 # on the same head is a flake by definition (same commit, different verdict).
 # That is a finding the pipeline would otherwise lose: it is filed as ONE
 # discovered note (kind gap) per workflow path through the plugin's own note
-# writer, and a later flake of the same workflow APPENDS one line to that note
-# instead of opening a second — the only edit a discovered note ever receives.
+# writer. A later flake of the same workflow writes NOTHING to the repo: its
+# record is the reruns[] entry (head, run id, reason, when, flake_noted) in
+# that PR's state file. It used to append a line to the existing note, which is
+# an edit to a TRACKED file in the primary checkout that no stage may commit
+# and no sweep carries: in one consumer all 10 appended lines waited for a
+# session to hand-carry them (hours at first, 12 days by the ninth, two PRs
+# opened for nothing else), nothing ever read them, and an uncommitted tracked
+# file there is what refuses the primary's next pull once a merge touches it.
 # Never a merge blocker: every failure here is a stderr line, nothing more.
 sm_backlog_dir() {   # the consumer's backlog.dir (CLAUDE.md `## sweap config`), default roadmap/
   local d=""
@@ -1652,15 +1658,12 @@ sm_flake_note() {
         green_attempt="$(printf '%s' "$SM_STATE_JSON" | "$SM_JQ" -r --arg p "$path" '(.observed[$p].attempt // "?")')"
         existing="$(grep -l -- "^title: flaky: $path " "$inbox"/*.md 2>/dev/null | head -1)"
         if [ -n "$existing" ]; then
-          # append-only: the one edit a discovered note ever receives
-          if printf -- '- PR #%s head %s run %s at %s\n' "$SM_PR" "$head" "$run_id" "$ts" >>"$existing" 2>/dev/null; then
-            printf '[sweap-merge] flake: %s red then green on rerun again; appended to %s\n' "$path" "${existing#"$SM_PRIMARY"/}" >&2
-          else
-            printf '[sweap-merge] flake note append FAILED for %s (cannot write %s)\n' "$path" "$existing" >&2
-          fi
+          # Already noted: write NOTHING to the repo. The occurrence is this
+          # PR's reruns[] entry (head, run id, reason, when, flake_noted).
+          printf '[sweap-merge] flake: %s red then green on rerun again (run %s); already noted in %s, recorded in this PR'"'"'s state file\n' "$path" "$run_id" "${existing#"$SM_PRIMARY"/}" >&2
         else
           title="flaky: $path went red then green on rerun for PR #$SM_PR ($reason)"
-          body="$(printf '%s failed on PR #%s at head %s (run %s attempt %s, base %s), was rerun by hand (reason: %s) and went green on attempt %s of the same run with no change to the commit. Same code, two verdicts: a flake. Find the nondeterminism (test, runner, fixture) and fix or quarantine it; each further occurrence is appended below by sweap-merge.\n\n- PR #%s head %s run %s at %s' \
+          body="$(printf '%s failed on PR #%s at head %s (run %s attempt %s, base %s), was rerun by hand (reason: %s) and went green on attempt %s of the same run with no change to the commit. Same code, two verdicts: a flake. Find the nondeterminism (test, runner, fixture) and fix or quarantine it. This note is filed once per workflow: later green-after-rerun occurrences are not added here, each is the reruns[] entry with flake_noted in its PR'"'"'s state file under .claude/sweap-merge/.\n\n- PR #%s head %s run %s at %s' \
             "$path" "$SM_PR" "$head" "$run_id" "$attempt" "$base_sha" "$reason" "$green_attempt" "$SM_PR" "$head" "$run_id" "$ts")"
           sm_bounded "$bound" /bin/sh -c 'cd "$1" && exec "$2" "$3" discovered "$4" gap "$5" "$6" "$7"' sh \
             "$SM_PRIMARY" "$node" "$mjs" "$title" "PR #$SM_PR" "$body" "sweap-merge rerun"

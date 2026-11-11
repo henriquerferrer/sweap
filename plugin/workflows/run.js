@@ -1,7 +1,7 @@
 export const meta = {
   name: 'run',
   description: 'Drive runnable backlog items to the default branch one at a time: a fresh implementer per item, a small watcher for the merge wait, a fresh fixer per red',
-  whenToUse: 'The run session invokes it instead of driving the per-item loop itself. Pass {ids: [...]} to drain a batch in a given order, {milestone: "F13"} to go on to that milestone\'s items (and any other milestone\'s follow-ups) once the batch is drained, {max_items: n} to bound the run, or nothing to drain the whole frontier in the playbook\'s pick order (follow-ups first, then numeric). It stops at a usage limit, an API death, a red base branch, a self-hosted runner fleet with nobody online (sweap-fleet), or when nothing it may pick is runnable, and returns what merged, what needs a human, and where it stopped. The session then runs /milestone-audit when a milestone completed and records .claude/sweap-run.md.',
+  whenToUse: 'The run session invokes it instead of driving the per-item loop itself. Pass {ids: [...]} to drain a batch in a given order, {milestone: "F13"} to go on to that milestone\'s items (and any other milestone\'s follow-ups) once the batch is drained, {max_items: n} to bound the run, or nothing to drain the whole frontier in the playbook\'s pick order (follow-ups first, then numeric). It stops at a usage limit, an API death, a red base branch, a self-hosted runner fleet with nobody online (sweap-fleet), a frontier that still lists an item the run merged as done (the primary checkout it reads is not current), or when nothing it may pick is runnable, and returns what merged, what needs a human, and where it stopped. The session then runs /milestone-audit when a milestone completed and records .claude/sweap-run.md.',
   phases: [
     { title: 'Resume', detail: 'what an interrupted run left behind: worktrees, open PRs, armed watches, plans with unchecked steps' },
     { title: 'Scope', detail: 'sweap-frontier before every item — a merge changes what is runnable' },
@@ -512,6 +512,16 @@ while (count < MAX_ITEMS) {
   // goal would send the session to the milestone audit on nothing.
   if (scoped.value.command_missing) { stopped = 'sweap-frontier is not on PATH or failed (is the sweap plugin enabled for this project?)'; break }
   for (const m of (scoped.value.malformed || [])) if (!malformed.includes(m)) malformed.push(m)
+  // The frontier lists todo items only, so an id this run merged as done (the
+  // watcher read `status: done` on the default branch) can be on it for one
+  // reason: the files sweap-frontier read are not the default branch's. Almost
+  // always the primary checkout is behind — a pull there was refused — and the
+  // same stale files hide whatever the merge unblocked: a consumer run,
+  // 2026-11-09, ended "drained" this way with a runnable item left. Never
+  // "drained" on a frontier that cannot be trusted. `unknown` proves nothing
+  // (a forgotten flip is still todo on the base), so only `yes` counts.
+  const stale = (scoped.value.frontier || []).map((i) => i && i.id).find((id) => merged.some((m) => m.id === id && m.status_done === 'yes'))
+  if (stale) { stopped = `sweap-frontier still lists ${stale}, which this run merged as done: the backlog files it reads in the primary checkout are not the default branch's. In the primary checkout run \`git status -sb\` — it must be on the default branch and level with origin. If it is behind, \`git pull --ff-only\` names any uncommitted file in the way: restore one only when its content equals the default branch's copy, and leave any other to the human. Relaunch once the checkout is current`; break }
   const item = pickOrder(scoped.value.frontier, IDS, MILESTONE).find((i) => !attempted.has(i.id))
   if (!item) { log(MILESTONE ? `nothing runnable for ${MILESTONE}${IDS ? ' or in the batch' : ''}` : (IDS ? 'batch exhausted' : 'frontier empty')); break }
   attempted.add(item.id)
@@ -643,5 +653,5 @@ return {
   // "drained" alone means nothing is left for an agent. Failed items are still
   // todo and runnable (skipped only because this run attempted them): the goal
   // cites the bare word, so a run that left failures says so in the same line.
-  next: stopped ? 'relaunch this workflow fresh, with the same arguments, after the cause is cleared and verified gone (a usage limit: after the reset; a red base: after its job is green; a dead fleet: after sweap-fleet prints ok)' : `${MILESTONE ? `batch and ${MILESTONE} frontier drained` : (IDS ? 'batch drained' : 'frontier drained')}${failed.length ? ` with ${failed.length} failed — relaunch fresh once to retry them` : ''}`,
+  next: stopped ? 'relaunch this workflow fresh, with the same arguments, after the cause is cleared and verified gone (a usage limit: after the reset; a red base: after its job is green; a dead fleet: after sweap-fleet prints ok; a frontier listing a merged item: after the primary checkout is on the default branch and level with origin)' : `${MILESTONE ? `batch and ${MILESTONE} frontier drained` : (IDS ? 'batch drained' : 'frontier drained')}${failed.length ? ` with ${failed.length} failed — relaunch fresh once to retry them` : ''}`,
 }
