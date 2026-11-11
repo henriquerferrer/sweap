@@ -150,7 +150,7 @@ test("the end of a milestone run and the next kickoff both remind, never ask: wa
   assert.match(book, /`<M> is done: \/sweap:walkthrough <M>\nto walk it with me, or \/sweap:demo <M> to film what it delivered\.`/);
   const ms = readFileSync(join(PLUGIN, "commands", "milestone.md"), "utf8");
   assert.match(ms, /or \/sweap:demo <Mprev> to film what it delivered/);
-  assert.match(ms, /never start `\/walkthrough` or `\/sweap:demo` from here/);
+  assert.match(ms, /never start `\/sweap:walkthrough` or `\/sweap:demo` from here/);
 });
 
 function mkdirP(p) { mkdirSync(p, { recursive: true }); return p; }

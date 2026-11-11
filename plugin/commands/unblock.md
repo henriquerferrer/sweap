@@ -17,7 +17,7 @@ close the loop in the backlog so the pipeline moves.
 `status: blocked` item: most transitively-gated not-yet-done items first, then
 highest `carried:`, then oldest. If the resolved item is not `status: blocked`,
 stop and say so — this command touches no other status. An `[attended]` item is
-a *task* the human performs, not a question; that one is `/handoff`.
+a *task* the human performs, not a question; that one is `/sweap:handoff`.
 
 **Then, in order:**
 
@@ -70,7 +70,7 @@ a *task* the human performs, not a question; that one is `/handoff`.
 3. **Take the answer.** One question, one answer, in this session. If they elect
    the recommended default, that is a real answer — record it as one, marked
    `(default taken)`. If they want to think about it, stop here and leave the
-   item exactly as it is; do not increment `carried:` (only `/roadmap`'s
+   item exactly as it is; do not increment `carried:` (only `/sweap:roadmap`'s
    boundary pre-flight does that).
 
 4. **Close it — only on their explicit answer.** In a worktree (never on
@@ -82,7 +82,7 @@ a *task* the human performs, not a question; that one is `/handoff`.
      and `## Acceptance` the answer implies**. This is the real work of the
      command: a blocked item is a record without a full spec, and
      `roadmap-lint.sh` requires both for `todo`, so the flip is not a one-line
-     edit. Write them to the same standard `/roadmap` writes items — surface,
+     edit. Write them to the same standard `/sweap:roadmap` writes items — surface,
      interfaces, out-of-scope, acceptance criteria that name their layer — then
      run `sweap-roadmap-lint <file>` and fix failures
      before the PR opens (authoring and dispatch share one spec gate).
@@ -98,7 +98,7 @@ a *task* the human performs, not a question; that one is `/handoff`.
    `disposition: blocked <id>` lines): in the same commit, rewrite every one of
    those lines to `disposition: followup <id>`, and add a dated note above the
    record's findings saying which blocks moved, that the human answered through
-   `/unblock <id>`, and the answer in one line. `audit-gate.sh` fails a record
+   `/sweap:unblock <id>`, and the answer in one line. `audit-gate.sh` fails a record
    whose `blocked` disposition names an item that is no longer `status: blocked`,
    so without this the PR goes red (a consumer: three unblocks in a row).
 
@@ -109,7 +109,7 @@ a *task* the human performs, not a question; that one is `/handoff`.
 5. **Report what it released.** After the merge, name the items that just became
    unblocked and are now on the frontier. If a run is in flight it
    recomputes the frontier after every merge and will pick them up; if not,
-   offer to run `/milestone`.
+   offer to run `/sweap:milestone`.
 
 **What this command never does:** resolve a direction call without the human
 answering in this session; run as part of an unattended run; touch an item that

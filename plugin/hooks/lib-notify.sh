@@ -26,7 +26,7 @@ sweap_notify() {
 }
 
 # sweap_run_active <primary-checkout>: 0 when a milestone run is under way there
-# (the run file /milestone keeps exists and carries no `ended:` line). A run
+# (the run file /sweap:milestone keeps exists and carries no `ended:` line). A run
 # audits its own milestone when its workflow returns drained, so a message that
 # would tell the human to start the audit is wrong while one is active.
 sweap_run_active() {

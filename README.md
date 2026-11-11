@@ -4,7 +4,7 @@ A Claude Code plugin that turns a roadmap into merged pull requests. You write t
 
 ## How it works
 
-`/roadmap` turns a goal into item files. `/sweap:run` then drains them one at a time through a script, not a long-lived agent:
+`/sweap:roadmap` turns a goal into item files. `/sweap:run` then drains them one at a time through a script, not a long-lived agent:
 
 1. **Scope:** recompute what is runnable, because every merge changes that.
 2. **Implement:** a fresh agent per item, which exits once its branch is committed.
@@ -12,7 +12,7 @@ A Claude Code plugin that turns a roadmap into merged pull requests. You write t
 4. **Merge:** a small watcher drives `sweap-merge` until it reaches a terminal state.
 5. **Fix:** a fresh fixer per failure, with every earlier attempt in hand.
 
-Hooks enforce the rules mechanically. `pre-merge-gate.sh` denies a merge when the PR's checks aren't all green or its head is behind its base, so an agent can't talk its way past a red build. When a milestone completes, `/milestone-audit` runs an adversarial cross-feature audit, and a gate blocks further merges until a valid audit record lands.
+Hooks enforce the rules mechanically. `pre-merge-gate.sh` denies a merge when the PR's checks aren't all green or its head is behind its base, so an agent can't talk its way past a red build. When a milestone completes, `/sweap:milestone-audit` runs an adversarial cross-feature audit, and a gate blocks further merges until a valid audit record lands.
 
 ## Decisions worth reading
 

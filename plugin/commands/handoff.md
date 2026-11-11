@@ -16,7 +16,7 @@ the usual rule — an item dep is satisfied when its file is `status: done`, a
 bare-milestone dep when every item under it is done), in frontier order. If the
 resolved item is not `status: attended`, stop and say so — this command does not
 touch any other status. A `[blocked]` item is a *question* awaiting a
-`> ANSWER:` line, not a hand-off; work it with `/unblock <id>` instead.
+`> ANSWER:` line, not a hand-off; work it with `/sweap:unblock <id>` instead.
 
 **Then, in order:**
 
@@ -34,7 +34,7 @@ touch any other status. A `[blocked]` item is a *question* awaiting a
    time, and never invent a value to keep moving. A choice whose options differ
    in something a product user would see goes on the `explain` skill's live page
    first (its "When to show" trigger), with the link in the ask; every choice
-   ends with the **explain** line (see `/unblock` step 2).
+   ends with the **explain** line (see `/sweap:unblock` step 2).
 
 3. **Check the *Done when* condition.** Run it and show the output. If the item
    has no checkable condition, say so and ask the human to confirm in words —
@@ -59,10 +59,10 @@ touch any other status. A `[blocked]` item is a *question* awaiting a
 6. **Report what it released.** After the merge, name the items that just
    became unblocked and are now on the frontier. If a run is in flight, it
    recomputes the frontier after every merge and will pick them up
-   with nothing further needed; if not, offer to run `/milestone`.
+   with nothing further needed; if not, offer to run `/sweap:milestone`.
 
 **What this command never does:** create an attended item, change any other
 item's status, or convert a `[blocked]` item into a hand-off. Hand-offs are
-authored with the human in `/roadmap` and are mechanically verified to be
+authored with the human in `/sweap:roadmap` and are mechanically verified to be
 authored rather than transitioned into (`audit-gate.sh --check`) — see the
 playbook's "Never an escape hatch".

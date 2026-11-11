@@ -49,7 +49,7 @@ This mechanically, idempotently:
 4. **Runtime gitignore rules:** ensures the project's `.gitignore` excludes
    sweap's runtime files — `session-main-redcheck.sh`'s marker file
    (`.claude/main-red-*.flag`), a legacy run-journal file
-   (`.claude/sweap-board.md`), the run file `/milestone` writes at kickoff
+   (`.claude/sweap-board.md`), the run file `/sweap:milestone` writes at kickoff
    (`.claude/sweap-run.md`) and the merge driver's state dir
    (`.claude/sweap-merge/`) — appending each line only if missing, creating
    `.gitignore` if absent, never duplicated. The scaffold self-heals these on
@@ -132,7 +132,7 @@ script reported (these are the fill-ins the script cannot do for you):
      (repo variable, this repo's `<slug>[bot]` if the reviewer posts under a
      custom GitHub App), and a `review.focus` line in CLAUDE.md's
      `## sweap config` block for project-specific review priorities.
-   - Write the first milestone with `/roadmap` (one file per item under
+   - Write the first milestone with `/sweap:roadmap` (one file per item under
      `roadmap/`; the `ROADMAP.md` index lists milestones only).
 
 Do not commit — leave the scaffolded files staged-or-unstaged for the human to

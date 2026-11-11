@@ -1,6 +1,6 @@
 #!/bin/sh
 # sweap-roadmap-lint — bare-name entry point for hooks/roadmap-lint.sh, the
-# per-item spec gate `/milestone` runs before it dispatches anything.
+# per-item spec gate `/sweap:milestone` runs before it dispatches anything.
 #
 # Same mechanism and same reason as bin/sweap-merge (read its header): the
 # plugin's bin/ is on the Bash tool's PATH while the plugin is enabled, and

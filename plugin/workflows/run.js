@@ -1,7 +1,7 @@
 export const meta = {
   name: 'run',
   description: 'Drive runnable backlog items to the default branch one at a time: a fresh implementer per item, a small watcher for the merge wait, a fresh fixer per red',
-  whenToUse: 'The run session invokes it instead of driving the per-item loop itself. Pass {ids: [...]} to drain a batch in a given order, {milestone: "F13"} to go on to that milestone\'s items (and any other milestone\'s follow-ups) once the batch is drained, {max_items: n} to bound the run, or nothing to drain the whole frontier in the playbook\'s pick order (follow-ups first, then numeric). It stops at a usage limit, an API death, a red base branch, a self-hosted runner fleet with nobody online (sweap-fleet), a frontier that still lists an item the run merged as done (the primary checkout it reads is not current), or when nothing it may pick is runnable, and returns what merged, what needs a human, and where it stopped. The session then runs /milestone-audit when a milestone completed and records .claude/sweap-run.md.',
+  whenToUse: 'The run session invokes it instead of driving the per-item loop itself. Pass {ids: [...]} to drain a batch in a given order, {milestone: "F13"} to go on to that milestone\'s items (and any other milestone\'s follow-ups) once the batch is drained, {max_items: n} to bound the run, or nothing to drain the whole frontier in the playbook\'s pick order (follow-ups first, then numeric). It stops at a usage limit, an API death, a red base branch, a self-hosted runner fleet with nobody online (sweap-fleet), a frontier that still lists an item the run merged as done (the primary checkout it reads is not current), or when nothing it may pick is runnable, and returns what merged, what needs a human, and where it stopped. The session then runs /sweap:milestone-audit when a milestone completed and records .claude/sweap-run.md.',
   phases: [
     { title: 'Resume', detail: 'what an interrupted run left behind: worktrees, open PRs, armed watches, plans with unchecked steps' },
     { title: 'Scope', detail: 'sweap-frontier before every item — a merge changes what is runnable' },
@@ -323,7 +323,7 @@ const implementPrompt = (item, resume, prior) => `${READ_FIRST} Then read the pl
 
 You are the IMPLEMENTER for backlog item ${item.id}, and only that item. You drive it from its item file to a COMMITTED branch in its worktree, then you exit. You do not review, push, open the PR, merge or watch CI: after you return the run dispatches a fresh reviewer against your branch, a fixer per finding, and a watcher. You never run \`sweap-merge\`, never \`gh pr merge\`, never touch \`.github/\`, never commit in the primary checkout, never push to the default branch. Never dispatch an agent, never start the code-review or security-review skill, and never leave anything running in the background: whatever outlives your return is delivered to nobody, or wakes a second copy of you that writes into a branch the run is already reviewing (a consumer run, 2026-09-25: four items came back failed and two PRs opened unreviewed this way).
 
-Item file: \`<backlog dir>/${item.id}.md\` — the item file IS the spec (Surface, Interfaces, Out of scope, Acceptance).${item.answeredQuestion ? ` It still carries a \`blocked:\` key: that is the ANSWERED question /unblock left in place, and the answer is in the file. The item is runnable; do not escalate it as blocked.` : ''}
+Item file: \`<backlog dir>/${item.id}.md\` — the item file IS the spec (Surface, Interfaces, Out of scope, Acceptance).${item.answeredQuestion ? ` It still carries a \`blocked:\` key: that is the ANSWERED question /sweap:unblock left in place, and the answer is in the file. The item is runnable; do not escalate it as blocked.` : ''}
 
 Resume state from the start of the run (change nothing you were not told to): ${JSON.stringify(resume)}
 If a worktree already exists for ${item.id}, RESUME it — read its plan, its diff and its uncommitted files before writing a line, and continue from where it stopped; a branch that is already built and committed is simply returned as \`committed\`. Never create a second worktree for the same item. If the worktree's test database was dropped, recreate it the way CLAUDE.md says; never discard uncommitted work.
@@ -378,8 +378,8 @@ Return the JSON only: outcome \`pr-open\` with the PR number, or \`failed\` with
 // Every blocked outcome — the implementer's, a review fixer's, a security
 // finding one fix round did not close — lands the same way: a flip-only PR off
 // the default branch, so the item reads blocked (the frontier stops listing it,
-// the goal can stop, /unblock accepts it) and no unreviewed code rides along.
-// The item's work branch stays in its worktree for the resume after /unblock.
+// the goal can stop, /sweap:unblock accepts it) and no unreviewed code rides along.
+// The item's work branch stays in its worktree for the resume after /sweap:unblock.
 const flipPrompt = (item, question, notes = []) => `Land a BLOCKED flip for backlog item ${item.id}, and nothing else. From the primary checkout: \`git fetch origin\`, then \`git worktree add <the worktree path CLAUDE.md or the playbook names for this project>-blocked -b chore/${slug(item.id)}-blocked origin/${CTX.base}\`. In that worktree edit ONLY \`${CTX.backlog}/${item.id}.md\`: \`status: blocked\` and a \`blocked:\` key holding the question below verbatim; keep every other key and section. Commit only that file (one call).${notes.length ? ` Then, in that same -blocked worktree: ${notesStep(item, notes, '<that -blocked worktree>', `chore/${slug(item.id)}-blocked`).replace(/^First, inside [^,]*, /, '')}` : ''} Push in its own call, plainly: \`git push -u origin chore/${slug(item.id)}-blocked\`. Then \`gh pr create\` (never \`--repo\`/\`-R\`) titled \`chore(${item.id}): blocked — <the question, shortened>\`, the body stating the question verbatim. Never touch the item's work branch or its worktree.
 Question: ${question}
 Return the JSON only: outcome \`pr-open\` with the PR number, branch and worktree; or \`failed\` with what refused.`
@@ -418,7 +418,7 @@ const reviewStage = async (item, impl) => {
     if (rev.value.verdict === 'approve' && !toCheck.length) break
     const needsWork = rev.value.verdict === 'needs-work'
     const hard = needsWork ? rev.value.findings.filter((f) => UNCUTTABLE.has(f.kind)) : []
-    if (r === maxRounds && hard.length) return { notes, blocked: `After ${r} review rounds these confirmed findings are still open, and an acceptance or security finding is never cut (branch ${impl.branch}, unpushed, in ${impl.worktree}): ${hard.map((f) => `[${f.kind}] ${f.file}: ${f.what}`).join('; ')}. Say how to fix them, or change the item's acceptance, then /unblock.` }
+    if (r === maxRounds && hard.length) return { notes, blocked: `After ${r} review rounds these confirmed findings are still open, and an acceptance or security finding is never cut (branch ${impl.branch}, unpushed, in ${impl.worktree}): ${hard.map((f) => `[${f.kind}] ${f.file}: ${f.what}`).join('; ')}. Say how to fix them, or change the item's acceptance, then /sweap:unblock.` }
     const fix = await call(reviewFixPrompt(item, impl, needsWork ? rev.value.findings : [], 'reviewer', r === maxRounds, toCheck), { label: `review-fix ${item.id} #${r}`, phase: 'Review', schema: REVIEW_FIX, model: MODEL, effort: EFFORT, agentType: 'general-purpose' })
     if (!fix.ok) return { stop: `${item.id}: ${fix.why}` }
     if (!needsWork) {
@@ -426,7 +426,7 @@ const reviewStage = async (item, impl) => {
       // is a candidate it reproduced and a spec question it cannot settle, so
       // the human answers it as any other fixer's (consumer PR #470: the
       // question was dropped and the approve merged the defect). The resume
-      // after /unblock reviews the whole branch, its commit included. Anything
+      // after /sweap:unblock reviews the whole branch, its commit included. Anything
       // else but a committed change is a dismissal, and the approve stands.
       candidateFix = fix.value
       if (fix.value.outcome === 'blocked') return { notes, blocked: `${fix.value.question || fix.value.summary}${fix.value.changed ? ` (the reproduced candidate's fix is committed on branch ${impl.branch}, unpushed and not yet reviewed, in ${impl.worktree})` : ''}` }
@@ -457,7 +457,7 @@ const reviewStage = async (item, impl) => {
     }
     security = sec.value
     if (security.verdict === 'no-diff') return { failed: 'the security reviewer collected no diff — not a verdict' }
-    if (security.verdict === 'blocking') return { notes, blocked: `A confirmed security finding is still open after one fix round (branch ${impl.branch}, unpushed, in ${impl.worktree}): ${security.findings.map((f) => `${f.file}: ${f.what}`).join('; ')}. Fix it or record why the risk is accepted, then /unblock.` }
+    if (security.verdict === 'blocking') return { notes, blocked: `A confirmed security finding is still open after one fix round (branch ${impl.branch}, unpushed, in ${impl.worktree}): ${security.findings.map((f) => `${f.file}: ${f.what}`).join('; ')}. Fix it or record why the risk is accepted, then /sweap:unblock.` }
   }
   const lastRev = rounds[rounds.length - 1]
   const remaining = lastRev.verdict === 'needs-work' && lastFix ? ` Remaining after the last round (answered by its fixer): ${lastFix.summary}` : ''

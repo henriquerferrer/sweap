@@ -11,7 +11,7 @@
 # a server error. A StopFailure hook cannot re-enter the turn either — its
 # output is discarded except for side effects — so this one does the two
 # things that ARE possible: it writes a `stalled:` line into the run record
-# (`.claude/sweap-run.md`, the file /milestone keeps for the duration of a run)
+# (`.claude/sweap-run.md`, the file /sweap:milestone keeps for the duration of a run)
 # so the human and the resuming session both see when and on what the run
 # stopped, and it fires a desktop notification.
 #

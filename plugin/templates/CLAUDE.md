@@ -17,8 +17,8 @@ backlog.file:     ROADMAP.md
 backlog.dir:      roadmap/                  # one file per item — see playbook "Backlog format"
 backlog.prefix:   F                        # one or more comma-separated prefixes, e.g. `F` or `F, DS`
 # services.up:    just services-up          # uncomment only if you have local test services
-# test.url:       http://localhost:3000     # /walkthrough only — where the acceptance pass opens the app; never production
-# test.seed:      just seed-test            # /walkthrough only — the ONE command allowed to create test data
+# test.url:       http://localhost:3000     # /sweap:walkthrough only — where the acceptance pass opens the app; never production
+# test.seed:      just seed-test            # /sweap:walkthrough only — the ONE command allowed to create test data
 audit.lenses:     default
 audit.baseline:   []
 review.dimensions: security, ui, migration
@@ -43,7 +43,7 @@ turns.default:    160
   record the question in the item file's `blocked:` key (status: blocked),
   notify, move to the next item. NEVER create a `status: attended` item or
   transition one into it — hand-offs are the human's own planned work, authored
-  only in `/roadmap`. Relabelling stuck work as human work is forbidden (and
+  only in `/sweap:roadmap`. Relabelling stuck work as human work is forbidden (and
   mechanically checked by the audit gate).
 - Honor each backlog item's `review-dimensions` tags.
 - Only when the human is answering in this conversation (never in an

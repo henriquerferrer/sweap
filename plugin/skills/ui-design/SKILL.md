@@ -46,7 +46,7 @@ system ships. Do not treat a not-yet-existing design system as a reason to stop.
 **In that state, the aesthetic direction is a human taste call.** There are no
 tokens yet, so "personality comes from the project's tokens" (§3) has nothing to
 point at — choosing it *is* the work, and it is the paradigm case of a decision
-that is not an agent's to make. Author it during `/roadmap`'s decide phase as its
+that is not an agent's to make. Author it during `/sweap:roadmap`'s decide phase as its
 own `status: attended` item with a `handoff:`, like any other taste call; the
 existing lint already fails an attended item with no hand-off. Its *Done when* is
 token-shaped, never "a session happened": the theme and primitives are committed
@@ -121,7 +121,7 @@ file: `ui.contract` in the project's `## sweap config` block, defaulting to
 Three rules govern it:
 
 - **It is decided in the direction loop, never by an implementer mid-item.** The
-  contract is authored with the human during `/roadmap`'s decide phase, before
+  contract is authored with the human during `/sweap:roadmap`'s decide phase, before
   any screen work in the milestone. A contract settled item-by-item is not a
   contract — whichever item merges first becomes the de facto standard.
 - **Every deterministic clause is enforced by a check that ENUMERATES THE ROUTE
@@ -332,7 +332,7 @@ Runs once at a UI-heavy milestone boundary, alongside the code `milestone-audit`
 - **Independent refutation, majority-survives** — each finding faces an
   independent skeptic; only majority-surviving findings are confirmed.
 - **Triage → auto-fold:** confirmed findings sort into the three buckets and
-  become `FX.*` items that auto-fold into the next `/milestone` run. Aesthetic
+  become `FX.*` items that auto-fold into the next `/sweap:milestone` run. Aesthetic
   findings = ratchet/roadmap; a11y findings carry gate weight.
 
 ## 9. Human spot-check
@@ -342,7 +342,7 @@ human-judged. The human remains the final spot-check on visual polish; flag
 notable aesthetic calls for them rather than assuming the VLM verdict is final.
 
 **Author it as work, not as a hope.** A UI-heavy milestone's spot-check is a
-taste call, so it is authored during `/roadmap`'s decide phase as its own
+taste call, so it is authored during `/sweap:roadmap`'s decide phase as its own
 `status: attended` item with a `handoff:` task (the playbook's "Attended
 items"), dependency-free so it runs concurrently with the agents' drain. A
 spot-check nobody scheduled is the failure mode `attended` exists to prevent.

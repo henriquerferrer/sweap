@@ -44,7 +44,7 @@ ok "awaiting-human => exit 0" 0 "$RC"
 ok "awaiting-human => silent (stdout is a decision channel)" "" "$OUT"
 ok "awaiting-human => one notification" 1 "$N"
 has "the title names the repo, the milestone and that the run stopped" "$(cat "$OSA_LOG")" 'title "shop: F14 run stopped"'
-has "the body names the blocked item and its command" "$(cat "$OSA_LOG")" "It needs your answer on FQ.14. Next step: /unblock FQ.14"
+has "the body names the blocked item and its command" "$(cat "$OSA_LOG")" "It needs your answer on FQ.14. Next step: /sweap:unblock FQ.14"
 has "the end is marked notified" "$(cat "$RUN")" "^notified: 2026-10-09T02:00:00Z$"
 fire
 ok "the same end again => no second notification" 0 "$N"
@@ -56,24 +56,24 @@ ok "a later end => notified again" 1 "$N"
 # An attended item is a hand-off, not a question.
 start; item F14.6 attended
 printf 'ended: 2026-10-09T02:00:00Z\nreason: awaiting-human\nneeds: [F14.6]\n' >> "$RUN"; fire
-has "an attended item => /handoff" "$(cat "$OSA_LOG")" "F14.6 is a step only you can do. Next step: /handoff F14.6"
+has "an attended item => /sweap:handoff" "$(cat "$OSA_LOG")" "F14.6 is a step only you can do. Next step: /sweap:handoff F14.6"
 
 # Several blocked items: count, list, and where to start.
 start; item FQ.14 blocked; item FQ.15 blocked
 printf 'ended: 2026-10-09T02:00:00Z\nreason: awaiting-human\nneeds: [FQ.14, FQ.15]\n' >> "$RUN"; fire
-has "two blocked items => count and first command" "$(cat "$OSA_LOG")" "2 items: FQ.14 FQ.15. Start with /unblock FQ.14"
+has "two blocked items => count and first command" "$(cat "$OSA_LOG")" "2 items: FQ.14 FQ.15. Start with /sweap:unblock FQ.14"
 
 # Mixed, or an id whose status the hook cannot read: point at the board.
 start; item FQ.14 blocked; item F14.6 attended
 printf 'ended: 2026-10-09T02:00:00Z\nreason: awaiting-human\nneeds: [FQ.14, F14.6]\n' >> "$RUN"; fire
-has "mixed => the board" "$(cat "$OSA_LOG")" "waiting on you for: FQ.14 F14.6. Next step: /board"
+has "mixed => the board" "$(cat "$OSA_LOG")" "waiting on you for: FQ.14 F14.6. Next step: /sweap:board"
 start; printf 'ended: 2026-10-09T02:00:00Z\nreason: awaiting-human\n' >> "$RUN"; fire
-has "no ids recorded => still says it is waiting" "$(cat "$OSA_LOG")" "It is waiting on you. Next step: /board"
+has "no ids recorded => still says it is waiting" "$(cat "$OSA_LOG")" "It is waiting on you. Next step: /sweap:board"
 
-# The status is read from the item NOW: an id answered since is not sent to /unblock.
+# The status is read from the item NOW: an id answered since is not sent to /sweap:unblock.
 start; item FQ.14 todo
 printf 'ended: 2026-10-09T02:00:00Z\nreason: awaiting-human\nneeds: [FQ.14]\n' >> "$RUN"; fire
-has "an id no longer blocked => the board, never a stale command" "$(cat "$OSA_LOG")" "Next step: /board"
+has "an id no longer blocked => the board, never a stale command" "$(cat "$OSA_LOG")" "Next step: /sweap:board"
 
 : > "$OSA_LOG"; OUT="$(printf 'not json' | (cd "$R" && bash "$HOOK") 2>&1)"; RC=$?
 ok "garbage input => exit 0" 0 "$RC"; ok "garbage input => silent" "" "$OUT"

@@ -86,7 +86,7 @@ anchor_main "$R"
 run_hook "$R" "gh pr merge 122 --squash"
 check "record malformed BY this merge => alarms" 2
 check_note "incomplete report: the title names the repo, the milestone and what is wrong" "title \"t2: F9 audit report is incomplete\""
-check_note "incomplete report: the body says what it means and what to do" "F9 does not count as audited. Run /milestone-audit F9 again."
+check_note "incomplete report: the body says what it means and what to do" "F9 does not count as audited. Run /sweap:milestone-audit F9 again."
 check_out "invalid record: the banner is the debt banner" "AUDIT DEBT ON MAIN"
 
 # T3: a pre-format record that was ALREADY on the mainline alarms too. There is no
@@ -150,7 +150,7 @@ check "milestone complete BEFORE this merge, no record => alarms" 2
 # undischarged audit debt", "MALFORMED record"), which read as damage. The audit
 # is due; nothing is broken.
 check_note "not audited, no run: the title names the repo and the milestone" "title \"t4b: F9 is not audited yet\""
-check_note "not audited, no run: the body gives the next step" "Next step: /milestone-audit F9"
+check_note "not audited, no run: the body gives the next step" "Next step: /sweap:milestone-audit F9"
 check_out "audit due: the banner says still due, not malformed" "AUDIT STILL DUE"
 if printf '%s\n' "$OUT" | grep -q "MALFORMED"; then fail=$((fail+1)); printf '  FAIL  %s\n' "audit due: the banner does not call the record malformed"
 else pass=$((pass+1)); printf '  PASS  %s\n' "audit due: the banner does not call the record malformed"; fi
@@ -174,7 +174,7 @@ else pass=$((pass+1)); printf '  PASS  %s\n' "not audited, run active => no noti
 # An ENDED run is not an active one.
 printf 'ended: 2026-10-09T00:00:00Z\nreason: awaiting-human\n' >> "$R/.claude/sweap-run.md"
 run_hook "$R" "gh pr merge 131 --squash"
-check_note "not audited, run ended => the human is told the next step" "Next step: /milestone-audit F9"
+check_note "not audited, run ended => the human is told the next step" "Next step: /sweap:milestone-audit F9"
 
 # T4d: BUILT. The merge that completes a milestone tells the human so, and says
 # who starts the audit: the run when one is active, the human otherwise.
@@ -185,7 +185,7 @@ anchor_main "$R"
 : > "$OSA_LOG"
 run_hook "$R" "gh pr merge 130 --squash"
 check_note "built, no run: the title says the milestone is built" "title \"t4d: F9 is built\""
-check_note "built, no run: the body gives the next step" "Next step: /milestone-audit F9"
+check_note "built, no run: the body gives the next step" "Next step: /sweap:milestone-audit F9"
 mkdir -p "$R/.claude"; printf 'milestone: F9\nstarted: 2026-10-08T21:05:30Z\n' > "$R/.claude/sweap-run.md"
 : > "$OSA_LOG"
 run_hook "$R" "gh pr merge 130 --squash"

@@ -17,13 +17,13 @@
 #
 # Modes:
 #   audit-gate.sh --check
-#       Repo-state mode (CI, /milestone & /roadmap pre-flights, and
-#       /milestone-audit's own self-check). Exit 0 = no audit debt, every
+#       Repo-state mode (CI, /sweap:milestone & /sweap:roadmap pre-flights, and
+#       /sweap:milestone-audit's own self-check). Exit 0 = no audit debt, every
 #       record under audits/ is valid, and every hand-off item's provenance is
 #       clean. Exit 1 = "FAIL: ..." lines on stdout.
 #       TWO invariants share this mode, and callers that ACT on a failure must
 #       tell them apart by the line's prefix: "FAIL: milestone <m> ..." /
-#       "FAIL: record ..." is AUDIT DEBT (discharge it with /milestone-audit),
+#       "FAIL: record ..." is AUDIT DEBT (discharge it with /sweap:milestone-audit),
 #       while "FAIL: hand-off <id> ..." is a backlog-integrity violation that is
 #       not debt and is not discharged by an audit. They live in one script
 #       because both are deterministic git-provenance questions about the
@@ -195,7 +195,7 @@ ITEMS="$(item_scan)"
 item_rows() { # item_rows [dir] -> "<milestone> <status>" per item file
   # Follow-up/blocked items created by an audit's triage are DEBT OF the
   # milestone, not members of it — they must not flip it back to incomplete
-  # (they drain in the next /milestone run per the playbook).
+  # (they drain in the next /sweap:milestone run per the playbook).
   { if [ $# -gt 0 ]; then item_scan "$1"; else printf '%s' "$ITEMS"; fi; } \
     | awk -F'\t' '$1 == "0" { print $2 " " $4 }'
 }
@@ -706,11 +706,11 @@ while IFS= read -r m; do
     # completed it — so a --check-only exemption would still deny the merge in
     # merge mode and leave the deadlock fully intact.
     if newly_complete "$m"; then
-      [ "$MODE" = "--check" ] && printf 'DEFERRED: milestone %s becomes complete in the state under review, so its audit cannot have run yet (the audit reads the MERGED default branch). Not debt here. It becomes debt the instant this lands: no backlog-advancing PR will pass the gate afterwards until %saudits/%s.md exists and validates. Run /milestone-audit for %s once this is on main.\n' "$m" "$BACKLOG_DIR" "$m" "$m"
+      [ "$MODE" = "--check" ] && printf 'DEFERRED: milestone %s becomes complete in the state under review, so its audit cannot have run yet (the audit reads the MERGED default branch). Not debt here. It becomes debt the instant this lands: no backlog-advancing PR will pass the gate afterwards until %saudits/%s.md exists and validates. Run /sweap:milestone-audit for %s once this is on main.\n' "$m" "$BACKLOG_DIR" "$m" "$m"
       continue
     fi
     DEBT="$DEBT$m"$'\n'
-    [ "$MODE" = "--check" ] && fail "milestone $m is complete but has no audit record ($rec) — run /milestone-audit for it"
+    [ "$MODE" = "--check" ] && fail "milestone $m is complete but has no audit record ($rec) — run /sweap:milestone-audit for it"
   elif ! rec_out="$(validate_record "$m" "$rec")"; then
     DEBT="$DEBT$m"$'\n'
     if [ "$MODE" = "--check" ]; then
@@ -742,7 +742,7 @@ COMPLETE_EOF
 # supported path: archive F2.3 with a dropped_reason: and author the hand-off as a
 # new item. Both halves are visible in the diff, which is the point.
 #
-# Uncommitted files are skipped, not failed: /roadmap lints items in the working
+# Uncommitted files are skipped, not failed: /sweap:roadmap lints items in the working
 # tree before they are ever committed, and an unborn item has no provenance to
 # judge. CI runs this on the PR's own checkout, where the commits do exist.
 if [ "$MODE" = "--check" ]; then
@@ -774,7 +774,7 @@ ATTENDED_EOF
   # nothing (2026-08-16 research memo — five of six questions survived a whole
   # milestone authoring cycle unasked). The evidence there says the intervention
   # that works is a documented pending-state AT THE TRANSITION, and this gate is
-  # already what /roadmap runs as its pre-flight at exactly that moment. Riding
+  # already what /sweap:roadmap runs as its pre-flight at exactly that moment. Riding
   # on plumbing the boundary already reads beats a fourth place to look.
   #
   # It is surfacing, not enforcement, and deliberately so: skipping the carry
@@ -791,9 +791,9 @@ ATTENDED_EOF
     # the line reads ""Should the row…" with a doubled quote.
     q="$(fm_get "$f" blocked | sed 's/^"//; s/"$//' | cut -c1-100)"
     if [ "$carried" -ge 2 ]; then
-      printf 'AGING: blocked %s — carried %s milestone boundaries: "%s…". At carried 2 this is ASKED, not offered: /roadmap will not start the next brainstorm until it is answered, defaulted on your explicit say-so, or dropped with a dropped_reason:. Answer it now with /unblock %s.\n' "$id" "$carried" "$q" "$id"
+      printf 'AGING: blocked %s — carried %s milestone boundaries: "%s…". At carried 2 this is ASKED, not offered: /sweap:roadmap will not start the next brainstorm until it is answered, defaulted on your explicit say-so, or dropped with a dropped_reason:. Answer it now with /sweap:unblock %s.\n' "$id" "$carried" "$q" "$id"
     else
-      printf 'AGING: blocked %s — carried %s milestone boundary(ies): "%s…". Answer it with /unblock %s; at carried 2 it stops being optional.\n' "$id" "$carried" "$q" "$id"
+      printf 'AGING: blocked %s — carried %s milestone boundary(ies): "%s…". Answer it with /sweap:unblock %s; at carried 2 it stops being optional.\n' "$id" "$carried" "$q" "$id"
     fi
   done <<BLOCKED_EOF
 $ITEMS
@@ -841,6 +841,6 @@ DEBT_EOF
 done
 if [ "$touches_items" = 1 ] && [ "$discharges" = 0 ]; then
   debt_list="$(printf '%s' "$DEBT" | tr '\n' ' ')"
-  fail "audit debt exists for milestone(s): ${debt_list}— this PR advances the backlog without discharging it. Run /milestone-audit and land its record (+ follow-ups) first; code-only PRs are unaffected."
+  fail "audit debt exists for milestone(s): ${debt_list}— this PR advances the backlog without discharging it. Run /sweap:milestone-audit and land its record (+ follow-ups) first; code-only PRs are unaffected."
 fi
 exit "$fails"

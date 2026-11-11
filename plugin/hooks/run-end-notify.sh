@@ -47,7 +47,7 @@ backlog="${backlog:-roadmap/}"; backlog="${backlog#./}"
 case "$backlog" in */) : ;; *) backlog="$backlog/" ;; esac
 
 # Each id's command comes from the item's CURRENT status, never from the record:
-# a blocked item is answered with /unblock, an attended one with /handoff.
+# a blocked item is answered with /sweap:unblock, an attended one with /sweap:handoff.
 blocked=""; attended=""; other=""
 for id in $ids; do
   st="$(sed -n 's/^status:[[:space:]]*\([a-z]*\).*/\1/p' "$primary/$backlog$id.md" 2>/dev/null | head -1)"
@@ -62,15 +62,15 @@ first() { printf '%s' "$1" | cut -d' ' -f1; }
 count() { printf '%s' "$1" | wc -w | tr -d ' '; }
 
 if [ -n "$blocked" ] && [ -z "$attended$other" ]; then
-  if [ "$(count "$blocked")" = 1 ]; then body="It needs your answer on $blocked. Next step: /unblock $blocked"
-  else body="It needs your answer on $(count "$blocked") items: $blocked. Start with /unblock $(first "$blocked")"; fi
+  if [ "$(count "$blocked")" = 1 ]; then body="It needs your answer on $blocked. Next step: /sweap:unblock $blocked"
+  else body="It needs your answer on $(count "$blocked") items: $blocked. Start with /sweap:unblock $(first "$blocked")"; fi
 elif [ -n "$attended" ] && [ -z "$blocked$other" ]; then
-  if [ "$(count "$attended")" = 1 ]; then body="$attended is a step only you can do. Next step: /handoff $attended"
-  else body="$(count "$attended") steps only you can do: $attended. Start with /handoff $(first "$attended")"; fi
+  if [ "$(count "$attended")" = 1 ]; then body="$attended is a step only you can do. Next step: /sweap:handoff $attended"
+  else body="$(count "$attended") steps only you can do: $attended. Start with /sweap:handoff $(first "$attended")"; fi
 elif [ -n "$ids" ]; then
-  body="It is waiting on you for: $ids. Next step: /board"
+  body="It is waiting on you for: $ids. Next step: /sweap:board"
 else
-  body="It is waiting on you. Next step: /board"
+  body="It is waiting on you. Next step: /sweap:board"
 fi
 
 # shellcheck source=/dev/null

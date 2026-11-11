@@ -100,5 +100,5 @@ the list after"), and iterate.
 ## 6. Hand over
 
 Give the human the MP4 paths; they send them on. Never upload or publish a video anywhere
-without asking. When the viewer's notes come back, file them through `/idea` in the viewer's
+without asking. When the viewer's notes come back, file them through `/sweap:idea` in the viewer's
 own words, naming them as the source.

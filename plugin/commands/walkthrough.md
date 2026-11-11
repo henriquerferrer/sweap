@@ -10,8 +10,8 @@ Read `CLAUDE.md`, the playbook's **Backlog format (file-per-item)** and
 This command exists because **every gate can be green and the answer can still
 be no**. sweap automates the correctness loop and the prompting loop and keeps
 the direction loop human — but all three human inputs happen *before* or
-*during* the work (`/roadmap` takes direction, `/unblock` takes an answer,
-`/handoff` takes a task). Nothing happens *after* something ships.
+*during* the work (`/sweap:roadmap` takes direction, `/sweap:unblock` takes an answer,
+`/sweap:handoff` takes a task). Nothing happens *after* something ships.
 
 The evidence is local, not theoretical. On 2026-08-18 one unscripted walkthrough
 of a consumer repo — green on 269 Playwright specs, a six-lens adversarial code audit and
@@ -45,7 +45,7 @@ A milestone is **complete** when every non-`followup_of` item under it is
 `status: done` — the rule `audit-gate.sh` already uses, so an open hand-off or a
 blocked question keeps it incomplete, and outstanding audit follow-ups do not.
 Order is the **index's**, not the id's. Print the milestone, its item count and
-the `source` string verbatim, then `not that one? /walkthrough <M>`. If the resolver
+the `source` string verbatim, then `not that one? /sweap:walkthrough <M>`. If the resolver
 returns null, say nothing is complete yet and stop.
 
 `milestone-audit.js` still falls back to the literal phrase "the most recently
@@ -60,7 +60,7 @@ audited the WRONG milestone. That is why this resolves mechanically.
    land under `<backlog.dir>sessions/`, `discovered/` and `ideas/`, which
    `audit-gate.sh` classifies as non-item, so the capture PR is not
    backlog-advancing and lands during debt.
-2. **The app must be running.** Same ladder as `/milestone`'s environment
+2. **The app must be running.** Same ladder as `/sweap:milestone`'s environment
    pre-flight: `services.up` if declared, `docker info`, `open -a Docker` plus a
    ~90s poll on macOS. **There is no CI-gated fallback here** — a session
    without a running app is not a session. If it will not come up, say so and
@@ -71,7 +71,7 @@ audited the WRONG milestone. That is why this resolves mechanically.
    already booked. That is the honest prior on what is left, and it stops the
    session re-reporting known work.
 4. **Prefer a fresh session, and say so once.** If this session implemented any
-   of the milestone's items, recommend running `/walkthrough` in a new one: *"a fresh
+   of the milestone's items, recommend running `/sweap:walkthrough` in a new one: *"a fresh
    context improves code review since Claude won't be biased toward code it just
    wrote"*, and the same bias operates on a facilitator. A recommendation, not a
    block — a wall gets routed around.
@@ -107,7 +107,7 @@ could read.
    `DS.5.2`.
 
 5. **Capture continuously, in their words.** Keep the human's phrasing verbatim,
-   the way `/idea` already requires. **Never argue an observation into
+   the way `/sweap:idea` already requires. **Never argue an observation into
    correctness.** You may have written this code; you do not get to defend it
    here. A disagreement is recorded as a disagreement.
 
@@ -123,18 +123,18 @@ could read.
    A clean session is a claim, and it gets tested like any other.
 
 **The four outlets.** This is SBTM's bugs / issues / notes split mapped onto
-queues sweap already drains. **`/walkthrough` mints no item files itself:**
+queues sweap already drains. **`/sweap:walkthrough` mints no item files itself:**
 
 | the observation | outlet | who drains it |
 |---|---|---|
-| contradicts a stated `## Acceptance` bullet | `writeDiscovered` — `kind: gap`, `from: <item id>`, `milestone: <M>` | `/milestone` triages it: with a harm class it becomes a `followup_of: <M>` item whose `## Acceptance` becomes a permanent test; without one it waits for you at `/roadmap` — an agent never parks what you filed |
+| contradicts a stated `## Acceptance` bullet | `writeDiscovered` — `kind: gap`, `from: <item id>`, `milestone: <M>` | `/sweap:milestone` triages it: with a harm class it becomes a `followup_of: <M>` item whose `## Acceptance` becomes a permanent test; without one it waits for you at `/sweap:roadmap` — an agent never parks what you filed |
 | a UI/aesthetic shortfall | same, with the *why* naming the contract clause it should become | the clause plus its check land with the item |
-| works as specced and is still wrong | `writeDiscovered` — `kind: direction` | `/roadmap` decides: an item, a spec line, or a `declined:` |
-| a genuinely new want | `writeIdea` | `/roadmap` triage |
+| works as specced and is still wrong | `writeDiscovered` — `kind: direction` | `/sweap:roadmap` decides: an item, a spec line, or a `declined:` |
+| a genuinely new want | `writeIdea` | `/sweap:roadmap` triage |
 | a question you can answer | answered live | recorded in the sheet under `answered:` |
 
 Use the lib snippets exactly as the playbook's "Discovered work" section and
-`/idea` step 4 give them — `writeDiscovered` and `writeIdea` are create-only and
+`/sweap:idea` step 4 give them — `writeDiscovered` and `writeIdea` are create-only and
 own the format. **When unsure, `direction`**: a human un-deciding a gap costs a
 minute, an agent deciding direction costs a milestone.
 
@@ -177,7 +177,7 @@ cycle. Merge on green through the normal gate
 (`sweap-merge watch <n>`), then run
 end-of-run hygiene as always. Report what the gap notes will become: the ones
 with a harm class drain **debt-first**, at the front of the next run's frontier;
-the rest are yours to decide at the next `/roadmap`.
+the rest are yours to decide at the next `/sweap:roadmap`.
 
 **Safety rails on the half where you act.**
 - Browser actions only on explicit request, one at a time, narrated first.
@@ -198,9 +198,9 @@ the rest are yours to decide at the next `/roadmap`.
 *agent got stuck* signal, not an observation); write an item file of any status;
 edit an existing idea or discovered note; state the expected result before the
 human has looked; render the verdict itself; or run unattended — this command
-requires a human in the session, like `/handoff` and `/unblock`.
+requires a human in the session, like `/sweap:handoff` and `/sweap:unblock`.
 
-**It is offered, never mandated.** `/milestone` surfaces it at kickoff and takes
+**It is offered, never mandated.** `/sweap:milestone` surfaces it at kickoff and takes
 no for an answer, every time, without escalating. Mandating attendance is the one
 variable with a large null result against it: an identical checklist mandated
 across 101 hospitals and 215,711 procedures moved outcomes at P = 0.13, and

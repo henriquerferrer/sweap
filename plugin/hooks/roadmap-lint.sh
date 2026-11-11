@@ -2,7 +2,7 @@
 #
 # roadmap-lint.sh — the mechanical spec gate on roadmap item files.
 #
-# One gate, two call sites: /roadmap runs it on every new/changed item file
+# One gate, two call sites: /sweap:roadmap runs it on every new/changed item file
 # before the milestone PR opens; the dispatching session runs it on an item
 # before dispatch. Fail = the item is not runnable — fix mechanically or
 # escalate; never dispatch past a failing lint.
@@ -70,7 +70,7 @@ if [ "$status" = "attended" ] && [ -z "$(get handoff)" ]; then
 fi
 
 # `carried:` counts the MILESTONE BOUNDARIES a blocked question has survived
-# unanswered. /roadmap's blocked-queue pre-flight is its only writer. It is
+# unanswered. /sweap:roadmap's blocked-queue pre-flight is its only writer. It is
 # deliberately optional and never required: no pre-existing item file has it, an
 # absent value reads as 0 everywhere, and a question that has never crossed a
 # boundary has nothing to record. It is also NOT rejected on other statuses —
@@ -134,7 +134,7 @@ DEPS
 # legacy migration carry historical done items across as plain records.
 #
 # `attended` is the third case: nothing dispatches it to an agent, but a HUMAN
-# picks it up (via /handoff), so it needs its own self-contained instructions —
+# picks it up (via /sweap:handoff), so it needs its own self-contained instructions —
 # `## Hand-off`. Same principle as the spec gate, different reader. No existing
 # item file can carry `status: attended`, so this requirement cannot retroactively
 # fail anything already merged.
@@ -152,7 +152,7 @@ if [ "$status" = "attended" ]; then
   if printf '%s' "$hoff" | grep -q '[^[:space:]]'; then
     has_placeholder "$hoff" && fail "unfilled placeholder (<...> or <lowercase phrase>) in the '## Hand-off' section"
   else
-    fail "attended item missing/empty '## Hand-off' section (the steps /handoff walks the human through)"
+    fail "attended item missing/empty '## Hand-off' section (the steps /sweap:handoff walks the human through)"
   fi
 fi
 

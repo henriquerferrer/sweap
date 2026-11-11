@@ -16,8 +16,8 @@ nothing else up front — a run session, and equally any agent it delegates a
 range of items to (hand that agent this section; never rewrite it for it). Every
 other section is reference: read it when its situation arrives, by heading —
 `sed -n '/^## Blocked items/,/^## /p' <this file>` — using the table that closes
-this section. Commands (`/milestone-audit`, `/unblock`, `/handoff`,
-`/walkthrough`) name the sections they need.
+this section. Commands (`/sweap:milestone-audit`, `/sweap:unblock`, `/sweap:handoff`,
+`/sweap:walkthrough`) name the sections they need.
 
 ### Hard rules
 
@@ -108,7 +108,7 @@ cost. A dead runner fleet stops the run (`sweap-fleet`, asked at Resume and
 by the watcher on a queued timeout) instead of opening PRs nobody can test.
 While the workflow runs, end the turn and wait for its result; never
 poll it. When it returns, the session records the run (below), runs
-`/milestone-audit` if a milestone completed, and after a stop it clears the
+`/sweap:milestone-audit` if a milestone completed, and after a stop it clears the
 cause if it can (a red default branch: rerun its failed job once) and
 relaunches the workflow FRESH with the same args — the frontier is live, so
 merged items are not picked again, and the Resume stage must run live to see
@@ -119,9 +119,9 @@ back. `sweap-note discovered "<title>" gap|direction "<item id or PR #n>"
 "<what is wrong, and what done looks like>" "$(git branch --show-current)"`.
 `gap` = the spec promised it; `direction` = it never did (when unsure,
 `direction`). File everything you see and do not argue its importance — the next
-`/milestone` triages gaps against the harm bar, `/roadmap` decides directions.
+`/sweap:milestone` triages gaps against the harm bar, `/sweap:roadmap` decides directions.
 A status flip travels only in its own item's PR; the index changes only at
-`/roadmap`.
+`/sweap:roadmap`.
 
 ### Merge and wait
 
@@ -234,8 +234,8 @@ why_not_agent: [<id>=identity|money|terms|taste|authority, ...]
 `needs:` is ids, never prose; `why_not_agent:` says why a person is required
 rather than another turn — if you cannot name why, do it yourself. Do not write
 the commands the human should run; the board derives them. Then notify (when
-`notify: push`): merged PRs, each blocked item with `/unblock <id>`, each open
-hand-off with `/handoff <id>`. Delete the run file on `goal-met`,
+`notify: push`): merged PRs, each blocked item with `/sweap:unblock <id>`, each open
+hand-off with `/sweap:handoff <id>`. Delete the run file on `goal-met`,
 `frontier-empty` or `turns-exhausted`; keep it on `awaiting-human`. When the run
 finished a milestone (every item under it done), end your report to the human
 with one reminder line, never a question: `<M> is done: /sweap:walkthrough <M>
@@ -249,7 +249,7 @@ to walk it with me, or /sweap:demo <M> to film what it delivered.`
 | a question only a human can answer | Blocked items |
 | an `attended` item, or work only a human can do | Attended items |
 | a `deferred` item | Deferred items |
-| the milestone's last item merged | `/milestone-audit` runs it; Milestone audit → Findings triage, Audit evidence and the audit record |
+| the milestone's last item merged | `/sweap:milestone-audit` runs it; Milestone audit → Findings triage, Audit evidence and the audit record |
 | a follow-up carries `followup_of: <this milestone>` | it is the NEXT run's debt, not this run's work |
 | a PR changes only backlog files or docs | Roadmap-only CI lane |
 | no local services | Environment parity |
@@ -283,7 +283,7 @@ overrides only the keys that differ from the baked defaults. The keys:
   milestone can itself carry a dot (`DS.2`) with items one level deeper
   (`DS.2.1`) — a milestone id is any item id minus its last dotted segment, and
   dependency resolution is dot-depth-agnostic (see **Backlog format**). When
-  more than one prefix is configured, `/milestone` resolves the next runnable
+  more than one prefix is configured, `/sweap:milestone` resolves the next runnable
   milestone across ALL of them, in the index's listed order — a milestone is a
   milestone regardless of prefix.
   Referred to below as *the milestone prefix*.
@@ -311,9 +311,9 @@ overrides only the keys that differ from the baked defaults. The keys:
   check-in), not an item — the items run inside the workflow — so the bound is
   a backstop against a session relaunching a stopped workflow forever, not a
   measure of work.
-- **`test.url`** / **`test.seed`** — optional, read only by `/walkthrough`: the
+- **`test.url`** / **`test.seed`** — optional, read only by `/sweap:walkthrough`: the
   URL the acceptance pass opens (never production) and the ONE command allowed
-  to create test data. Undeclared, `/walkthrough` opens nothing and seeds
+  to create test data. Undeclared, `/sweap:walkthrough` opens nothing and seeds
   nothing by itself — the human drives.
 
 References to `ROADMAP.md`, the milestone prefix `F`, and `just …` recipe names
@@ -341,8 +341,8 @@ hazard.
   `dropped_reason:` key): a reversible soft-delete, visible in git history.
 - **`roadmap/ideas/`** — the **idea inbox**: free-form idea files (frontmatter
   `title:` + `created:` only — no id, no status) captured from the sweap-board
-  page's Ideas form or the `/idea` command. Invisible to lint, dep resolution,
-  and the frontier (like `archive/`). `/roadmap`'s decide phase surfaces them
+  page's Ideas form or the `/sweap:idea` command. Invisible to lint, dep resolution,
+  and the frontier (like `archive/`). `/sweap:roadmap`'s decide phase surfaces them
   as read-only context; reconcile moves triaged ones to
   `roadmap/ideas/archive/`. **Idea files are committed, not scratch** — see the
   sweep rule under End-of-run hygiene. They were untracked-until-triaged until
@@ -357,10 +357,10 @@ hazard.
   `discovered_by:`, `milestone_hint:`, `created:`; body = *why*, written so a
   fresh session can act on it after the branch it was found on is gone.
   `kind: gap` = the spec promised it (a bug, a race, infra the spec assumed):
-  agent work, TRIAGED by the next `/milestone` against the harm bar — promoted
+  agent work, TRIAGED by the next `/sweap:milestone` against the harm bar — promoted
   into a `followup_of:` item when the fix removes a class of harm, parked
   otherwise. `kind: direction` = not in the spec: a human's call,
-  surfaced by `/roadmap` like an idea. Invisible to lint, dep resolution and
+  surfaced by `/sweap:roadmap` like an idea. Invisible to lint, dep resolution and
   the frontier until promoted; triage moves the note to
   `roadmap/discovered/archive/` with `promoted_to:` (or `declined:`, which for
   a park reads `declined: parked: <reason>`) appended, the only edit a note
@@ -371,11 +371,11 @@ hazard.
   thing a discovered note is not is an item file on a feature branch** — see
   "Discovered work" under the per-feature loop for why.
 - **`.claude/sweap-run.md`** (gitignored) is the other ephemeral file: which
-  milestone `/milestone` resolved for THIS run, and the shape it resolved to.
+  milestone `/sweap:milestone` resolved for THIS run, and the shape it resolved to.
   It exists because that resolution is the one fact no item file records —
   "debt-first", "debt-only", "hand-offs outstanding" and the deferred hand-offs
   behind them are decisions made at kickoff, and before this they were spoken
-  once into a printed goal line and then lost. `/milestone` writes it (see that
+  once into a printed goal line and then lost. `/sweap:milestone` writes it (see that
   command); End-of-run hygiene deletes it. Nothing in the loop READS it to
   decide anything — status truth is still the item files — so a stale or
   missing one degrades a display, never a control. The board viewer is its only
@@ -455,8 +455,8 @@ The line between the two that page the human: **`blocked:` holds a QUESTION,
 blocked. If their next move is to *do something*, it is attended. See
 **Attended items** and **Blocked items** below.
 
-Both queues have a command that *drains* them — `/unblock <id>` for a question,
-`/handoff <id>` for a task. A queue that is only displayed is not worked: sweap
+Both queues have a command that *drains* them — `/sweap:unblock <id>` for a question,
+`/sweap:handoff <id>` for a task. A queue that is only displayed is not worked: sweap
 listed blocked items in three read-only places for months and a consumer still
 carried five questions through whole milestones unasked
 (`docs/research/2026-08-16-blocked-question-queue.md`).
@@ -472,7 +472,7 @@ both lint-enforced (same principle, different reader). `blocked`,
 `deferred`, and `done` items are **records** — they need only valid
 frontmatter (plus `blocked:`/`premise:` where the status requires it), NOT a
 `## Spec`/`## Acceptance`; a deferred or blocked item earns its full spec when
-it is promoted to `todo`. `/roadmap` runs it on every new/changed item
+it is promoted to `todo`. `/sweap:roadmap` runs it on every new/changed item
 file before the milestone PR opens; the dispatching session runs it again
 before dispatch. A todo item failing lint is not
 runnable: fix it if the fix is mechanical, else escalate (status: blocked
@@ -495,7 +495,7 @@ resolve correctly alongside `F1`/`F1.1`.
 
 **Legacy migration (one-time, agentic).** A project whose `backlog.file`
 still contains item headers (`### … [todo]`-style) migrates before its next
-`/roadmap` or `/milestone` proceeds: one PR through the gate that moves every
+`/sweap:roadmap` or `/sweap:milestone` proceeds: one PR through the gate that moves every
 item into a `backlog.dir` file (parsed fields → frontmatter; `Depends on:` →
 `depends_on`; `Premise:` → `premise:`; items under `## <milestone> audit
 follow-ups` sections → `followup_of: <milestone>`), rewrites the index, and
@@ -560,16 +560,16 @@ change it is. Nothing else is sanctioned:
    un-deciding a gap costs a minute, an agent deciding direction costs a
    milestone. Commit the note on the branch you are on and carry on: the sweep
    rule (End-of-run hygiene) lands it with the PR you are opening anyway, the
-   next `/milestone` triages every `gap` against the harm bar (promoted ones
+   next `/sweap:milestone` triages every `gap` against the harm bar (promoted ones
    drain debt-first, as `followup_of:` items with a real spec; the rest are
-   parked), and `/roadmap` triages every `direction`. File everything you see
+   parked), and `/sweap:roadmap` triages every `direction`. File everything you see
    and do not argue its importance — capture stays exhaustive precisely because
    a separate pass does the filtering.
 2. **A status flip → the item's own PR.** Unchanged: the `status:` line in
    `roadmap/<ID>.md` travels with *that* item's PR — conflict-free by
    construction — never with someone else's.
 3. **An index or direction edit — a retitle, a milestone reorder, a new
-   milestone — → `/roadmap`, never mid-run.** The index is a direction-level
+   milestone — → `/sweap:roadmap`, never mid-run.** The index is a direction-level
    document; it changes at milestone boundaries with the human present.
 
 **Why a note and not an item file.** An item file authored mid-run on a feature
@@ -615,7 +615,7 @@ test gate, not the local machine.** CI runs the verify gates (including
 every CI check green — so an item **cannot** reach `status: done` without e2e
 passing in CI, regardless of where it was written.
 
-- **Local (services available):** if `services.up` is declared, `/milestone` runs
+- **Local (services available):** if `services.up` is declared, `/sweap:milestone` runs
   it (starting the daemon if the command is daemon/Docker-based), then the local
   gates are a fast pre-check before pushing — typecheck, lint, and the specs and
   tests the change touched: seconds of feedback instead of waiting on CI, never
@@ -627,35 +627,35 @@ passing in CI, regardless of where it was written.
   let CI run test + e2e + review. Merge on green. Slower per item (CI minutes vs.
   local seconds) but the exact same gate and the same result.
 
-`/milestone` detects the environment and picks the path automatically. Do not
+`/sweap:milestone` detects the environment and picks the path automatically. Do not
 treat "e2e ran locally" as a merge requirement — "CI e2e green on the PR" is the
 requirement, and it holds in both environments.
 
 ## Kickoff commands
 
-- **`/roadmap [milestone]`** — brainstorm the next milestone into item files
+- **`/sweap:roadmap [milestone]`** — brainstorm the next milestone into item files
   under `roadmap/` plus the index (the 3-phase decide → cross-check →
   reconcile). Defaults to the next unspecced milestone. Interactive.
-- **`/milestone [milestone] [turns]`** — if `services.up` is declared, brings up
+- **`/sweap:milestone [milestone] [turns]`** — if `services.up` is declared, brings up
   local test services itself (starting the daemon if needed; falls back to
   CI-gated mode when services are unavailable), then prints the ready-to-paste
   `/goal` for an autonomous run — one line, and the goal names the driver, so
   that one paste is the whole kickoff. Defaults to the next runnable milestone
   and `turns.default` turns. You never run `services.up` by hand; the paste
   step exists only because a human must invoke `/goal`. Ritual:
-  `claude --permission-mode auto` → `/milestone` → paste. When the run's scope
+  `claude --permission-mode auto` → `/sweap:milestone` → paste. When the run's scope
   contains unblocked hand-offs, the pre-flight asks whether to do them first and
-  prints `/handoff` commands instead — see **Attended items**.
-- **`/handoff [id]`** — walk one `status: attended` item with the human: do
+  prints `/sweap:handoff` commands instead — see **Attended items**.
+- **`/sweap:handoff [id]`** — walk one `status: attended` item with the human: do
   every part an agent legitimately can, check its *Done when* condition, and on
   their explicit confirmation flip it to `done` through a gated PR. Interactive
   only; never invoked by an unattended run.
-- **`/unblock [id]`** — walk one `status: blocked` item with the human: brief the
+- **`/sweap:unblock [id]`** — walk one `status: blocked` item with the human: brief the
   question, prepare the fork (options, a recommended default, what each answer
   produces), take their answer, and close it through a gated PR — to `todo` with
   a spec authored, or to `done` when the answer produces no work. Prepares
   everything; answers nothing. Interactive only; never invoked by an unattended
-  run. `/roadmap`'s step 0 does the same for the whole queue at a milestone
+  run. `/sweap:roadmap`'s step 0 does the same for the whole queue at a milestone
   boundary — see **Blocked items**.
 
 ## Review dimensions (tagged per backlog item)
@@ -702,7 +702,7 @@ Each item file carries `review-dimensions: [...]` frontmatter, drawn from the pr
   screen by screen (`docs/research/2026-08-19-cross-screen-consistency.md`). The
   contract's deterministic clauses are enforced by checks that **enumerate the
   route inventory, not the diff** — a diff-scoped lint only ever sees the screens
-  someone touched. The contract is authored in `/roadmap`'s decide phase, never
+  someone touched. The contract is authored in `/sweap:roadmap`'s decide phase, never
   by an implementer mid-item; the human remains the spot-check on
   visual polish, authored as an `attended` hand-off (see the ui-design skill).
 - **`migration`** — any schema change beyond a new table: reviewer checks
@@ -720,8 +720,8 @@ may ADD dimensions it judges necessary; it may not remove tagged ones.
   only mechanism that covers ideas captured from the board's Ideas form, which
   writes over HTTP with no session behind it and can never open a PR itself. Do
   not open a separate PR for them mid-feature, and do not hold them back for
-  `/roadmap` — an idea sitting untracked is one `git clean` from gone, and the
-  human wrote it. (`/idea` flushes both inboxes itself when nothing is in
+  `/sweap:roadmap` — an idea sitting untracked is one `git clean` from gone, and the
+  human wrote it. (`/sweap:idea` flushes both inboxes itself when nothing is in
   flight; this rule is what catches everything else. An inbox-only PR is never
   backlog-advancing — `audit-gate.sh` classifies `<backlog.dir>ideas/` and
   `<backlog.dir>discovered/` as non-item subdirs — so it lands even during
@@ -730,12 +730,12 @@ may ADD dimensions it judges necessary; it may not remove tagged ones.
   backlog files.** Run `sweap-stranded`:
   one line per not-merged branch whose `<backlog.dir>` differs from main, with
   its PR state. `open` is a rider and fine; `closed` or `none` is **stranded**
-  — invisible to the frontier, the board's backlog, the gate and `/roadmap`,
+  — invisible to the frontier, the board's backlog, the gate and `/sweap:roadmap`,
   with nothing scheduled to ever land it. Rescue inbox files (`discovered/`,
   `ideas/`) with a docs-only PR: `git checkout -b roadmap/rescue-<6hex>
   origin/main && git checkout <branch> -- <paths>`, commit, open the PR (it
   rides the roadmap-only lane). Stranded top-level item files or index edits
-  are listed for the human, not relayed blindly — they need `/roadmap`
+  are listed for the human, not relayed blindly — they need `/sweap:roadmap`
   judgement and may be gate-denied. The `post-merge-cleanup` hook runs the same
   scan after every merge and reports stranded branches to the session, and the
   board shows them, so a stranded file cannot go quietly — but the scan is a
@@ -743,7 +743,7 @@ may ADD dimensions it judges necessary; it may not remove tagged ones.
   firing.
 - **Record how the run ended, before deleting anything.** Append `ended:`,
   `reason:` and (for `awaiting-human`) `needs:` to `.claude/sweap-run.md` — see
-  `/milestone`, "Record the end of the run". A run that stops without recording
+  `/sweap:milestone`, "Record the end of the run". A run that stops without recording
   why is indistinguishable from one that died, and "I asked the human in chat"
   is not a record: no tool can read it.
 - **Delete `.claude/sweap-run.md`** when the run ended with reason `goal-met`,
@@ -751,7 +751,7 @@ may ADD dimensions it judges necessary; it may not remove tagged ones.
   behind, makes the board's card claim a run that is over. **Do not delete it
   when the reason is `awaiting-human`**: it is then the board's only record of
   whose answer the run is waiting on (`needs:`/`why_not_agent:`); the next
-  `/milestone` kickoff overwrites it (one run at a time). Gitignored, so
+  `/sweap:milestone` kickoff overwrites it (one run at a time). Gitignored, so
   deletion is a plain `rm -f`, never a commit. (The card ignores a run file
   whose milestone has no unfinished items, so a missed delete after `goal-met`
   only stales the shape line — a run stopped mid-milestone is exactly the case
@@ -812,7 +812,7 @@ may ADD dimensions it judges necessary; it may not remove tagged ones.
   worker error, fixed through the next gated PR (e.g. folded into the next
   queued item's branch), never by committing to `main`.
 - At goal end (met or stopped): if `notify` is `push`, send a push notification
-  summarizing merged PRs, blocked items (each with `/unblock <id>` and its
+  summarizing merged PRs, blocked items (each with `/sweap:unblock <id>` and its
   `carried:` count, so the summary is actionable rather than a list), and **open
   hand-offs** (`status: attended`, with what each one gates — the human's own
   queue is part of "what now?", not a detail); list any leftover worktrees/branches
@@ -1043,30 +1043,30 @@ resolution (satisfied only by `done`), the blocked queue, and the audit gate's
 milestone-completeness computation all behave correctly with no special cases.
 
 **Authoring (the only way one is created).** Hand-offs are declared during
-`/roadmap`'s decide phase, with the human present — the brainstorm asks
+`/sweap:roadmap`'s decide phase, with the human present — the brainstorm asks
 outright what in the milestone is not an agent's to do, and
 `milestone-cross-check`'s human-dependency lens catches what it missed. Two
 authoring rules carry weight:
 
 - **Write the `## Hand-off` section for a reader who is not you** — why it's
   theirs, the concrete steps, and a *Done when* condition that can be checked.
-  `/handoff` walks exactly this.
+  `/sweap:handoff` walks exactly this.
 - **Give a hand-off as few dependencies as possible.** A hand-off buried
   mid-chain serializes the whole run on one person, and wait time — not
   execution time — is the dominant cost. Authored dependency-free, it is
   startable on day one and runs *concurrently* with the agents' drain.
 
-**Surfacing (day one, not day nine).** `/milestone`'s pre-flight lists every
+**Surfacing (day one, not day nine).** `/sweap:milestone`'s pre-flight lists every
 unblocked hand-off in the run's scope **before** printing the goal, with what
 each one gates, and offers to walk them then and there. Skipping is a legitimate
-choice with a stated cost, and it changes the run shape (see `/milestone`'s
+choice with a stated cost, and it changes the run shape (see `/sweap:milestone`'s
 hand-offs-outstanding goal template). The end-of-run summary lists open
 hand-offs alongside blocked items; the board gives them their own column,
 `🙋 Yours`, deliberately separate from `⛔ Blocked` — a needs-me-now list that
 mixes *an agent failed* with *this was always yours* is one the human stops
 reading.
 
-**Completion.** `/handoff <id>` walks the item, does every part it legitimately
+**Completion.** `/sweap:handoff <id>` walks the item, does every part it legitimately
 can, checks the *Done when* condition, and — only on the human's explicit
 confirmation — flips `status: done` through a normal gated PR. An unattended run
 never flips it. A hand-off that is started but cannot finish yet (waiting on a
@@ -1121,8 +1121,8 @@ survived milestone after milestone (a consumer: five of six questions outlived a
 authoring-and-draining cycle; one outlived two). The fix is a **closing event at
 the boundary**, not a fourth place to look.
 
-**Working one.** `/unblock [id]` walks a single question: brief, prepare, take
-the answer, close it through a gated PR. `/roadmap`'s **step 0** works the whole
+**Working one.** `/sweap:unblock [id]` walks a single question: brief, prepare, take
+the answer, close it through a gated PR. `/sweap:roadmap`'s **step 0** works the whole
 queue at the milestone boundary before the brainstorm starts. Both use the same
 classification, and both are bound by the rule below.
 
@@ -1143,14 +1143,14 @@ an interpretation. A step that says "check whether these are answerable" is that
 condition exactly, which is why it ends in a classification instead of an answer.
 
 **Aging, and the deadline.** `carried: N` counts the milestone boundaries a
-question has survived unanswered. `/roadmap`'s step 0 is its only writer; it
+question has survived unanswered. `/sweap:roadmap`'s step 0 is its only writer; it
 increments on each boundary the item is not resolved at and records
 `> **CARRIED (YYYY-MM-DD):** unanswered through <milestone>.` under `## Notes`,
 adding `> **RECOMMENDATION (YYYY-MM-DD):** <default> — <rationale>` if the item
 has none. `audit-gate.sh --check` prints a non-failing `AGING:` line per open
 question, so the boundary's own pre-flight reports what is pending.
 
-At **`carried: ≥2` the question is asked, not offered**: the next `/roadmap` does
+At **`carried: ≥2` the question is asked, not offered**: the next `/sweap:roadmap` does
 not start its brainstorm until the item is answered, defaulted on the human's
 explicit say-so (recorded as an answer marked `(default taken)`), or dropped with
 a `dropped_reason:`. Below that it stays a soft gate — surfaced, offered, and the
@@ -1188,12 +1188,12 @@ A `[deferred]` item is parked: nobody is working on it and nothing is stuck.
 Every deferred item carries a `premise:` — one line saying why it is parked and
 what would un-park it (*"parked 2026-09-20 — no harm class"*, *"waits on F4's
 billing surface; re-decide when F4 lands"*). Two things park an item: the harm
-bar (`/milestone`'s triage step, and the one parked-findings item an audit
-files), and a human at `/roadmap` setting aside a good idea whose time has not
+bar (`/sweap:milestone`'s triage step, and the one parked-findings item an audit
+files), and a human at `/sweap:roadmap` setting aside a good idea whose time has not
 come. Work that merely waits on a dependency does not need this status — a
 `todo` item with an unsatisfied `depends_on` is already off the frontier.
 
-**Only a human un-parks**, at `/roadmap`, which lists the deferred items next to
+**Only a human un-parks**, at `/sweap:roadmap`, which lists the deferred items next to
 the inboxes: flip it to `todo` (it then needs a real spec — the lint gate is
 todo-only), re-spec it, or drop it to `roadmap/archive/` with a
 `dropped_reason:`. One exception to the drop: a follow-up an audit record names
@@ -1206,7 +1206,7 @@ interactive-only, done with the human. It runs in three phases; the pair of a
 decisive pass and an independent completeness critic is the same finder/refuter
 shape as the audit.
 
-1. **Decide** (interactive) — `/roadmap`'s decide phase, with the human.
+1. **Decide** (interactive) — `/sweap:roadmap`'s decide phase, with the human.
    Socratic, one question at a time; it *locks* the core decisions and produces
    draft items in the item-file format (frontmatter + Spec/Acceptance body —
    see **Backlog format (file-per-item)**). This is where the human's
@@ -1231,7 +1231,7 @@ shape as the audit.
    screens that still disagree; "responsive" and "feels high-end" are dimensions,
    never screens.
 3. **Reconcile** (brief, interactive) — the human answers the net-new forks;
-   writing, linting and merging the items is `/roadmap` steps 3–4, which is the
+   writing, linting and merging the items is `/sweap:roadmap` steps 3–4, which is the
    source.
 
 Rationale: a single decisive pass is fast but blind-spotted. The A/B that
@@ -1242,7 +1242,7 @@ Phase 2 makes that second lens a standard, cheap step instead of luck.
 ## Milestone audit (after a milestone completes)
 
 When the last item of a milestone merges, run the saved audit workflow via
-`/milestone-audit`, always passing the milestone id being audited —
+`/sweap:milestone-audit`, always passing the milestone id being audited —
 `{milestone: "<id>"}`, optionally with `{range: "<base>..<head>"}` too when
 known. Passing the milestone id is what lets the workflow refuse to run if it
 resolves a different one (see "Audit evidence" below) — omitting it disables
@@ -1277,7 +1277,7 @@ milestone over a panel that did not run, say so in `unscored_accepted:` and own
 it; do not let "documented the gap" be the cheap way past the gate.
 
 The operational recipe (run the workflow, triage, write the record from the
-workflow's `record` field, `--check`, land it in one PR) is `/milestone-audit`;
+workflow's `record` field, `--check`, land it in one PR) is `/sweap:milestone-audit`;
 the record format and every rule the gate enforces on it are
 `playbook/audit-record.template.md`. This section is the doctrine those two
 implement.
@@ -1286,32 +1286,32 @@ implement.
 
 **Auto-launch (pre-authorized in the goal).** A milestone `/goal` run carries a
 final clause so the audit fires once, automatically, at the milestone boundary —
-no cron, no standing agent. **`/milestone` prints the goal text and is its only
+no cron, no standing agent. **`/sweap:milestone` prints the goal text and is its only
 owner** — a copy kept here drifted from it. Two things about that text are
 load-bearing: the stop clause excludes `followup_of: <milestone>` items, because
 a correct audit ends by CREATING work and a run that audits well could otherwise
 never stop (a consumer's F11 run hit exactly that); and both stop conditions have a
-drain the stop message must name — `/unblock <id>` for a question, `/handoff
+drain the stop message must name — `/sweap:unblock <id>` for a question, `/sweap:handoff
 <id>` for a task.
 
 (A milestone with an **open hand-off** cannot complete, so its audit is not yet
-due and this template does not apply — `/milestone` prints its
+due and this template does not apply — `/sweap:milestone` prints its
 hand-offs-outstanding variant instead, which drops the audit clause and says so.
 See **Attended items**.)
 
 This applies to **every** milestone regardless of prefix — a second prefix
-(e.g. `DS*`) gets audited exactly like the primary one (`/milestone` resolves
+(e.g. `DS*`) gets audited exactly like the primary one (`/sweap:milestone` resolves
 across all configured prefixes and always emits the audit clause; see
 `backlog.prefix` above). A milestone `/goal` that omits the audit-and-triage
 clause is **malformed**: the run drains its items but stops before auditing,
 which is stopping early — the audit is part of the milestone's definition of
 done, not an optional extra. If a milestone goal is ever hand-written rather
-than printed by `/milestone`, the audit clause still travels with it.
+than printed by `/sweap:milestone`, the audit clause still travels with it.
 
 The goal's completion state is the audit run and triaged; its other ends
 (nothing runnable, a stop you cannot clear, the turn cap) are successful ends
 of the run, never completions of the milestone — record them as
-awaiting-human or frontier-empty, never goal-met. The `/milestone-audit` workflow finds and reports confirmed
+awaiting-human or frontier-empty, never goal-met. The `/sweap:milestone-audit` workflow finds and reports confirmed
 findings; it never edits code. What happens next is the **triage** the
 surrounding session performs (below): a bucket-1 fix is a deliberate, gated
 *follow-on* PR the session opens, not something the audit workflow does silently.
@@ -1459,7 +1459,7 @@ route around.
 **The audit record + gate (mechanical enforcement).** The audit's definition
 of done includes a committed record at `<backlog.dir>audits/<milestone>.md`
 (range SHAs, lens set, raw/refuted/confirmed counts, one block per confirmed
-finding with its disposition — see `/milestone-audit`). The record is what
+finding with its disposition — see `/sweap:milestone-audit`). The record is what
 makes "the audit ran, on the right range, and its findings went somewhere"
 machine-checkable: `hooks/audit-gate.sh` recomputes the binding from git
 ancestry (a record for the wrong milestone or a stale range fails
@@ -1517,7 +1517,7 @@ still denies that PR), failing closed when the anchor cannot be resolved. One PR
 later the anchor contains the completion and the exemption stops applying by
 construction. **So the audit is still mandatory; it is merely sequenced after
 the merge that makes it possible.** Merge the completing PR, then run
-`/milestone-audit` for it before anything else touches the backlog.
+`/sweap:milestone-audit` for it before anything else touches the backlog.
 
 **Required checks may not be available to you — plan the enforcement, not just
 the check.** Branch protection and rulesets are a PAID feature for private
@@ -1586,10 +1586,10 @@ Hard-won rules for the required check, WHERE ONE IS AVAILABLE (research memo,
    through the gate. Hands-off in an unattended run (no human needed), but still a
    separate gated PR — the audit workflow never edits code.
 2. **Small gap / non-urgent** (races, infra): apply the **harm bar**
-   (`/milestone`'s triage step owns it). A finding whose fix removes a class of
+   (`/sweap:milestone`'s triage step owns it). A finding whose fix removes a class of
    harm becomes its own item file with `followup_of: <milestone>` and `harm:`
    (`status: todo`, tagged, lint-clean) and is **auto-folded, debt-first, into
-   the next `/milestone` run** — or a standalone **debt-only run** when no
+   the next `/sweap:milestone` run** — or a standalone **debt-only run** when no
    milestone is runnable. Every finding with no class is **parked**: one
    `status: deferred` item per audit lists them by record block, so each
    disposition resolves and nothing schedules them. True is not the bar —
@@ -1617,7 +1617,7 @@ coverage, design-system consistency, a11y): **independent, anonymized critics**
 against the committed internal exemplar first and Mobbin references second
 (when available), and **independent refutation, majority-survives**. Confirmed
 findings triage into the same three buckets and auto-fold into the next
-`/milestone` run — aesthetic findings as ratchet/roadmap items, a11y findings with
+`/sweap:milestone` run — aesthetic findings as ratchet/roadmap items, a11y findings with
 gate weight.
 
 A UI audit is a SECOND AXIS on the same milestone record, not a second record.
@@ -1683,16 +1683,16 @@ in-flight branch at width 1 too, and a Free-plan repo never reports BEHIND.
 | Workflow (multi-agent orchestration) | Deterministic fan-out: parallel finders + adversarial verifiers; use for audits/reviews, not feature code | Claude, on the user's explicit ask — the goal's driver sentence is that ask for `sweap:run` |
 | `/goal` (built-in) | Sets a stop condition checked by an evaluator model after every turn; Claude keeps chaining turns until the condition is demonstrably met. Preferred driver for roadmap execution: `/goal <condition, incl. verification commands shown in transcript> or stop after N turns`. **User-only — Claude cannot invoke `/goal`; a human pastes it** | User sets once; Claude sustains |
 | `/loop` + self-scheduled wakeups | Time-paced recurring iteration; better for polling/monitoring (CI, deploys) than for goal-directed backlog work | User starts once; Claude sustains |
-| Cron jobs / scheduled cloud agents (`/schedule`) | Sessions that start on a schedule (nightly deps bump, backlog grooming, post-merge audit) — a scheduled kickoff runs `/milestone` non-interactively; a cloud routine cannot merge while CI runs on self-hosted runners that are off | Claude can create; runs unattended |
+| Cron jobs / scheduled cloud agents (`/schedule`) | Sessions that start on a schedule (nightly deps bump, backlog grooming, post-merge audit) — a scheduled kickoff runs `/sweap:milestone` non-interactively; a cloud routine cannot merge while CI runs on self-hosted runners that are off | Claude can create; runs unattended |
 | Headless `claude -p` + auto permission mode | Scripted/CI-triggered sessions; classifier gates commands | Scripts/CI/events |
 | Agentic CI (GitHub Actions) | Claude reviews every PR; merge gated on green e2e + clean review | Git events |
 | `claude --continue` / `--resume` | Reopen a session after a crash/reboot from its on-disk transcript. Not run protection: default auto-compact on 1M models fires near the limit, after quality has degraded — end runs via `turns`/frontier | User |
-| `/board` (read-only viewer) | Local loopback page showing the live run (frontier/in-flight/open-PRs/hand-offs/blocked) + backlog + dep graph; derives state from item files + git + PRs, never writes | User runs; safe during autonomous runs |
-| `/handoff <id>` | Walks one `[attended]` hand-off with the human, then flips it to done through a gated PR on their explicit confirmation | User runs; interactive only |
+| `/sweap:board` (read-only viewer) | Local loopback page showing the live run (frontier/in-flight/open-PRs/hand-offs/blocked) + backlog + dep graph; derives state from item files + git + PRs, never writes | User runs; safe during autonomous runs |
+| `/sweap:handoff <id>` | Walks one `[attended]` hand-off with the human, then flips it to done through a gated PR on their explicit confirmation | User runs; interactive only |
 | `sweap-merge watch <n>` (`sweap-merge status`) | Background merge driver for one PR: waits on the base branch's expected checks pinned to the head, runs the merge gate, merges, runs the post-merge hooks; exits with one terminal word. Run via Bash `run_in_background: true`; Monitor optional. A bare command because the plugin's `bin/` is on the Bash tool's PATH — `$CLAUDE_PLUGIN_ROOT` is unset in a model-issued Bash call. Allowlist `Bash(sweap-merge:*)` | Claude (the session that owns the PR) |
-| `/unblock <id>` | Walks one `[blocked]` question with the human — prepares the fork, never answers it — then closes it through a gated PR (`todo` + authored spec, or `done`) | User runs; interactive only |
+| `/sweap:unblock <id>` | Walks one `[blocked]` question with the human — prepares the fork, never answers it — then closes it through a gated PR (`todo` + authored spec, or `done`) | User runs; interactive only |
 | `sweap:run` (workflow) | The per-item loop held in a script: frontier before every item (`sweap-frontier`), one fresh implementer per item, the `merge-watcher` agent for the CI wait, a fresh fixer per red; strictly serial; `{ids, milestone}` scope it to the kickoff's batch and then one milestone. Pauses at a 5-hour limit (twice per run, interactive subscription session only), stops at a weekly wall, a dead agent or a red base; a relaunch is a fresh launch with the same args (the frontier is live) | The run session, from the goal's driver sentence; a human only pastes the goal |
-| `sweap-fleet` | Can the self-hosted runner fleet run this repo's CI: the label sets CI targets (from the newest run of each workflow) against the runners online, plus runner versions retiring within a week. Read-only JSON. The run's Resume stage, the `merge-watcher` and `/milestone` all ask it, so a dead fleet stops a run instead of queueing a PR per item | Claude (any stage), or the user |
+| `sweap-fleet` | Can the self-hosted runner fleet run this repo's CI: the label sets CI targets (from the newest run of each workflow) against the runners online, plus runner versions retiring within a week. Read-only JSON. The run's Resume stage, the `merge-watcher` and `/sweap:milestone` all ask it, so a dead fleet stops a run instead of queueing a PR per item | Claude (any stage), or the user |
 
 ## Model policy
 
