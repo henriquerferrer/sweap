@@ -33,8 +33,9 @@ this section. Commands (`/sweap:milestone-audit`, `/sweap:unblock`, `/sweap:hand
   `--admin`, never a bare `gh run rerun`.
 - Never commit in the primary checkout and never push to the default branch:
   work happens in the item's worktree and reaches it only through the item's PR.
-- A PR that touches `.github/` is a human's to merge (the driver refuses it).
-  If the work needs one, escalate; do not route around it.
+- A PR that touches `.github/workflows/` or `.github/scripts/` is a human's to
+  merge (the gate refuses it). In a run, if the work needs one, escalate; do
+  not route around it. `/sweap:handoff` says what a walk with the human does.
 - When blocked: write the question down, notify, move on. A stalled item must
   never stall the loop; a guess must never resolve ambiguity.
 - Work you discover is filed, not built — as a discovered note, never an item
@@ -869,9 +870,14 @@ may ADD dimensions it judges necessary; it may not remove tagged ones.
     prefix never reaches the hook.
   - **Self-modifying CI is never session-mergeable.** The same hook denies any
     `gh pr merge` whose PR touches `.github/workflows/**` or
-    `.github/scripts/**`, whatever its check state (the PR ran its own copy of
-    every check); a human merges those from the web UI or their own shell, and
-    the run records the PR as a `status: blocked` question.
+    `.github/scripts/**` (the PR ran its own copy of every check). That deny
+    comes last, so it means every other check passed, and it prints the line a
+    human types at the session prompt to merge it: `! gh pr merge <n> --squash
+    --match-head-commit <sha>`. A `!` line runs in the human's shell and no
+    hook sees it, so `sweap-merge watch <n>` is run again afterwards for the
+    post-merge steps. The web UI and their own terminal work too. A
+    `/sweap:handoff` or `/sweap:unblock` walk gives the human that line; a run
+    records the PR as a `status: blocked` question.
 - **Waiting discipline (upstream of the gate).** These four rules are what
   `sweap-merge.sh` implements (next bullet); a session should not hand-roll
   them. They stay here as documentation of what the driver does. The gate

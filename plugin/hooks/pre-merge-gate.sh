@@ -88,7 +88,8 @@
 # inline `VAR=… git push` prefix never reaches the hook's env.
 #
 # SELF-MODIFYING CI. A PR that touches .github/workflows/** or .github/scripts/**
-# is denied regardless of greenness (see verify_pr) — a human merges those.
+# is never mergeable from a session (see verify_pr): when every other check has
+# passed it is still denied, and the deny gives the human the line that merges it.
 #
 # Exit: always 0. Decision is the stdout JSON (deny) or empty stdout (no-op/defer).
 
@@ -529,7 +530,8 @@ fi
 # verify_pr <n>: query one PR's rollup (bounded by an internal timeout) and, if it
 # is not green or greenness can't be determined, emit a deny and return 1. Green
 # ⇒ return 0 silently. A PR touching .github/workflows/** or .github/scripts/**
-# is denied regardless of greenness (self-modifying CI).
+# is denied even when everything else passes (self-modifying CI), and that deny
+# comes last, so it is only ever reached by a PR that is otherwise mergeable.
 # A CheckRun is green only when COMPLETED with conclusion SUCCESS. SKIPPED/NEUTRAL
 # are non-blocking for checks the pipeline does not know (a legitimately skipped
 # optional check must not permanently wedge a merge), with two exceptions for
@@ -752,9 +754,13 @@ verify_pr() {
     # have, so this hook is the only enforcement point: such PRs are never
     # mergeable from a session. A human merges them outside the harness — that
     # bypass is the intended exit, not a hole. No env override, by design.
-    # Placed here: pure string matching on data already in hand (no gh call, no
-    # budget), before the lane check and before the audit gate spends its
-    # bounded budget; the 100-file truncation deny above still runs first.
+    # "Outside the harness" includes a line the human types at the session prompt
+    # starting with `!`: Claude Code runs it in their shell and fires neither
+    # PreToolUse nor PostToolUse for it (not documented; probed on 2.1.322 with
+    # logging hooks, a model Bash call as the control). The deny names that line
+    # because it is the one exit that does not make the human leave the session.
+    # The paths are collected here (pure string matching on data already in
+    # hand); the deny itself is emitted after the lane check and the audit gate.
     # Root-anchored prefix, exactly as gh reports paths (no leading ./);
     # `*` in a case pattern also matches `/`, so nested paths match; any file
     # type and deletions count; docs/.github/workflows/x does NOT match.
@@ -764,10 +770,6 @@ verify_pr() {
         .github/workflows/*|.github/scripts/*) protected="${protected:+$protected, }$fp" ;;
       esac
     done
-    if [ -n "$protected" ]; then
-      emit_deny "merge-gate: PR #$pr edits the CI controls themselves ($protected). A PR that changes .github/workflows/ or the vendored gate scripts in .github/scripts/ runs its OWN copy of every pull_request workflow, so its green checks were produced by the thing it changed (the review job skips its verdict on exactly these PRs). This PR is never mergeable from a session, whatever its check state: a HUMAN reviews the CI diff and merges it (GitHub web UI, or 'gh pr merge $pr' from their own shell). Do not retry, do not use --admin, do not move the edit into another PR — that PR is denied the same way. Record it as a question: set the item to 'status: blocked' with 'blocked: PR #$pr changes CI controls ($protected) and needs a human merge — merge it as-is, or say what to change?', notify, and continue with other work."
-      return 1
-    fi
 
     # Roadmap-only lane: a SKIPPED e2e is accepted only if the gate's OWN
     # classification of the PR's files says nothing under test changed. Same
@@ -791,6 +793,17 @@ verify_pr() {
       # how much of the budget the audit step was given, because "timed out" with
       # the number hidden sent a session hunting for audit debt that did not exist.
       emit_deny "merge-gate: audit gate refused PR #$pr: ${BR_OUT:-audit-gate timed out or errored after the gh calls left it ${remaining}s of the ${budget}s per-PR budget (rc=$BR_RC) — fails CLOSED; re-run the merge, and if the Mac is loaded by CI wait for it or raise MERGE_GATE_GH_TIMEOUT} (see plugin/hooks/audit-gate.sh; run 'audit-gate.sh --check' for the full debt state)"
+      return 1
+    fi
+
+    # The self-modifying-CI deny is LAST on purpose. Its message hands the human
+    # the one line that merges this PR past every hook, so reaching it has to
+    # mean every other check passed: a red, stale, e2e-skipped or audit-refused
+    # PR gets that deny instead and is never offered the line. (It used to fire
+    # before the lane check and the audit gate, which was harmless while the
+    # message only said "a human merges it".)
+    if [ -n "$protected" ]; then
+      emit_deny "merge-gate: PR #$pr edits the CI controls themselves ($protected). A PR that changes .github/workflows/ or the vendored gate scripts in .github/scripts/ runs its OWN copy of every pull_request workflow, so its green checks were produced by the thing it changed (the review job skips its verdict on exactly these PRs). This PR is never mergeable from a session: a HUMAN reviews the CI diff and merges it (GitHub web UI, their own terminal, or by typing '! gh pr merge $pr --squash --match-head-commit $head' at this session's prompt: a line the human starts with ! runs in their shell and never reaches this hook). Every other check this gate makes has passed for that head (green, fresh against the base, lane, audit gate), so the human merge is the only thing left. Do not retry, do not use --admin, do not move the edit into another PR — that PR is denied the same way. In a /sweap:handoff or /sweap:unblock walk the human is at the prompt: say what the CI diff changes and give them that exact ! line; no hook fires on a ! line, so once it lands run 'sweap-merge watch $pr' again, which sees the merge and runs the post-merge cleanup and audit check. Anywhere else, record it as a question: set the item to 'status: blocked' with 'blocked: PR #$pr changes CI controls ($protected) and needs a human merge — merge it as-is, or say what to change?', notify, and continue with other work."
       return 1
     fi
   fi

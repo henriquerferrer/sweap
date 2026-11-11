@@ -208,10 +208,12 @@ out="$(GH_FILES_JSON='[{"path":"roadmap/F1.2.md"},{"path":"src/a.ts"}]' run_gate
 if is_deny "$out" && reason "$out" | grep -q "not roadmap-only"; then ok "a4) e2e skipped + code file -> deny (skip != pass)"
 else bad "a4) e2e skipped + code -> deny" "got: $out"; fi
 
-# (a5) e2e SKIPPED and a workflow edit -> DENY (self-modifying CI fires before the lane check)
+# (a5) e2e SKIPPED and a workflow edit -> DENY by the LANE check, and the human-merge
+# line is not offered: the self-modifying-CI deny comes last, so a PR that is not
+# otherwise mergeable never reaches it.
 out="$(GH_FILES_JSON='[{"path":".github/workflows/ci.yml"}]' run_gate e2eskipped 'gh pr merge 42 --squash')"
-if is_deny "$out" && reason "$out" | grep -q "CI controls"; then ok "a5) e2e skipped + workflow edit -> deny (self-modifying CI, fires before lane check)"
-else bad "a5) e2e skipped + workflow edit -> deny" "got: $out"; fi
+if is_deny "$out" && reason "$out" | grep -q "not roadmap-only" && ! reason "$out" | grep -q '! gh pr merge'; then ok "a5) e2e skipped + workflow edit -> lane deny, no human-merge line"
+else bad "a5) e2e skipped + workflow edit -> lane deny, no human-merge line" "got: $out"; fi
 
 # (a6) e2e SKIPPED with no file list -> DENY (cannot confirm the lane)
 out="$(GH_FILES_JSON='[]' run_gate e2eskipped 'gh pr merge 42 --squash')"
@@ -265,6 +267,22 @@ echo "== self-modifying CI: a PR touching .github/workflows or .github/scripts i
 out="$(GH_FILES_JSON='[{"path":".github/workflows/ci.yml"}]' run_gate green 'gh pr merge 42 --squash')"
 if is_deny "$out" && reason "$out" | grep -q 'PR #42' && reason "$out" | grep -q 'HUMAN'; then ok "w1) green + .github/workflows/ci.yml -> deny (human merges)"
 else bad "w1) workflow edit -> deny" "got: $out"; fi
+
+# (w1b) the deny gives the human ONE line to type, pinned to the verified head.
+# Exactly one `gh pr merge` in the whole reason: the stored `blocked:` question
+# must not carry a merge command (a Bash call that writes it would be denied by
+# this same gate, and a stored line goes stale).
+w1r="$(reason "$out")"
+if [ "$(printf '%s' "$w1r" | grep -o "'! gh pr merge 42 --squash --match-head-commit deadbeef'" | wc -l | tr -d ' ')" = 1 ] \
+   && [ "$(printf '%s' "$w1r" | grep -o 'gh pr merge' | wc -l | tr -d ' ')" = 1 ]; then ok "w1b) deny carries the ! line once, pinned to the head, and nowhere else"
+else bad "w1b) the ! line, once and pinned" "got: $w1r"; fi
+
+# (w1c) who gets the line, and what follows it
+if printf '%s' "$w1r" | grep -q 'In a /sweap:handoff or /sweap:unblock walk' \
+   && printf '%s' "$w1r" | grep -q 'no hook fires on a ! line' \
+   && printf '%s' "$w1r" | grep -q "run 'sweap-merge watch 42' again" \
+   && printf '%s' "$w1r" | grep -q "Anywhere else, record it as a question"; then ok "w1c) attended walk gets the line + the post-merge step; anywhere else records the question"
+else bad "w1c) attended/unattended instructions" "got: $w1r"; fi
 
 # (w2) mixed PR (code + workflow) -> DENY naming the workflow file
 out="$(GH_FILES_JSON='[{"path":"src/a.ts"},{"path":".github/workflows/claude-review.yml"}]' run_gate green 'gh pr merge 42 --squash')"
@@ -795,6 +813,13 @@ out="$(GH_FILES_JSON='[{"path":"roadmap/F2.1.md"}]' run_gate green 'gh pr merge 
 if is_deny "$out" && printf '%s' "$(reason "$out")" | grep -q 'audit'; then
   ok "g1) audit debt + item-file PR -> deny"
 else bad "g1) audit debt + item-file PR -> deny" "out: $out"; fi
+
+# (g1b) same debt, and the PR ALSO edits a workflow -> the AUDIT deny wins and the
+# human-merge line is not offered (the self-modifying-CI deny comes last).
+out="$(GH_FILES_JSON='[{"path":"roadmap/F2.1.md"},{"path":".github/workflows/ci.yml"}]' run_gate green 'gh pr merge 7 --squash' "$AUD")"
+if is_deny "$out" && printf '%s' "$(reason "$out")" | grep -q 'audit gate refused' && ! printf '%s' "$(reason "$out")" | grep -q '! gh pr merge'; then
+  ok "g1b) audit debt + workflow edit -> audit deny, no human-merge line"
+else bad "g1b) audit debt + workflow edit -> audit deny, no human-merge line" "out: $out"; fi
 
 # (g2) green PR, code-only files, same debt -> ALLOW (silent)
 out="$(GH_FILES_JSON='[{"path":"src/a.ts"}]' run_gate green 'gh pr merge 7 --squash' "$AUD")"

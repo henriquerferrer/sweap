@@ -36,12 +36,36 @@ touch any other status. A `[blocked]` item is a *question* awaiting a
    first (its "When to show" trigger), with the link in the ask; every choice
    ends with the **explain** line (see `/sweap:unblock` step 2).
 
+   **A change under `.github/` is a part you can do.** The "never edit
+   `.github/`" line in the worker brief binds an unattended implementer, not
+   this walk. Make the edit in a worktree, push it, open the PR and run
+   `sweap-merge watch <n>`. A PR that touches `.github/workflows/` or
+   `.github/scripts/` ends there with the gate's "edits the CI controls"
+   refusal, because it ran its own copy of the checks. That refusal comes only
+   after every other check has passed; any other refusal means the PR is not
+   ready, so fix that first. The merge is then theirs. Say in plain words what
+   the diff changes in CI, then give them the line the refusal printed,
+   exactly as printed:
+
+   ```
+   ! gh pr merge <n> --squash --match-head-commit <sha>
+   ```
+
+   A line they start with `!` runs in their own shell, so no hook sees it.
+   Once it lands, run `sweap-merge watch <n>` again: it sees the merge and runs
+   the post-merge cleanup and audit check. Do not hand the edit back to them
+   as theirs to make.
+
 3. **Check the *Done when* condition.** Run it and show the output. If the item
    has no checkable condition, say so and ask the human to confirm in words —
    do not infer completion from the conversation going well.
 
-4. **Close it — only on their explicit confirmation.** In a worktree (never on
-   `main`): flip the item file to `status: done`, keeping the `handoff:` key and
+4. **Close it — only on their explicit confirmation.** Ask in one message:
+   which *Done when* clauses you checked and what the check printed, which you
+   could not check, and whether anything differed from the steps. Their answer
+   is what the DONE note records, so it is asked even when every check passed.
+   Then, in a worktree (never on `main`): flip the item file to
+   `status: done`, keeping the `handoff:` key and
    the `## Hand-off` section as the record of what was done, and add a
    `> **DONE (YYYY-MM-DD):** <what actually shipped, incl. anything that
    differed from the steps>` note under `## Notes`. Open a PR and merge it on
