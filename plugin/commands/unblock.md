@@ -102,6 +102,11 @@ a *task* the human performs, not a question; that one is `/sweap:handoff`.
    whose `blocked` disposition names an item that is no longer `status: blocked`,
    so without this the PR goes red (a consumer: three unblocks in a row).
 
+   If the question is a PR that changes CI controls and the answer is to
+   merge it as-is, run `sweap-merge watch <n>` on that PR: the gate's refusal
+   prints the `! gh pr merge …` line the human types at this prompt. Give it
+   to them exactly as printed, and run the driver again once it lands.
+
    Open a PR and merge it on green through the normal gate (the
    `pre-merge-gate` hook enforces greenness), then run end-of-run hygiene as
    always.

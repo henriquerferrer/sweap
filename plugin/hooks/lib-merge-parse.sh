@@ -136,13 +136,17 @@ _mc_related_scan() {
 # with `--body-file <path>` — the deny message says so.
 
 # Remove heredoc bodies. Prints the input unchanged when anything is off.
+# A body is inert only under a QUOTED delimiter (<<'EOF', <<"EOF", <<\EOF). Under
+# a bare <<EOF bash still runs every `…` and $(…) in it, so those lines are kept
+# in view of the scan: a note that quotes a merge command in backticks inside an
+# unquoted heredoc would otherwise be allowed here and then executed by bash.
 _redact_heredocs() {
   case "$1" in *'<<'*) ;; *) printf '%s' "$1"; return 0 ;; esac
   printf '%s' "$1" | awk '
     { line[NR] = $0 }
     hd == 1 {
       t = $0; sub(/^[ \t]+/, "", t); sub(/[ \t]+$/, "", t)
-      if (t == delim) { hd = 0 } else { drop[NR] = 1 }
+      if (t == delim) { hd = 0 } else if (quoted || $0 !~ /`|\$\(/) { drop[NR] = 1 }
       next
     }
     {
@@ -153,6 +157,7 @@ _redact_heredocs() {
       sub(/^.*<<-?[ \t]*/, "", t)
       if (match(t, /^[^A-Za-z0-9_]?[A-Za-z_][A-Za-z0-9_]*/) == 0) next
       delim = substr(t, 1, RLENGTH)
+      quoted = (delim ~ /^[^A-Za-z_]/)
       sub(/^[^A-Za-z_]/, "", delim)
       hd = 1
     }
