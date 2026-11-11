@@ -110,7 +110,13 @@ git -C "$PRIMARY" worktree prune >/dev/null 2>&1 || true
 # 4) Stranded backlog files. Runs AFTER the merge has been folded in (steps 1-3),
 #    so the branch that just landed is never reported. Only closed/none states
 #    are alarming: an open PR is a rider, which the board shows without alarm.
-stranded="$(cd "$PRIMARY" && bash "$(dirname "${BASH_SOURCE[0]}")/stranded-roadmap.sh" 2>/dev/null | awk -F'\t' '$2=="closed" || $2=="none"')"
+scan="$(cd "$PRIMARY" && bash "$(dirname "${BASH_SOURCE[0]}")/stranded-roadmap.sh" 2>/dev/null)"
+stranded="$(printf '%s\n' "$scan" | awk -F'\t' '$2=="closed" || $2=="none"')"
+#    A PARKED branch (an open item's unpushed work, in its worktree) is not
+#    stranded, but a note on it can still be deleted with it. Name its inbox
+#    files, and only those: the item file on a work branch is work in progress.
+parked="$(printf '%s\n' "$scan" | awk -F'\t' '$2=="parked" { n = split($4, a, ","); keep = ""; for (i = 1; i <= n; i++) if (a[i] ~ /(^|\/)(discovered|ideas)\/[^\/]+$/) keep = keep (keep == "" ? "" : ", ") a[i]; if (keep != "") print $1 "\t" $3 "\t" keep }')"
+rescue="git checkout -b roadmap/rescue-<6hex> origin/main && git checkout <branch> -- <the discovered/ and ideas/ paths above> && commit && open a PR (docs-only, rides the roadmap-only lane)"
 msg=""
 [ -n "$ff_msg" ] && msg="sweap: the $ff_msg"
 if [ -n "$stranded" ]; then
@@ -124,7 +130,20 @@ if [ -n "$stranded" ]; then
 $stranded
 STRANDED_EOF
   msg="$msg
-Rescue (docs-only, rides the roadmap-only lane): git checkout -b roadmap/rescue-<6hex> origin/main && git checkout <branch> -- <the discovered/ and ideas/ paths above> && commit && open a PR. Top-level item files and index edits found here need /sweap:roadmap judgement before they land — list them for the human instead of relaying blindly. Then delete the dead branch so this stops firing."
+Rescue: $rescue. Top-level item files and index edits found here need /sweap:roadmap judgement before they land — list them for the human instead of relaying blindly. Then delete the dead branch so this stops firing."
+fi
+if [ -n "$parked" ]; then
+  msg="${msg}${msg:+
+}sweap: backlog note(s) are waiting on PARKED work branch(es). Each branch is checked out in a worktree for an item that is not finished, and its notes reach main only when that branch's own PR lands. Leave the branch and its worktree alone:"
+  while IFS=$'\t' read -r br age paths; do
+    [ -n "$br" ] || continue
+    msg="$msg
+  $br (${age}d): $paths"
+  done <<PARKED_EOF
+$parked
+PARKED_EOF
+  msg="$msg
+Nothing to do now. Before you ever delete one of these branches or its worktree (the item was dropped, or will restart from main), rescue the notes first: $rescue."
 fi
 if [ -n "$msg" ]; then
   if command -v jq >/dev/null 2>&1; then

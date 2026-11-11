@@ -222,6 +222,28 @@ git -C "$P" checkout -q HEAD -- many; hook
 git -C "$P" checkout -q HEAD -- note.md
 is "fixture: current and clean at the end"                            "0|" "$(behind)|$(tree)"
 
+# --- backlog files on a branch nothing will land, and on a PARKED work branch ----
+# A no-PR branch is stranded: the hook says so and gives the rescue. The SAME
+# branch checked out in a linked worktree is an item's unfinished work: the hook
+# must not call it dead, but it still names the note, because the branch can be
+# deleted by hand with the note on it.
+( cd "$P" && git worktree add -q "$WORK/wt-park" -b feat/park main 2>/dev/null \
+  && cd "$WORK/wt-park" && mkdir -p roadmap/discovered && printf -- '---\ntitle: n\nkind: gap\n---\n' > roadmap/discovered/n-0a1b2c.md \
+  && printf -- '---\nid: F9.1\nstatus: todo\n---\n' > roadmap/F9.1.md && git add -A && G commit -q -m wip ) 2>/dev/null
+hook
+is "parked branch -> named as PARKED with its note, never as dead"   "yes|yes|no|no" "$(ctx | has 'PARKED work branch')|$(ctx | has 'feat/park (0d): roadmap/discovered/n-0a1b2c.md$')|$(ctx | has 'STRANDED')|$(ctx | has 'delete the dead branch')"
+is "parked branch -> the item file on it is not listed (work in progress)" no "$(ctx | has 'roadmap/F9.1.md')"
+is "parked branch -> the rescue recipe is still given"                yes "$(ctx | has 'rescue the notes first: git checkout -b roadmap/rescue-')"
+git -C "$P" worktree remove --force "$WORK/wt-park" 2>/dev/null
+hook
+is "the same branch with its worktree gone -> STRANDED, with the rescue" "yes|yes|no" "$(ctx | has 'STRANDED on branch')|$(ctx | has 'feat/park (no PR, 0d): roadmap/')|$(ctx | has 'PARKED')"
+( cd "$P" && git worktree add -q "$WORK/wt-wip" -b feat/wip main 2>/dev/null \
+  && cd "$WORK/wt-wip" && mkdir -p roadmap && printf -- '---\nid: F9.2\nstatus: todo\n---\n' > roadmap/F9.2.md && git add -A && G commit -q -m wip ) 2>/dev/null
+git -C "$P" branch -q -D feat/park 2>/dev/null
+hook
+is "a parked branch with no note on it -> the hook says nothing about it" "no|no" "$(ctx | has 'feat/wip')|$(ctx | has 'PARKED')"
+git -C "$P" worktree remove --force "$WORK/wt-wip" 2>/dev/null; git -C "$P" branch -q -D feat/wip 2>/dev/null
+
 # The hook must still work beside an older or partial install with no lib.
 mkdir -p "$WORK/nolib"; cp "$HOOK" "$HERE/lib-merge-parse.sh" "$WORK/nolib/"
 [ -f "$HERE/stranded-roadmap.sh" ] && cp "$HERE/stranded-roadmap.sh" "$WORK/nolib/"

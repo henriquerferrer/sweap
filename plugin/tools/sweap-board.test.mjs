@@ -1131,6 +1131,9 @@ test("parseStranded: closed/none are stranded, open is a rider, unknown is neith
     ["feat/FN.13", "open", 1, 2, false], ["old/x", "closed", 9, 1, true], ["local/y", "none", 0, 1, true], ["weird", "unknown", null, 0, false],
   ]);
   assert.deepEqual(parseStranded(""), []);
+  const p = parseStranded("feat/f1-3\tparked\t2\troadmap/discovered/n-0a1b2c.md\n");
+  assert.equal(p[0].pr, "parked");
+  assert.equal(p[0].stranded, false, "a parked work branch is listed but is not stranded");
 });
 
 test("buildState exposes discovered and stranded; neither leaks into the backlog; stranded notes name only truly stranded branches", async () => {
