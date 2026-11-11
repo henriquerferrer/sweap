@@ -83,6 +83,57 @@ G "$R" merge -q --ff-only origin/feat-a 2>/dev/null; G "$R" push -q origin main 
 out="$(run env GH_STATES='feat-a=OPEN' | grep -c '^feat-a' || true)"
 want "a branch whose commits are on main is not listed" "0" "$out"
 
+# --- parked: a no-PR branch checked out in a LINKED worktree is an item's work in
+# progress, not a dead branch. Every row below differs from `none` by one fact.
+wt() { G "$R" worktree add -q "$WORK/wt-$1" "$1" 2>/dev/null; }
+branch park-note  roadmap/discovered/p-111111.md "---\ntitle: p\nkind: gap\n---\n" nopush   # a note only
+branch park-item  roadmap/F1.1.md "---\nid: F1.1\nstatus: todo\n---\nnotes\n" nopush       # F1.1 is todo on main
+branch dead-item  roadmap/F1.9.md "x" nopush
+branch bare-note  roadmap/discovered/b-222222.md "---\ntitle: b\nkind: gap\n---\n" nopush   # no worktree
+# F1.9 exists on main and is DONE there; dead-item's worktree is a leftover.
+printf -- '---\nid: F1.9\nstatus: done\n---\n' > "$R/roadmap/F1.9.md"; G "$R" add -A >/dev/null; G "$R" commit -qm f19; G "$R" push -q origin main 2>/dev/null
+wt park-note; wt park-item; wt dead-item
+pk() { run env GH_STATES='old-b=CLOSED' | awk -F'\t' -v b="$1" '$1==b{print $2}'; }
+want "no PR + linked worktree, a note only -> parked"                          "parked" "$(pk park-note)"
+want "no PR + linked worktree, its item still todo on main -> parked"          "parked" "$(pk park-item)"
+want "no PR + linked worktree, but its only item is done on main -> none"      "none"   "$(pk dead-item)"
+want "no PR, no worktree -> none (unchanged)"                                  "none"   "$(pk bare-note)"
+want "a parked branch is still LISTED with its paths"                          "roadmap/discovered/p-111111.md" "$(run env GH_STATES='' | awk -F'\t' '$1=="park-note"{print $4}')"
+want "PR closed unmerged stays closed even in a worktree"                      "closed" "$(run env GH_STATES='park-note=CLOSED' | awk -F'\t' '$1=="park-note"{print $2}')"
+G "$R" worktree remove --force "$WORK/wt-park-note" 2>/dev/null
+want "worktree removed -> the same branch is none again"                       "none"   "$(pk park-note)"
+want "gh unavailable -> unknown, never parked"                                 "unknown" "$(run env GH_FAIL=1 | awk -F'\t' '$1=="park-item"{print $2}')"
+G "$R" worktree remove --force "$WORK/wt-park-item" 2>/dev/null; G "$R" worktree remove --force "$WORK/wt-dead-item" 2>/dev/null
+G "$R" branch -q -D park-note park-item dead-item bare-note 2>/dev/null
+
+# One row per way the rule could be loosened or tightened by mistake.
+printf -- '---\nid: F1.8\nstatus: dropped\n---\n' > "$R/roadmap/F1.8.md"                        # dropped, still top-level
+mkdir -p "$R/roadmap/discovered"; mkdir -p "$R/roadmap/archive"; printf -- '---\nid: F1.7\nstatus: dropped\n---\n' > "$R/roadmap/archive/F1.7.md"   # dropped, archived
+printf -- '---\ntitle: old\nstatus: done\n---\n' > "$R/roadmap/discovered/old-333333.md"       # a NOTE that happens to carry a status line
+G "$R" add -A >/dev/null; G "$R" commit -qm closed-items; G "$R" push -q origin main 2>/dev/null
+branch two-items   roadmap/F1.1.md "---\nid: F1.1\nstatus: todo\n---\nmore\n" nopush
+G "$R" checkout -q two-items; printf 'y' >> "$R/roadmap/F1.9.md"; G "$R" add -A >/dev/null; G "$R" commit -qm also-f19; G "$R" checkout -q main
+branch top-dropped roadmap/F1.8.md "x" nopush
+branch arch-dropped roadmap/F1.7.md "---\nid: F1.7\nstatus: todo\n---\n" nopush              # edits the path main moved to archive/
+branch sub-status  roadmap/discovered/old-333333.md "---\ntitle: old\nstatus: done\n---\nedited\n" nopush
+branch pre         roadmap/discovered/s-444444.md "---\ntitle: s\nkind: gap\n---\n" nopush     # no worktree; `pre-fix` has one
+branch pre-fix     roadmap/discovered/t-555555.md "---\ntitle: t\nkind: gap\n---\n" nopush
+branch on-primary  roadmap/discovered/u-666666.md "---\ntitle: u\nkind: gap\n---\n" nopush
+wt two-items; wt top-dropped; wt arch-dropped; wt sub-status; wt pre-fix
+want "one of its items is still open, another is done -> parked (all closed, not any)"   "parked" "$(pk two-items)"
+want "its only item reads dropped at the top level on main -> none"                     "none"   "$(pk top-dropped)"
+want "its only item was moved to archive/ on main -> none"                              "none"   "$(pk arch-dropped)"
+want "a status line in a file under discovered/ is not an item's status -> parked"      "parked" "$(pk sub-status)"
+want "a branch whose name is a PREFIX of a worktree's branch is not in a worktree"      "none"   "$(pk pre)"
+G "$R" checkout -q on-primary
+want "checked out in the PRIMARY checkout only -> none (linked worktrees only)"          "none"   "$(pk on-primary)"
+G "$R" checkout -q main
+mv "$WORK/wt-pre-fix" "$WORK/wt-pre-fix.gone"
+want "a worktree whose directory is gone (prunable) parks nothing -> none"              "none"   "$(pk pre-fix)"
+mv "$WORK/wt-pre-fix.gone" "$WORK/wt-pre-fix"
+for b in two-items top-dropped arch-dropped sub-status pre-fix; do G "$R" worktree remove --force "$WORK/wt-$b" 2>/dev/null; done
+G "$R" branch -q -D two-items top-dropped arch-dropped sub-status pre pre-fix on-primary 2>/dev/null
+
 # SWEAP_MAIN_REF override and the no-main failure.
 out="$(cd "$R" && SWEAP_MAIN_REF=nope bash "$SCAN" 2>/dev/null; echo "rc=$?")"
 want "unresolvable SWEAP_MAIN_REF exits 1" "rc=1" "$out"

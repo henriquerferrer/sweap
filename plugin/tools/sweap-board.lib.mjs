@@ -395,12 +395,14 @@ export function archiveDiscovered(projectDir, backlogDir, file, { promotedTo = "
 // Output of hooks/stranded-roadmap.sh: one `branch<TAB>pr-state<TAB>age-days<TAB>path,path` line
 // per not-merged branch whose <backlogDir> differs from main. `open` is a
 // rider (the #181 shape — on a live PR, fine until it isn't); `closed` and
-// `none` are stranded: nothing is scheduled to ever land those files.
+// `none` are stranded: nothing is scheduled to ever land those files. `parked`
+// (no PR, but checked out in a worktree for an item that is still open) is not:
+// the item's own PR lands them.
 export function parseStranded(stdout) {
   return String(stdout || "").split("\n").map((l) => l.trim()).filter(Boolean).map((l) => {
     const [branch, pr, age, paths] = l.split("\t");
     const ageDays = Number.isFinite(Number(age)) ? Number(age) : null;
-    const state = ["open", "closed", "none"].includes(pr) ? pr : "unknown";
+    const state = ["open", "closed", "none", "parked"].includes(pr) ? pr : "unknown";
     return { branch, pr: state, ageDays, paths: String(paths || "").split(",").filter(Boolean), stranded: state === "closed" || state === "none" };
   }).filter((s) => s.branch);
 }

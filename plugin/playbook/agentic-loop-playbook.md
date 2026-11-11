@@ -731,7 +731,9 @@ may ADD dimensions it judges necessary; it may not remove tagged ones.
 - **Before you abandon a branch, or stop on one, check it is not carrying
   backlog files.** Run `sweap-stranded`:
   one line per not-merged branch whose `<backlog.dir>` differs from main, with
-  its PR state. `open` is a rider and fine; `closed` or `none` is **stranded**
+  its PR state. `open` is a rider and fine. `parked` is an open item's work
+  branch kept in its worktree for a resume: leave it, and rescue its inbox
+  files first if you ever delete it. `closed` or `none` is **stranded**
   — invisible to the frontier, the board's backlog, the gate and `/sweap:roadmap`,
   with nothing scheduled to ever land it. Rescue inbox files (`discovered/`,
   `ideas/`) with a docs-only PR: `git checkout -b roadmap/rescue-<6hex>
