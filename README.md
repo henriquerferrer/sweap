@@ -54,6 +54,23 @@ Install sweap in your current project:
 
 This initializes the agentic-dev loop, enabling per-feature isolation and automated gating.
 
+### Mobbin, for UI work (optional)
+
+sweap bundles the [Mobbin](https://mobbin.com) MCP server, which its UI skill
+uses to look up reference screens before building one. The server is configured
+as soon as the plugin is enabled, but it needs a Mobbin account: run `/mcp`,
+pick the Mobbin server (listed as `plugin:sweap:mobbin`) and sign in, once per
+machine.
+
+Skip the sign-in if you don't build UI or don't have an account. The server then
+exposes no tools: each session makes one unauthenticated request to
+`api.mobbin.com`, and the UI skill records `Mobbin unavailable` and carries on
+with its other checks.
+
+If you already have a Mobbin server of your own at the same URL, Claude Code
+keeps yours and drops the bundled one. Name it `mobbin` so the UI critic can use
+it.
+
 ### Commands on your PATH
 
 While the plugin is enabled, Claude Code adds `plugin/bin/` to the Bash tool's
