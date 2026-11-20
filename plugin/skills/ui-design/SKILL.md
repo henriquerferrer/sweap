@@ -7,10 +7,24 @@ description: Use when building, editing, or reviewing any product-visible UI (ro
 
 ## Prerequisites (optional)
 
-The `ui` review-dimension uses the Mobbin MCP (`mcp__mobbin__*` tools) for
-archetype seeding and comparative reference, when it is available in the
-consuming project/session. It is not shipped or required by this plugin. If
-it is absent, this skill **degrades gracefully**: the a11y,
+The `ui` review-dimension uses the Mobbin MCP for archetype seeding and
+comparative reference. The plugin bundles the server (`.mcp.json` at the plugin
+root), so it is configured wherever sweap is enabled; what the plugin cannot
+ship is the sign-in. Mobbin needs an account and a one-time authentication per
+machine (`/mcp`, the server listed as `plugin:sweap:mobbin`), which a fresh
+cloud or headless run does not have.
+
+The tools are named `mcp__plugin_sweap_mobbin__*` (`search_flows`,
+`search_screens`, `search_sections`). A session that already has its own Mobbin
+server at the same URL keeps that one instead — Claude Code drops the bundled
+duplicate — and the tools then carry that server's name: `mcp__mobbin__*` when
+it is called `mobbin`. Use whichever set the session has; they are the same
+server. The `ui-critic` agent's allowlist names those two forms and no other, so
+a personal Mobbin server under any other name leaves the critic without Mobbin:
+rename it to `mobbin`, or remove it and use the bundled one.
+
+Mobbin is still not required. If it is unauthenticated or absent, this skill
+**degrades gracefully**: the a11y,
 structural and interaction-state HARD gates (§6) still run in full — only the
 comparative aesthetic ratchet (§5/§8's ensemble critique against references) is
 reduced to whatever internal exemplar comparison remains possible.
